@@ -1,0 +1,424 @@
+import { useState, useEffect, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query } from 'firebase/firestore'
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
+import { kmsDB, kmsStorage } from '../../lib/firebase'
+import { generateHashtags } from '../../lib/gemini'
+import { Plus, Search, Pencil, Trash2, X, Check, Link, FileText, Image, Sparkles, ChevronDown, ChevronUp, ArrowUpDown } from 'lucide-react'
+import * as mammoth from 'mammoth'
+
+interface Note {
+  id?: string
+  title: string
+  content: string
+  type: 'note' | 'url' | 'image' | 'file'
+  url?: string
+  imageUrl?: string
+  fileUrl?: string
+  fileName?: string
+  hashtags: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+interface Props {
+  selectedTag: string
+  setSelectedTag: (tag: string) => void
+}
+
+const empty: Note = { title: '', content: '', type: 'note', hashtags: [], createdAt: '', updatedAt: '' }
+const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
+const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
+
+const TYPE_ICONS: Record<string, any> = { note: FileText, url: Link, image: Image, file: FileText }
+const TYPE_LABELS: Record<string, string> = { note: '文字筆記', url: '網址收藏', image: '圖片', file: '文件' }
+const TYPE_COLORS: Record<string, string> = { note: '#4f8ef7', url: '#00c896', image: '#f5a623', file: '#a78bfa' }
+
+export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
+  const [searchParams] = useSearchParams()
+  const [notes, setNotes] = useState<Note[]>([])
+  const [showForm, setShowForm] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState<Note>(empty)
+  const [loading, setLoading] = useState(false)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [search, setSearch] = useState('')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [newTag, setNewTag] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [allTags, setAllTags] = useState<string[]>([])
+  const [sortBy, setSortBy] = useState<'createdAt' | 'updatedAt' | 'title'>('createdAt')
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
+  const fileRef = useRef<HTMLInputElement>(null)
+  const imgRef = useRef<HTMLInputElement>(null)
+  const noteRefs = useRef<Record<string, HTMLDivElement | null>>({})
+
+  const load = async () => {
+    const q = query(collection(kmsDB, 'notes'), orderBy('createdAt', 'desc'))
+    const snap = await getDocs(q)
+    const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Note))
+    setNotes(data)
+    const tags = new Set<string>()
+    data.forEach(n => n.hashtags?.forEach(t => tags.add(t)))
+    setAllTags(Array.from(tags).sort())
+  }
+
+  useEffect(() => { load() }, [])
+
+  useEffect(() => {
+    const noteId = searchParams.get('note')
+    if (noteId) {
+      setExpandedId(noteId)
+      setTimeout(() => {
+        const el = noteRefs.current[noteId]
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 300)
+    }
+  }, [searchParams])
+
+  const handleAutoTag = async () => {
+    if (!form.content && !form.title && !form.url) return
+    setAiLoading(true)
+    const tags = await generateHashtags(form.content || form.url || '', form.title, allTags)
+    setForm(f => ({ ...f, hashtags: tags }))
+    setAiLoading(false)
+  }
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      const storageRef = ref(kmsStorage, `images/${Date.now()}_${file.name}`)
+      await uploadBytes(storageRef, file)
+      const url = await getDownloadURL(storageRef)
+      setForm(f => ({ ...f, imageUrl: url, type: 'image' }))
+    } catch (err) { console.error(err) }
+    setUploading(false)
+  }
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      let extractedText = ''
+      if (file.name.endsWith('.docx')) {
+        const buf = await file.arrayBuffer()
+        extractedText = (await mammoth.extractRawText({ arrayBuffer: buf })).value
+      }
+      const storageRef = ref(kmsStorage, `files/${Date.now()}_${file.name}`)
+      await uploadBytes(storageRef, file)
+      const url = await getDownloadURL(storageRef)
+      setForm(f => ({ ...f, type: 'file', fileUrl: url, fileName: file.name, content: extractedText || f.content }))
+    } catch (err) { console.error(err) }
+    setUploading(false)
+  }
+
+  const handleSave = async () => {
+    if (!form.title) return
+    setLoading(true)
+    const now = new Date().toISOString()
+    if (editingId) {
+      await updateDoc(doc(kmsDB, 'notes', editingId), { ...form, updatedAt: now })
+    } else {
+      await addDoc(collection(kmsDB, 'notes'), { ...form, createdAt: now, updatedAt: now })
+    }
+    setShowForm(false); setEditingId(null); setForm(empty); setLoading(false); load()
+  }
+
+  const handleEdit = (note: Note) => {
+    setForm(note); setEditingId(note.id!); setShowForm(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('確定要刪除？筆記將移至垃圾桶，30 天後永久刪除。')) return
+    const note = notes.find(n => n.id === id)
+    if (!note) return
+    const { setDoc } = await import('firebase/firestore')
+    await setDoc(doc(kmsDB, 'trash', id), { ...note, deletedAt: new Date().toISOString() })
+    await deleteDoc(doc(kmsDB, 'notes', id))
+    load()
+  }
+
+  const handleAddTag = () => {
+    if (!newTag.trim() || form.hashtags.includes(newTag.trim())) return
+    setForm(f => ({ ...f, hashtags: [...f.hashtags, newTag.trim()] }))
+    setNewTag('')
+  }
+
+  const handleSort = (key: typeof sortBy) => {
+    if (sortBy === key) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    else { setSortBy(key); setSortDir('desc') }
+  }
+
+  const filtered = notes
+    .filter(n => {
+      const matchSearch = !search || n.title.includes(search) || n.content.includes(search) ||
+        n.hashtags?.some(t => t.includes(search)) || n.url?.includes(search)
+      const matchTag = !selectedTag || n.hashtags?.some(t =>
+        t === selectedTag || t.startsWith(selectedTag + '/'))
+      return matchSearch && matchTag
+    })
+    .sort((a, b) => {
+      if (sortBy === 'title') return sortDir === 'asc'
+        ? a.title.localeCompare(b.title, 'zh-TW')
+        : b.title.localeCompare(a.title, 'zh-TW')
+      const aVal = a[sortBy] || ''; const bVal = b[sortBy] || ''
+      return sortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal)
+    })
+
+  return (
+    <>
+      <style>{`
+        .kms-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+        @media (max-width: 700px) { .kms-grid { grid-template-columns: 1fr; } }
+        .form-grid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+        @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
+        .note-content { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+        .note-content.expanded { display: block; }
+        .note-card-highlight { box-shadow: 0 0 0 2px #4f8ef7 !important; }
+        .sort-btn { display: flex; align-items: center; gap: 4px; border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; transition: all 0.15s; }
+        .sort-btn:hover { border-color: #4f8ef7 !important; color: #e2e8f0 !important; }
+      `}</style>
+
+      <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1400px', margin: '0 auto' }}>
+
+        {/* 標題列 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+          <div>
+            <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>
+              {selectedTag ? `#${selectedTag}` : '知識庫'}
+            </h1>
+            <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>共 {filtered.length} 則筆記</p>
+          </div>
+          <button style={btn('#4f8ef7')} onClick={() => { setForm(empty); setEditingId(null); setShowForm(true) }}>
+            <Plus size={16} />新增筆記
+          </button>
+        </div>
+
+        {/* 表單 */}
+        {showForm && (
+          <div style={{ ...card, marginBottom: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>{editingId ? '✏️ 編輯筆記' : '➕ 新增筆記'}</span>
+              <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
+            </div>
+
+            {/* 類型選擇 */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+              {Object.entries(TYPE_LABELS).map(([key, label]) => {
+                const Icon = TYPE_ICONS[key]
+                return (
+                  <button key={key} onClick={() => setForm(f => ({ ...f, type: key as any }))}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px', borderRadius: '8px', border: '1px solid', borderColor: form.type === key ? TYPE_COLORS[key] : '#2e3349', backgroundColor: form.type === key ? `${TYPE_COLORS[key]}18` : 'transparent', color: form.type === key ? TYPE_COLORS[key] : '#8892a4', fontSize: '13px', cursor: 'pointer' }}>
+                    <Icon size={14} />{label}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="form-grid">
+              <div style={{ gridColumn: 'span 2' }}>
+                <label style={lbl}>標題 *</label>
+                <input style={inp} placeholder="筆記標題" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+              </div>
+
+              {form.type === 'url' && (
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label style={lbl}>網址</label>
+                  <input style={inp} placeholder="https://..." value={form.url || ''} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} />
+                </div>
+              )}
+
+              {form.type === 'image' && (
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label style={lbl}>圖片</label>
+                  {form.imageUrl && <img src={form.imageUrl} alt="" style={{ maxHeight: '200px', borderRadius: '8px', marginBottom: '8px', display: 'block' }} />}
+                  <label style={{ ...btn('#21253a'), border: '1px solid #2e3349', cursor: 'pointer', width: 'fit-content' }}>
+                    <Image size={14} />{uploading ? '上傳中...' : '選擇圖片'}
+                    <input ref={imgRef} type="file" accept="image/*" onChange={handleImageUpload} style={{ display: 'none' }} />
+                  </label>
+                </div>
+              )}
+
+              {form.type === 'file' && (
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label style={lbl}>文件（PDF / Word）</label>
+                  {form.fileName && <p style={{ fontSize: '13px', color: '#00c896', margin: '0 0 8px' }}>📄 {form.fileName}</p>}
+                  <label style={{ ...btn('#21253a'), border: '1px solid #2e3349', cursor: 'pointer', width: 'fit-content' }}>
+                    <FileText size={14} />{uploading ? '上傳中...' : '選擇文件'}
+                    <input ref={fileRef} type="file" accept=".pdf,.docx,.doc" onChange={handleFileUpload} style={{ display: 'none' }} />
+                  </label>
+                </div>
+              )}
+
+              <div style={{ gridColumn: 'span 2' }}>
+                <label style={lbl}>內容 / 備註</label>
+                <textarea style={{ ...inp, minHeight: '120px', resize: 'vertical', fontFamily: 'sans-serif', lineHeight: 1.6 }}
+                  placeholder="輸入內容、心得或備註..." value={form.content}
+                  onChange={e => setForm(f => ({ ...f, content: e.target.value }))} />
+              </div>
+
+              <div style={{ gridColumn: 'span 2' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label style={{ ...lbl, margin: 0 }}>Hashtag 標籤</label>
+                  <button onClick={handleAutoTag} disabled={aiLoading} style={{ ...btn('#a78bfa'), fontSize: '12px', padding: '4px 12px' }}>
+                    <Sparkles size={13} />{aiLoading ? 'AI 分析中...' : 'AI 自動產生'}
+                  </button>
+                </div>
+                <p style={{ fontSize: '11px', color: '#8892a4', margin: '0 0 8px' }}>支援母子標籤，用 / 分隔，例如：投資/台股</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                  {form.hashtags.map(tag => (
+                    <span key={tag} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', backgroundColor: 'rgba(79,142,247,0.12)', color: '#4f8ef7', borderRadius: '20px', padding: '3px 10px', fontSize: '12px' }}>
+                      #{tag}
+                      <button onClick={() => setForm(f => ({ ...f, hashtags: f.hashtags.filter(t => t !== tag) }))}
+                        style={{ background: 'none', border: 'none', color: '#4f8ef7', cursor: 'pointer', padding: 0 }}>×</button>
+                    </span>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input style={{ ...inp, flex: 1 }} placeholder="新增標籤（支援 投資/台股 格式）" value={newTag}
+                    onChange={e => setNewTag(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleAddTag()} />
+                  <button style={btn('#2e3349')} onClick={handleAddTag}><Plus size={14} /></button>
+                </div>
+                {allTags.length > 0 && (
+                  <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                    {allTags.filter(t => !form.hashtags.includes(t)).slice(0, 12).map(tag => (
+                      <button key={tag} onClick={() => setForm(f => ({ ...f, hashtags: [...f.hashtags, tag] }))}
+                        style={{ backgroundColor: 'rgba(79,142,247,0.06)', color: '#8892a4', border: '1px solid #2e3349', borderRadius: '20px', padding: '2px 8px', fontSize: '11px', cursor: 'pointer' }}>
+                        +{tag}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
+              <button style={btn('#2e3349')} onClick={() => setShowForm(false)}><X size={14} />取消</button>
+              <button style={btn('#4f8ef7')} onClick={handleSave} disabled={loading}>
+                <Check size={14} />{loading ? '儲存中...' : editingId ? '確認更新' : '確認新增'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 搜尋 + 排序列 */}
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
+            <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#8892a4' }} />
+            <input style={{ ...inp, paddingLeft: '36px', backgroundColor: '#1a1d27' }}
+              placeholder="搜尋標題、內容、標籤..." value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            <ArrowUpDown size={13} color="#8892a4" />
+            {[
+              { key: 'createdAt' as const, label: '建立' },
+              { key: 'updatedAt' as const, label: '更新' },
+              { key: 'title' as const, label: '標題' },
+            ].map(({ key, label }) => (
+              <button key={key} className="sort-btn" onClick={() => handleSort(key)}
+                style={{ backgroundColor: sortBy === key ? 'rgba(79,142,247,0.12)' : 'transparent', color: sortBy === key ? '#4f8ef7' : '#8892a4', border: `1px solid ${sortBy === key ? '#4f8ef7' : '#2e3349'}` }}>
+                {label}{sortBy === key && <span>{sortDir === 'desc' ? ' ↓' : ' ↑'}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 筆記卡片 */}
+        {filtered.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '64px', color: '#8892a4' }}>
+            <p style={{ fontSize: '15px' }}>{search || selectedTag ? '找不到相關筆記' : '還沒有筆記，點上方「新增筆記」開始記錄'}</p>
+          </div>
+        ) : (
+          <div className="kms-grid">
+            {filtered.map(note => {
+              const Icon = TYPE_ICONS[note.type] || FileText
+              const color = TYPE_COLORS[note.type] || '#4f8ef7'
+              const isExpanded = expandedId === note.id
+              const isHighlighted = searchParams.get('note') === note.id
+              return (
+                <div key={note.id}
+                  ref={el => { noteRefs.current[note.id!] = el }}
+                  className={isHighlighted ? 'note-card-highlight' : ''}
+                  style={{ ...card, display: 'flex', flexDirection: 'column', gap: '12px', transition: 'box-shadow 0.3s' }}>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ backgroundColor: `${color}18`, borderRadius: '8px', padding: '6px', display: 'flex' }}>
+                        <Icon size={14} color={color} />
+                      </div>
+                      <span style={{ fontSize: '11px', color, fontWeight: 600 }}>{TYPE_LABELS[note.type]}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button onClick={() => handleEdit(note)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><Pencil size={14} /></button>
+                      <button onClick={() => handleDelete(note.id!)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><Trash2 size={14} /></button>
+                    </div>
+                  </div>
+
+                  <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#e2e8f0', lineHeight: 1.4 }}>{note.title}</h3>
+
+                  {note.imageUrl && (
+                    <img src={note.imageUrl} alt="" style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: '8px' }} />
+                  )}
+
+                  {note.url && (
+                    <a href={note.url} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: '12px', color: '#00c896', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <Link size={12} />{note.url}
+                    </a>
+                  )}
+
+                  {note.fileUrl && note.fileName && (
+                    <a href={note.fileUrl} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: '12px', color: '#a78bfa', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <FileText size={12} />{note.fileName}
+                    </a>
+                  )}
+
+                  {note.content && (
+                    <div>
+                      <p className={`note-content${isExpanded ? ' expanded' : ''}`}
+                        style={{ margin: 0, fontSize: '13px', color: '#8892a4', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                        {note.content}
+                      </p>
+                      {note.content.length > 150 && (
+                        <button onClick={() => setExpandedId(isExpanded ? null : note.id!)}
+                          style={{ background: 'none', border: 'none', color: '#4f8ef7', fontSize: '12px', cursor: 'pointer', padding: '4px 0', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          {isExpanded ? <><ChevronUp size={12} />收起</> : <><ChevronDown size={12} />展開全文</>}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {note.hashtags?.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                      {note.hashtags.map(tag => (
+                        <button key={tag} onClick={() => setSelectedTag(tag)}
+                          style={{ backgroundColor: 'rgba(79,142,247,0.08)', color: '#4f8ef7', border: 'none', borderRadius: '20px', padding: '2px 8px', fontSize: '11px', cursor: 'pointer' }}>
+                          #{tag}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ fontSize: '11px', color: '#8892a4', borderTop: '1px solid #2e3349', paddingTop: '8px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>建立：{new Date(note.createdAt).toLocaleDateString('zh-TW')}</span>
+                    {note.updatedAt && note.updatedAt !== note.createdAt && (
+                      <span>更新：{new Date(note.updatedAt).toLocaleDateString('zh-TW')}</span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
