@@ -16,11 +16,11 @@ exports.handler = async (event) => {
     return { statusCode: 500, headers, body: JSON.stringify({ error: 'NEWS_API_KEY not set' }) }
   }
 
+  // 全部改用英文，免費版支援最好
   const queries = [
-    `https://newsapi.org/v2/top-headlines?language=zh&category=business&pageSize=5&apiKey=${API_KEY}`,
-    `https://newsapi.org/v2/top-headlines?language=zh&category=technology&pageSize=3&apiKey=${API_KEY}`,
-    `https://newsapi.org/v2/top-headlines?language=en&q=finance+economy+market&pageSize=5&sortBy=publishedAt&apiKey=${API_KEY}`,
-    `https://newsapi.org/v2/top-headlines?language=en&q=AI+semiconductor+tech&pageSize=3&sortBy=publishedAt&apiKey=${API_KEY}`,
+    `https://newsapi.org/v2/top-headlines?category=business&pageSize=6&sortBy=publishedAt&apiKey=${API_KEY}`,
+    `https://newsapi.org/v2/top-headlines?category=technology&pageSize=4&sortBy=publishedAt&apiKey=${API_KEY}`,
+    `https://newsapi.org/v2/top-headlines?category=general&pageSize=4&sortBy=publishedAt&apiKey=${API_KEY}`,
   ]
 
   try {
@@ -30,9 +30,19 @@ exports.handler = async (event) => {
     results.forEach(r => {
       try {
         const data = JSON.parse(r)
-        if (data.articles) allArticles.push(...data.articles)
-      } catch {}
+        if (data.articles && data.articles.length > 0) {
+          allArticles.push(...data.articles)
+        }
+      } catch (e) {}
     })
+
+    if (allArticles.length === 0) {
+      return {
+        statusCode: 200,
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ articles: [], error: 'No articles found' })
+      }
+    }
 
     const seen = new Set()
     const filtered = allArticles.filter(a => {
@@ -40,7 +50,7 @@ exports.handler = async (event) => {
       if (seen.has(a.title)) return false
       seen.add(a.title)
       return true
-    }).slice(0, 15)
+    }).slice(0, 12)
 
     return {
       statusCode: 200,
@@ -48,7 +58,11 @@ exports.handler = async (event) => {
       body: JSON.stringify({ articles: filtered })
     }
   } catch (err) {
-    return { statusCode: 500, headers, body: JSON.stringify({ error: err.message }) }
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: err.message })
+    }
   }
 }
 
