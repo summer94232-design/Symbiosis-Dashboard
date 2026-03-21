@@ -3,15 +3,23 @@ import { collection, getDocs, orderBy, query, doc, setDoc, getDoc } from 'fireba
 import { investDB } from '../../lib/firebase'
 import { getMultipleQuotes } from '../../lib/fugle'
 import { calcPositions, calcAvailableCash, type TradeRecord } from '../../lib/calc'
-import { DollarSign, BarChart2, RefreshCw } from 'lucide-react'
+import { DollarSign, BarChart2, RefreshCw, Calendar } from 'lucide-react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
+import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates } from '../../lib/calendarData'
+import { useNavigate } from 'react-router-dom'
 
 const COLORS = ['#4f8ef7', '#00c896', '#f5a623', '#ff5757', '#a78bfa', '#34d399', '#fb923c', '#60a5fa']
 const CASH_COLOR = '#8892a4'
 const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
 const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
 
+const EVENT_COLORS: Record<string, string> = {
+  fomc: '#ff5757', futures: '#f5a623', tech: '#a78bfa',
+  investor: '#00c896', personal: '#4f8ef7', task: '#4f8ef7', dividend: '#00c896'
+}
+
 export default function Dashboard() {
+  const navigate = useNavigate()
   const [holdings, setHoldings] = useState<any[]>([])
   const [totalCash, setTotalCash] = useState(0)
   const [realizedPnL, setRealizedPnL] = useState(0)
@@ -19,20 +27,23 @@ export default function Dashboard() {
   const [priceLoading, setPriceLoading] = useState(false)
   const [lastUpdated, setLastUpdated] = useState('')
   const [hasPrice, setHasPrice] = useState(false)
+  const [upcomingEvents, setUpcomingEvents] = useState<any[]>([])
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const tradesSnap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc')))
-      const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
-      const cashSnap = await getDocs(collection(investDB, 'cashflow'))
-      const cashRecords = cashSnap.docs.map(d => d.data() as any)
+      // 平行載入三個 Firebase 查詢
+      const [tradesSnap, cashSnap, priceDoc] = await Promise.all([
+        getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
+        getDocs(collection(investDB, 'cashflow')),
+        getDoc(doc(investDB, 'settings', 'lastPrices'))
+      ])
 
+      const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
+      const cashRecords = cashSnap.docs.map(d => d.data() as any)
       const { holdings: positions, realized } = calcPositions(trades)
       setRealizedPnL(realized.reduce((s, r) => s + r.realized, 0))
 
-      // 讀取上次儲存的現價
-      const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
       const savedPrices: Record<string, any> = priceDoc.exists() ? priceDoc.data() : {}
       const savedAt = savedPrices._updatedAt || ''
 
@@ -60,7 +71,46 @@ export default function Dashboard() {
     setLoading(false)
   }
 
-  // 更新現價：呼叫 Fugle API 並存入 Firebase
+  const loadUpcoming = async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0]
+      const futureDate = new Date()
+      futureDate.setDate(futureDate.getDate() + 14)
+      const futureDateStr = futureDate.toISOString().split('T')[0]
+
+      // 平行載入個人行程和任務
+      const [personalSnap, taskSnap] = await Promise.all([
+        getDocs(collection(investDB, 'calendarEvents')),
+        getDocs(collection(investDB, 'tasks'))
+      ])
+
+      const personal = personalSnap.docs.map(d => ({ ...d.data(), type: 'personal' }))
+        .filter((e: any) => e.date >= today && e.date <= futureDateStr)
+
+      const tasks = taskSnap.docs.map(d => d.data())
+        .filter(t => t.dueDate && !t.done && t.dueDate >= today && t.dueDate <= futureDateStr)
+        .map(t => ({ title: `📋 ${t.title}`, date: t.dueDate, type: 'task' }))
+
+      const now = new Date()
+      const y = now.getFullYear()
+      const m = now.getMonth() + 1
+      const ny = m === 12 ? y + 1 : y
+      const nm = m === 12 ? 1 : m + 1
+      const builtin = [
+        ...FOMC_DATES,
+        ...TECH_EVENTS,
+        ...getFuturesSettlementDates(y, m),
+        ...getFuturesSettlementDates(ny, nm),
+      ].filter(e => e.date >= today && e.date <= futureDateStr)
+
+      const all = [...personal, ...tasks, ...builtin]
+        .sort((a: any, b: any) => a.date.localeCompare(b.date))
+        .slice(0, 6)
+
+      setUpcomingEvents(all)
+    } catch (err) { console.error(err) }
+  }
+
   const updatePrices = async () => {
     setPriceLoading(true)
     try {
@@ -70,7 +120,6 @@ export default function Dashboard() {
       const quotes = await getMultipleQuotes(symbols)
       const now = new Date().toLocaleString('zh-TW')
 
-      // 存入 Firebase
       const priceData: Record<string, any> = { _updatedAt: now }
       symbols.forEach(s => { if (quotes[s] !== null) priceData[s] = quotes[s] })
       await setDoc(doc(investDB, 'settings', 'lastPrices'), priceData)
@@ -98,7 +147,10 @@ export default function Dashboard() {
     setPriceLoading(false)
   }
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => {
+    // 平行執行兩個載入函數
+    Promise.all([loadData(), loadUpcoming()])
+  }, [])
 
   const totalMarketValue = holdings.reduce((s, h) => s + h.marketValue, 0)
   const totalCost = holdings.reduce((s, h) => s + h.totalCost, 0)
@@ -119,6 +171,8 @@ export default function Dashboard() {
         @media (max-width: 480px) { .dash-stats { grid-template-columns: 1fr; } }
         .dash-bottom { display: grid; gap: 16px; grid-template-columns: 300px 1fr; }
         @media (max-width: 900px) { .dash-bottom { grid-template-columns: 1fr; } }
+        .dash-lower { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; margin-top: 16px; }
+        @media (max-width: 900px) { .dash-lower { grid-template-columns: 1fr; } }
         .h-table { width: 100%; border-collapse: collapse; font-size: 13px; }
         .h-table th { padding: 8px 10px; text-align: left; color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; white-space: nowrap; }
         .h-table td { padding: 10px; border-bottom: 1px solid #2e3349; color: #e2e8f0; white-space: nowrap; }
@@ -134,11 +188,12 @@ export default function Dashboard() {
             </p>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={loadData} disabled={loading} style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 14px', color: '#e2e8f0', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
-              重新載入
+            <button onClick={() => Promise.all([loadData(), loadUpcoming()])} disabled={loading}
+              style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 14px', color: '#e2e8f0', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />重新載入
             </button>
-            <button onClick={updatePrices} disabled={priceLoading || loading} style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '8px 14px', color: '#fff', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <button onClick={updatePrices} disabled={priceLoading || loading}
+              style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '8px 14px', color: '#fff', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
               {priceLoading ? '更新中...' : '更新現價'}
             </button>
@@ -257,9 +312,99 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
+
+            {/* 近 14 天行事曆 + 待辦任務 */}
+            <div className="dash-lower">
+              <div style={card}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Calendar size={16} color="#4f8ef7" />
+                    <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>近 14 天行程</span>
+                  </div>
+                  <button onClick={() => navigate('/calendar')}
+                    style={{ background: 'none', border: 'none', color: '#4f8ef7', fontSize: '12px', cursor: 'pointer' }}>
+                    查看全部 →
+                  </button>
+                </div>
+                {upcomingEvents.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '24px', color: '#8892a4', fontSize: '13px' }}>近 14 天沒有行程</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {upcomingEvents.map((ev: any, i) => {
+                      const todayStr = new Date().toISOString().split('T')[0]
+                      const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0]
+                      const isToday = ev.date === todayStr
+                      const isTomorrow = ev.date === tomorrowStr
+                      const dateLabel = isToday ? '今天' : isTomorrow ? '明天' : ev.date.slice(5).replace('-', '/')
+                      const color = EVENT_COLORS[ev.type] || '#4f8ef7'
+                      return (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', backgroundColor: '#0f1117', borderRadius: '8px', borderLeft: `3px solid ${color}` }}>
+                          <span style={{ fontSize: '11px', color: isToday ? '#ff5757' : '#8892a4', fontWeight: isToday ? 700 : 400, flexShrink: 0, minWidth: '32px' }}>{dateLabel}</span>
+                          <span style={{ fontSize: '13px', color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{ev.title}</span>
+                          <span style={{ fontSize: '10px', color, backgroundColor: `${color}18`, borderRadius: '10px', padding: '1px 6px', flexShrink: 0 }}>
+                            {{ fomc: 'FOMC', futures: '期貨', tech: '科技', investor: '法說', personal: '行程', task: '任務', dividend: '除息' }[ev.type as string] || '行程'}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div style={card}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>📋 待辦任務</span>
+                  <button onClick={() => navigate('/calendar/tasks')}
+                    style={{ background: 'none', border: 'none', color: '#4f8ef7', fontSize: '12px', cursor: 'pointer' }}>
+                    查看全部 →
+                  </button>
+                </div>
+                <TodoWidget />
+              </div>
+            </div>
           </>
         )}
       </div>
     </>
+  )
+}
+
+function TodoWidget() {
+  const [tasks, setTasks] = useState<any[]>([])
+
+  useEffect(() => {
+    const load = async () => {
+      const snap = await getDocs(query(collection(investDB, 'tasks'), orderBy('order', 'asc')))
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter((t: any) => !t.done)
+        .slice(0, 5)
+      setTasks(data)
+    }
+    load()
+  }, [])
+
+  const PRIORITY_COLORS: Record<string, string> = { high: '#ff5757', medium: '#f5a623', low: '#00c896' }
+
+  if (tasks.length === 0) {
+    return <div style={{ textAlign: 'center', padding: '24px', color: '#8892a4', fontSize: '13px' }}>🎉 沒有待辦任務</div>
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      {tasks.map((t: any) => {
+        const isOverdue = t.dueDate && new Date(t.dueDate) < new Date()
+        return (
+          <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', backgroundColor: '#0f1117', borderRadius: '8px', borderLeft: `3px solid ${PRIORITY_COLORS[t.priority] || '#4f8ef7'}` }}>
+            <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: PRIORITY_COLORS[t.priority] || '#4f8ef7', flexShrink: 0 }} />
+            <span style={{ fontSize: '13px', color: '#e2e8f0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
+            {t.dueDate && (
+              <span style={{ fontSize: '11px', color: isOverdue ? '#ff5757' : '#8892a4', flexShrink: 0 }}>
+                {isOverdue ? '⚠️ ' : ''}{t.dueDate.slice(5).replace('-', '/')}
+              </span>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }

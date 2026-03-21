@@ -3,8 +3,8 @@ import { useSearchParams } from 'react-router-dom'
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { kmsDB, kmsStorage } from '../../lib/firebase'
-import { generateHashtags } from '../../lib/gemini'
-import { Plus, Search, Pencil, Trash2, X, Check, Link, FileText, Image, Sparkles, ChevronDown, ChevronUp, ArrowUpDown } from 'lucide-react'
+import { generateHashtags, findRelatedNotes } from '../../lib/gemini'
+import { Plus, Search, Pencil, Trash2, X, Check, Link, FileText, Image, Sparkles, ChevronDown, ChevronUp, ArrowUpDown, Link2 } from 'lucide-react'
 import * as mammoth from 'mammoth'
 
 interface Note {
@@ -17,6 +17,7 @@ interface Note {
   fileUrl?: string
   fileName?: string
   hashtags: string[]
+  links?: string[]
   createdAt: string
   updatedAt: string
 }
@@ -26,7 +27,7 @@ interface Props {
   setSelectedTag: (tag: string) => void
 }
 
-const empty: Note = { title: '', content: '', type: 'note', hashtags: [], createdAt: '', updatedAt: '' }
+const empty: Note = { title: '', content: '', type: 'note', hashtags: [], links: [], createdAt: '', updatedAt: '' }
 const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
 const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
 const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
@@ -44,6 +45,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
   const [form, setForm] = useState<Note>(empty)
   const [loading, setLoading] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
+  const [aiLinkLoading, setAiLinkLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [newTag, setNewTag] = useState('')
@@ -51,6 +53,8 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
   const [allTags, setAllTags] = useState<string[]>([])
   const [sortBy, setSortBy] = useState<'createdAt' | 'updatedAt' | 'title'>('createdAt')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
+  const [showLinkPicker, setShowLinkPicker] = useState(false)
+  const [linkSearch, setLinkSearch] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const imgRef = useRef<HTMLInputElement>(null)
   const noteRefs = useRef<Record<string, HTMLDivElement | null>>({})
@@ -86,22 +90,32 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     setAiLoading(false)
   }
 
+  // AI 自動找相關筆記
+  const handleAILinks = async () => {
+    if (!form.title && !form.content) return
+    setAiLinkLoading(true)
+    const otherNotes = notes
+      .filter(n => n.id !== editingId)
+      .map(n => ({ id: n.id!, title: n.title, content: n.content || '' }))
+    const relatedIds = await findRelatedNotes(form.title, form.content, otherNotes)
+    // 合併現有連結
+    const merged = [...new Set([...(form.links || []), ...relatedIds])]
+    setForm(f => ({ ...f, links: merged }))
+    setAiLinkLoading(false)
+  }
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const file = e.target.files?.[0]; if (!file) return
     setUploading(true)
-    try {
-      const storageRef = ref(kmsStorage, `images/${Date.now()}_${file.name}`)
-      await uploadBytes(storageRef, file)
-      const url = await getDownloadURL(storageRef)
-      setForm(f => ({ ...f, imageUrl: url, type: 'image' }))
-    } catch (err) { console.error(err) }
+    const storageRef = ref(kmsStorage, `images/${Date.now()}_${file.name}`)
+    await uploadBytes(storageRef, file)
+    const url = await getDownloadURL(storageRef)
+    setForm(f => ({ ...f, imageUrl: url, type: 'image' }))
     setUploading(false)
   }
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const file = e.target.files?.[0]; if (!file) return
     setUploading(true)
     try {
       let extractedText = ''
@@ -111,8 +125,8 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
       }
       const storageRef = ref(kmsStorage, `files/${Date.now()}_${file.name}`)
       await uploadBytes(storageRef, file)
-      const url = await getDownloadURL(storageRef)
-      setForm(f => ({ ...f, type: 'file', fileUrl: url, fileName: file.name, content: extractedText || f.content }))
+      const fileUrl = await getDownloadURL(storageRef)
+      setForm(f => ({ ...f, type: 'file', fileUrl, fileName: file.name, content: extractedText || f.content }))
     } catch (err) { console.error(err) }
     setUploading(false)
   }
@@ -121,33 +135,70 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     if (!form.title) return
     setLoading(true)
     const now = new Date().toISOString()
+
+    // 雙向連結：更新被連結的筆記也加入反向連結
+    const oldLinks = editingId ? (notes.find(n => n.id === editingId)?.links || []) : []
+    const newLinks = form.links || []
+    const addedLinks = newLinks.filter(id => !oldLinks.includes(id))
+    const removedLinks = oldLinks.filter(id => !newLinks.includes(id))
+
     if (editingId) {
       await updateDoc(doc(kmsDB, 'notes', editingId), { ...form, updatedAt: now })
     } else {
-      await addDoc(collection(kmsDB, 'notes'), { ...form, createdAt: now, updatedAt: now })
+      const docRef = await addDoc(collection(kmsDB, 'notes'), { ...form, createdAt: now, updatedAt: now })
+      // 新筆記的 id
+      const newId = docRef.id
+      // 更新被連結的筆記加入反向連結
+      for (const linkedId of newLinks) {
+        const linkedNote = notes.find(n => n.id === linkedId)
+        if (linkedNote) {
+          const updatedLinks = [...new Set([...(linkedNote.links || []), newId])]
+          await updateDoc(doc(kmsDB, 'notes', linkedId), { links: updatedLinks })
+        }
+      }
+      setShowForm(false); setEditingId(null); setForm(empty); setLoading(false); load(); return
     }
+
+    // 更新雙向連結
+    for (const linkedId of addedLinks) {
+      const linkedNote = notes.find(n => n.id === linkedId)
+      if (linkedNote && editingId) {
+        const updatedLinks = [...new Set([...(linkedNote.links || []), editingId])]
+        await updateDoc(doc(kmsDB, 'notes', linkedId), { links: updatedLinks })
+      }
+    }
+    for (const linkedId of removedLinks) {
+      const linkedNote = notes.find(n => n.id === linkedId)
+      if (linkedNote && editingId) {
+        const updatedLinks = (linkedNote.links || []).filter(id => id !== editingId)
+        await updateDoc(doc(kmsDB, 'notes', linkedId), { links: updatedLinks })
+      }
+    }
+
     setShowForm(false); setEditingId(null); setForm(empty); setLoading(false); load()
   }
 
   const handleEdit = (note: Note) => {
-    setForm(note); setEditingId(note.id!); setShowForm(true)
+    setForm({ ...note, links: note.links || [] })
+    setEditingId(note.id!); setShowForm(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const handleDelete = async (id: string) => {
     if (!confirm('確定要刪除？筆記將移至垃圾桶，30 天後永久刪除。')) return
-    const note = notes.find(n => n.id === id)
-    if (!note) return
+    const note = notes.find(n => n.id === id); if (!note) return
+    // 移除其他筆記中對此筆記的連結
+    for (const linkedId of (note.links || [])) {
+      const linkedNote = notes.find(n => n.id === linkedId)
+      if (linkedNote) {
+        await updateDoc(doc(kmsDB, 'notes', linkedId), {
+          links: (linkedNote.links || []).filter(l => l !== id)
+        })
+      }
+    }
     const { setDoc } = await import('firebase/firestore')
     await setDoc(doc(kmsDB, 'trash', id), { ...note, deletedAt: new Date().toISOString() })
-    await deleteDoc(doc(kmsDB, 'notes', id))
-    load()
-  }
-
-  const handleAddTag = () => {
-    if (!newTag.trim() || form.hashtags.includes(newTag.trim())) return
-    setForm(f => ({ ...f, hashtags: [...f.hashtags, newTag.trim()] }))
-    setNewTag('')
+    await deleteDoc(doc(kmsDB, 'notes', id)); load()
   }
 
   const handleSort = (key: typeof sortBy) => {
@@ -155,21 +206,30 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     else { setSortBy(key); setSortDir('desc') }
   }
 
+  const toggleLink = (noteId: string) => {
+    setForm(f => {
+      const links = f.links || []
+      return { ...f, links: links.includes(noteId) ? links.filter(l => l !== noteId) : [...links, noteId] }
+    })
+  }
+
   const filtered = notes
     .filter(n => {
       const matchSearch = !search || n.title.includes(search) || n.content.includes(search) ||
         n.hashtags?.some(t => t.includes(search)) || n.url?.includes(search)
-      const matchTag = !selectedTag || n.hashtags?.some(t =>
-        t === selectedTag || t.startsWith(selectedTag + '/'))
+      const matchTag = !selectedTag || n.hashtags?.some(t => t === selectedTag || t.startsWith(selectedTag + '/'))
       return matchSearch && matchTag
     })
     .sort((a, b) => {
-      if (sortBy === 'title') return sortDir === 'asc'
-        ? a.title.localeCompare(b.title, 'zh-TW')
-        : b.title.localeCompare(a.title, 'zh-TW')
+      if (sortBy === 'title') return sortDir === 'asc' ? a.title.localeCompare(b.title, 'zh-TW') : b.title.localeCompare(a.title, 'zh-TW')
       const aVal = a[sortBy] || ''; const bVal = b[sortBy] || ''
       return sortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal)
     })
+
+  const linkableNotes = notes.filter(n =>
+    n.id !== editingId &&
+    (linkSearch === '' || n.title.toLowerCase().includes(linkSearch.toLowerCase()))
+  )
 
   return (
     <>
@@ -182,7 +242,8 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         .note-content.expanded { display: block; }
         .note-card-highlight { box-shadow: 0 0 0 2px #4f8ef7 !important; }
         .sort-btn { display: flex; align-items: center; gap: 4px; border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; transition: all 0.15s; }
-        .sort-btn:hover { border-color: #4f8ef7 !important; color: #e2e8f0 !important; }
+        .link-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: background 0.15s; }
+        .link-item:hover { background: rgba(79,142,247,0.08); }
       `}</style>
 
       <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1400px', margin: '0 auto' }}>
@@ -208,7 +269,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
               <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
             </div>
 
-            {/* 類型選擇 */}
+            {/* 類型 */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
               {Object.entries(TYPE_LABELS).map(([key, label]) => {
                 const Icon = TYPE_ICONS[key]
@@ -226,14 +287,12 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                 <label style={lbl}>標題 *</label>
                 <input style={inp} placeholder="筆記標題" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
               </div>
-
               {form.type === 'url' && (
                 <div style={{ gridColumn: 'span 2' }}>
                   <label style={lbl}>網址</label>
                   <input style={inp} placeholder="https://..." value={form.url || ''} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} />
                 </div>
               )}
-
               {form.type === 'image' && (
                 <div style={{ gridColumn: 'span 2' }}>
                   <label style={lbl}>圖片</label>
@@ -244,7 +303,6 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                   </label>
                 </div>
               )}
-
               {form.type === 'file' && (
                 <div style={{ gridColumn: 'span 2' }}>
                   <label style={lbl}>文件（PDF / Word）</label>
@@ -255,7 +313,6 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                   </label>
                 </div>
               )}
-
               <div style={{ gridColumn: 'span 2' }}>
                 <label style={lbl}>內容 / 備註</label>
                 <textarea style={{ ...inp, minHeight: '120px', resize: 'vertical', fontFamily: 'sans-serif', lineHeight: 1.6 }}
@@ -263,6 +320,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                   onChange={e => setForm(f => ({ ...f, content: e.target.value }))} />
               </div>
 
+              {/* Hashtag */}
               <div style={{ gridColumn: 'span 2' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                   <label style={{ ...lbl, margin: 0 }}>Hashtag 標籤</label>
@@ -274,17 +332,14 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
                   {form.hashtags.map(tag => (
                     <span key={tag} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', backgroundColor: 'rgba(79,142,247,0.12)', color: '#4f8ef7', borderRadius: '20px', padding: '3px 10px', fontSize: '12px' }}>
-                      #{tag}
-                      <button onClick={() => setForm(f => ({ ...f, hashtags: f.hashtags.filter(t => t !== tag) }))}
-                        style={{ background: 'none', border: 'none', color: '#4f8ef7', cursor: 'pointer', padding: 0 }}>×</button>
+                      #{tag}<button onClick={() => setForm(f => ({ ...f, hashtags: f.hashtags.filter(t => t !== tag) }))} style={{ background: 'none', border: 'none', color: '#4f8ef7', cursor: 'pointer', padding: 0 }}>×</button>
                     </span>
                   ))}
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input style={{ ...inp, flex: 1 }} placeholder="新增標籤（支援 投資/台股 格式）" value={newTag}
-                    onChange={e => setNewTag(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleAddTag()} />
-                  <button style={btn('#2e3349')} onClick={handleAddTag}><Plus size={14} /></button>
+                    onChange={e => setNewTag(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { if (!newTag.trim() || form.hashtags.includes(newTag.trim())) return; setForm(f => ({ ...f, hashtags: [...f.hashtags, newTag.trim()] })); setNewTag('') } }} />
+                  <button style={btn('#2e3349')} onClick={() => { if (!newTag.trim() || form.hashtags.includes(newTag.trim())) return; setForm(f => ({ ...f, hashtags: [...f.hashtags, newTag.trim()] })); setNewTag('') }}><Plus size={14} /></button>
                 </div>
                 {allTags.length > 0 && (
                   <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
@@ -294,6 +349,67 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                         +{tag}
                       </button>
                     ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 雙向連結 */}
+              <div style={{ gridColumn: 'span 2' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label style={{ ...lbl, margin: 0 }}>
+                    <Link2 size={12} style={{ display: 'inline', marginRight: '4px' }} />
+                    筆記連結
+                    {(form.links?.length || 0) > 0 && <span style={{ marginLeft: '6px', fontSize: '11px', backgroundColor: 'rgba(79,142,247,0.12)', color: '#4f8ef7', borderRadius: '10px', padding: '1px 6px' }}>{form.links?.length}</span>}
+                  </label>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button onClick={handleAILinks} disabled={aiLinkLoading} style={{ ...btn('#00c896'), fontSize: '12px', padding: '4px 12px' }}>
+                      <Sparkles size={13} />{aiLinkLoading ? 'AI 分析中...' : 'AI 建議連結'}
+                    </button>
+                    <button onClick={() => setShowLinkPicker(v => !v)} style={{ ...btn('#21253a'), border: '1px solid #2e3349', fontSize: '12px', padding: '4px 12px' }}>
+                      <Plus size={13} />手動選擇
+                    </button>
+                  </div>
+                </div>
+
+                {/* 已選連結 */}
+                {(form.links?.length || 0) > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                    {form.links?.map(linkId => {
+                      const linkedNote = notes.find(n => n.id === linkId)
+                      if (!linkedNote) return null
+                      return (
+                        <span key={linkId} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', backgroundColor: 'rgba(0,200,150,0.1)', color: '#00c896', borderRadius: '20px', padding: '3px 10px', fontSize: '12px' }}>
+                          🔗 {linkedNote.title.slice(0, 20)}
+                          <button onClick={() => toggleLink(linkId)} style={{ background: 'none', border: 'none', color: '#00c896', cursor: 'pointer', padding: 0 }}>×</button>
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* 連結選擇器 */}
+                {showLinkPicker && (
+                  <div style={{ backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '12px', marginTop: '8px' }}>
+                    <input style={{ ...inp, marginBottom: '8px', fontSize: '13px' }} placeholder="搜尋筆記..." value={linkSearch}
+                      onChange={e => setLinkSearch(e.target.value)} />
+                    <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                      {linkableNotes.slice(0, 20).map(n => {
+                        const isLinked = form.links?.includes(n.id!)
+                        return (
+                          <div key={n.id} className="link-item" onClick={() => toggleLink(n.id!)}
+                            style={{ backgroundColor: isLinked ? 'rgba(0,200,150,0.08)' : 'transparent' }}>
+                            <div style={{ width: '16px', height: '16px', borderRadius: '4px', border: `2px solid ${isLinked ? '#00c896' : '#2e3349'}`, backgroundColor: isLinked ? '#00c896' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              {isLinked && <Check size={10} color="#fff" />}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: '13px', color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.title}</div>
+                              {n.content && <div style={{ fontSize: '11px', color: '#8892a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.content.slice(0, 60)}</div>}
+                            </div>
+                          </div>
+                        )
+                      })}
+                      {linkableNotes.length === 0 && <p style={{ fontSize: '13px', color: '#8892a4', textAlign: 'center', padding: '16px' }}>找不到筆記</p>}
+                    </div>
                   </div>
                 )}
               </div>
@@ -308,7 +424,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
           </div>
         )}
 
-        {/* 搜尋 + 排序列 */}
+        {/* 搜尋 + 排序 */}
         <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
           <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
             <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#8892a4' }} />
@@ -342,6 +458,8 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
               const color = TYPE_COLORS[note.type] || '#4f8ef7'
               const isExpanded = expandedId === note.id
               const isHighlighted = searchParams.get('note') === note.id
+              const linkedNotes = (note.links || []).map(id => notes.find(n => n.id === id)).filter(Boolean) as Note[]
+
               return (
                 <div key={note.id}
                   ref={el => { noteRefs.current[note.id!] = el }}
@@ -363,9 +481,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
 
                   <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#e2e8f0', lineHeight: 1.4 }}>{note.title}</h3>
 
-                  {note.imageUrl && (
-                    <img src={note.imageUrl} alt="" style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: '8px' }} />
-                  )}
+                  {note.imageUrl && <img src={note.imageUrl} alt="" style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: '8px' }} />}
 
                   {note.url && (
                     <a href={note.url} target="_blank" rel="noopener noreferrer"
@@ -407,11 +523,39 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                     </div>
                   )}
 
+                  {/* 雙向連結顯示 */}
+                  {linkedNotes.length > 0 && (
+                    <div style={{ borderTop: '1px solid #2e3349', paddingTop: '10px' }}>
+                      <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <Link2 size={11} />連結筆記 ({linkedNotes.length})
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {linkedNotes.map(linked => (
+                          <div key={linked.id}
+                            onClick={() => {
+                              setExpandedId(linked.id!)
+                              noteRefs.current[linked.id!]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                            }}
+                            style={{ backgroundColor: '#0f1117', borderRadius: '6px', padding: '8px 10px', cursor: 'pointer', border: '1px solid #2e3349', transition: 'border-color 0.15s' }}
+                            onMouseEnter={e => (e.currentTarget.style.borderColor = '#00c896')}
+                            onMouseLeave={e => (e.currentTarget.style.borderColor = '#2e3349')}>
+                            <div style={{ fontSize: '12px', color: '#00c896', fontWeight: 600, marginBottom: '3px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              🔗 {linked.title}
+                            </div>
+                            {linked.content && (
+                              <div style={{ fontSize: '11px', color: '#8892a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {linked.content.slice(0, 80)}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div style={{ fontSize: '11px', color: '#8892a4', borderTop: '1px solid #2e3349', paddingTop: '8px', display: 'flex', justifyContent: 'space-between' }}>
                     <span>建立：{new Date(note.createdAt).toLocaleDateString('zh-TW')}</span>
-                    {note.updatedAt && note.updatedAt !== note.createdAt && (
-                      <span>更新：{new Date(note.updatedAt).toLocaleDateString('zh-TW')}</span>
-                    )}
+                    {note.updatedAt !== note.createdAt && <span>更新：{new Date(note.updatedAt).toLocaleDateString('zh-TW')}</span>}
                   </div>
                 </div>
               )
