@@ -16,9 +16,6 @@ exports.handler = async (event) => {
     return { statusCode: 500, headers, body: JSON.stringify({ error: 'NEWS_API_KEY not set' }) }
   }
 
-  const { category = 'general', q = '' } = event.queryStringParameters || {}
-
-  // 財經 + 科技 + 一般新聞
   const queries = [
     `https://newsapi.org/v2/top-headlines?language=zh&category=business&pageSize=5&apiKey=${API_KEY}`,
     `https://newsapi.org/v2/top-headlines?language=zh&category=technology&pageSize=3&apiKey=${API_KEY}`,
@@ -28,7 +25,7 @@ exports.handler = async (event) => {
 
   try {
     const results = await Promise.all(queries.map(url => fetchUrl(url)))
-    const allArticles: any[] = []
+    const allArticles = []
 
     results.forEach(r => {
       try {
@@ -37,7 +34,6 @@ exports.handler = async (event) => {
       } catch {}
     })
 
-    // 去重 + 過濾空標題
     const seen = new Set()
     const filtered = allArticles.filter(a => {
       if (!a.title || a.title === '[Removed]') return false
