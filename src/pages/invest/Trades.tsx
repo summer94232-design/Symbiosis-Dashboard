@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query, setDoc, writeBatch } from 'firebase/firestore'
+import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { calcFee, calcTax, isETF } from '../../lib/calc'
-import { Pencil, Trash2, X, Check, Upload, Search } from 'lucide-react'
+import { Pencil, Trash2, X, Check, Upload, Search, ChevronDown, ChevronUp } from 'lucide-react'
 
 interface Trade {
   id?: string
@@ -37,7 +37,16 @@ export default function Trades() {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<{ success: number; failed: number; skipped: number } | null>(null)
   const [search, setSearch] = useState('')
+  const [showForm, setShowForm] = useState(false)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const handle = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', handle)
+    return () => window.removeEventListener('resize', handle)
+  }, [])
 
   const load = async () => {
     const q = query(collection(investDB, 'trades'), orderBy('date', 'desc'))
@@ -91,12 +100,12 @@ export default function Trades() {
     } else {
       await addDoc(collection(investDB, 'trades'), { ...form })
     }
-    setEditingId(null); setForm(emptyTrade); setLoading(false)
+    setEditingId(null); setForm(emptyTrade); setLoading(false); setShowForm(false)
     load(); loadDict()
   }
 
-  const handleEdit = (t: Trade) => { setForm(t); setEditingId(t.id!) }
-  const handleCancel = () => { setForm(emptyTrade); setEditingId(null) }
+  const handleEdit = (t: Trade) => { setForm(t); setEditingId(t.id!); setShowForm(true); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+  const handleCancel = () => { setForm(emptyTrade); setEditingId(null); setShowForm(false) }
   const handleDelete = async (id: string) => {
     if (!confirm('確定要刪除？')) return
     await deleteDoc(doc(investDB, 'trades', id)); load()
@@ -149,7 +158,6 @@ export default function Trades() {
     load(); loadDict()
   }
 
-  // 搜尋篩選
   const filtered = trades.filter(t =>
     !search || t.code.toLowerCase().includes(search.toLowerCase()) || t.name.includes(search)
   )
@@ -162,74 +170,84 @@ export default function Trades() {
         @media (max-width: 1100px) { .trades-grid { grid-template-columns: repeat(3, 1fr); } }
         @media (max-width: 700px) { .trades-grid { grid-template-columns: repeat(2, 1fr); } }
         @media (max-width: 480px) { .trades-grid { grid-template-columns: 1fr; } .trades-grid .span2 { grid-column: span 1; } }
-        .table-wrap { overflow-x: auto; }
-        .trade-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-        .trade-table th { padding: 10px 12px; text-align: left; color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; white-space: nowrap; }
-        .trade-table td { padding: 12px; border-bottom: 1px solid #2e3349; color: #e2e8f0; white-space: nowrap; }
+        .trade-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .trade-table th { padding: 8px 10px; text-align: left; color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; white-space: nowrap; }
+        .trade-table td { padding: 10px; border-bottom: 1px solid #2e3349; color: #e2e8f0; white-space: nowrap; }
         .trade-table tr:hover td { background-color: rgba(79,142,247,0.04); }
+        .trade-card { background: #0f1117; border-radius: 10px; padding: 12px 14px; border: 1px solid #2e3349; margin-bottom: 8px; }
+        .trade-card:active { border-color: #4f8ef7; }
       `}</style>
 
-      <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+      <div style={{ padding: 'clamp(12px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
+
+        {/* 標題列 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
           <div>
-            <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>買賣紀錄</h1>
-            <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>共 {trades.length} 筆交易</p>
+            <h1 style={{ fontSize: 'clamp(16px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>買賣紀錄</h1>
+            <p style={{ fontSize: '12px', color: '#8892a4', margin: '2px 0 0' }}>共 {trades.length} 筆交易</p>
           </div>
-          <label style={{ ...btn('#21253a'), border: '1px solid #2e3349', cursor: 'pointer' }}>
-            <Upload size={15} />{importing ? '匯入中...' : '匯入歷史紀錄 CSV'}
-            <input ref={fileRef} type="file" accept=".csv" onChange={handleImportCSV} disabled={importing} style={{ display: 'none' }} />
-          </label>
-        </div>
-
-        {importResult && (
-          <div style={{ backgroundColor: 'rgba(0,200,150,0.08)', border: '1px solid rgba(0,200,150,0.25)', borderRadius: '10px', padding: '14px 18px', marginBottom: '16px', display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
-            <div><span style={{ fontSize: '12px', color: '#8892a4' }}>成功匯入</span><div style={{ fontSize: '18px', fontWeight: 700, color: '#00c896' }}>{importResult.success} 筆</div></div>
-            {importResult.failed > 0 && <div><span style={{ fontSize: '12px', color: '#8892a4' }}>失敗</span><div style={{ fontSize: '18px', fontWeight: 700, color: '#ff5757' }}>{importResult.failed} 筆</div></div>}
-            {importResult.skipped > 0 && <div><span style={{ fontSize: '12px', color: '#8892a4' }}>略過</span><div style={{ fontSize: '18px', fontWeight: 700, color: '#8892a4' }}>{importResult.skipped} 筆</div></div>}
-          </div>
-        )}
-
-        {/* 表單 */}
-        <div style={{ ...card, marginBottom: '20px' }}>
-          <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>
-            {editingId ? '✏️ 編輯交易' : '➕ 新增交易'}
-          </div>
-          <div className="trades-grid">
-            <div><label style={lbl}>日期</label><input type="date" style={inp} value={form.date} onChange={e => handleChange('date', e.target.value)} /></div>
-            <div><label style={lbl}>類型</label>
-              <select style={inp} value={form.type} onChange={e => handleChange('type', e.target.value)}>
-                <option value="buy">買入</option>
-                <option value="sell">賣出</option>
-              </select>
-            </div>
-            <div><label style={lbl}>股票代號</label><input style={inp} placeholder="例：2330" value={form.code} onChange={e => handleCodeChange(e.target.value)} /></div>
-            <div><label style={lbl}>股票名稱</label><input style={inp} placeholder="例：台積電" value={form.name} onChange={e => handleChange('name', e.target.value)} /></div>
-            <div><label style={lbl}>價格</label><input type="number" style={inp} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} /></div>
-            <div><label style={lbl}>股數</label><input type="number" style={inp} placeholder="0" value={form.shares || ''} onChange={e => handleChange('shares', parseInt(e.target.value) || 0)} /></div>
-            <div>
-              <label style={lbl}>手續費 <span style={{ color: '#4f8ef7', fontSize: '11px' }}>（6折自動計算）</span></label>
-              <input type="number" style={inp} value={form.fee || ''} onChange={e => handleChange('fee', parseFloat(e.target.value) || 0)} />
-            </div>
-            <div>
-              <label style={lbl}>交易稅 <span style={{ color: form.type === 'sell' ? (isETF(form.code) ? '#f5a623' : '#4f8ef7') : '#2e3349', fontSize: '11px' }}>
-                {form.type === 'sell' ? (isETF(form.code) ? '（ETF千分之一）' : '（千分之三）') : '（買入免稅）'}
-              </span></label>
-              <input type="number" style={inp} value={form.tax || ''} onChange={e => handleChange('tax', parseFloat(e.target.value) || 0)} />
-            </div>
-            <div><label style={lbl}>收付金額</label><input type="number" style={{ ...inp, color: form.type === 'buy' ? '#ff5757' : '#00c896' }} value={form.total} readOnly /></div>
-            <div className="span2"><label style={lbl}>備註</label><input style={inp} placeholder="選填" value={form.note} onChange={e => handleChange('note', e.target.value)} /></div>
-          </div>
-          <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
-            {editingId && <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消編輯</button>}
-            <button style={btn('#4f8ef7')} onClick={handleSave} disabled={loading}>
-              <Check size={14} />{loading ? '儲存中...' : editingId ? '確認更新' : '確認新增'}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <label style={{ ...btn('#21253a'), border: '1px solid #2e3349', cursor: 'pointer', fontSize: '12px', padding: '7px 10px' }}>
+              <Upload size={13} />{isMobile ? 'CSV' : importing ? '匯入中...' : '匯入歷史紀錄 CSV'}
+              <input ref={fileRef} type="file" accept=".csv" onChange={handleImportCSV} disabled={importing} style={{ display: 'none' }} />
+            </label>
+            <button style={{ ...btn('#4f8ef7'), fontSize: '12px', padding: '7px 12px' }} onClick={() => { setForm(emptyTrade); setEditingId(null); setShowForm(v => !v) }}>
+              {showForm ? <X size={13} /> : <Check size={13} />}{showForm ? '收起' : '新增交易'}
             </button>
           </div>
         </div>
 
+        {importResult && (
+          <div style={{ backgroundColor: 'rgba(0,200,150,0.08)', border: '1px solid rgba(0,200,150,0.25)', borderRadius: '10px', padding: '12px 16px', marginBottom: '12px', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+            <div><span style={{ fontSize: '11px', color: '#8892a4' }}>成功匯入</span><div style={{ fontSize: '16px', fontWeight: 700, color: '#00c896' }}>{importResult.success} 筆</div></div>
+            {importResult.failed > 0 && <div><span style={{ fontSize: '11px', color: '#8892a4' }}>失敗</span><div style={{ fontSize: '16px', fontWeight: 700, color: '#ff5757' }}>{importResult.failed} 筆</div></div>}
+            {importResult.skipped > 0 && <div><span style={{ fontSize: '11px', color: '#8892a4' }}>略過</span><div style={{ fontSize: '16px', fontWeight: 700, color: '#8892a4' }}>{importResult.skipped} 筆</div></div>}
+          </div>
+        )}
+
+        {/* 表單 */}
+        {showForm && (
+          <div style={{ ...card, marginBottom: '16px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>
+              {editingId ? '✏️ 編輯交易' : '➕ 新增交易'}
+            </div>
+            <div className="trades-grid">
+              <div><label style={lbl}>日期</label><input type="date" style={inp} value={form.date} onChange={e => handleChange('date', e.target.value)} /></div>
+              <div><label style={lbl}>類型</label>
+                <select style={inp} value={form.type} onChange={e => handleChange('type', e.target.value)}>
+                  <option value="buy">買入</option>
+                  <option value="sell">賣出</option>
+                </select>
+              </div>
+              <div><label style={lbl}>股票代號</label><input style={inp} placeholder="例：2330" value={form.code} onChange={e => handleCodeChange(e.target.value)} /></div>
+              <div><label style={lbl}>股票名稱</label><input style={inp} placeholder="例：台積電" value={form.name} onChange={e => handleChange('name', e.target.value)} /></div>
+              <div><label style={lbl}>價格</label><input type="number" style={inp} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} /></div>
+              <div><label style={lbl}>股數</label><input type="number" style={inp} placeholder="0" value={form.shares || ''} onChange={e => handleChange('shares', parseInt(e.target.value) || 0)} /></div>
+              <div>
+                <label style={lbl}>手續費 <span style={{ color: '#4f8ef7', fontSize: '11px' }}>（6折自動計算）</span></label>
+                <input type="number" style={inp} value={form.fee || ''} onChange={e => handleChange('fee', parseFloat(e.target.value) || 0)} />
+              </div>
+              <div>
+                <label style={lbl}>交易稅 <span style={{ color: form.type === 'sell' ? (isETF(form.code) ? '#f5a623' : '#4f8ef7') : '#2e3349', fontSize: '11px' }}>
+                  {form.type === 'sell' ? (isETF(form.code) ? '（ETF千分之一）' : '（千分之三）') : '（買入免稅）'}
+                </span></label>
+                <input type="number" style={inp} value={form.tax || ''} onChange={e => handleChange('tax', parseFloat(e.target.value) || 0)} />
+              </div>
+              <div><label style={lbl}>收付金額</label><input type="number" style={{ ...inp, color: form.type === 'buy' ? '#ff5757' : '#00c896' }} value={form.total} readOnly /></div>
+              <div className="span2"><label style={lbl}>備註</label><input style={inp} placeholder="選填" value={form.note} onChange={e => handleChange('note', e.target.value)} /></div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
+              {editingId && <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消</button>}
+              <button style={btn('#4f8ef7')} onClick={handleSave} disabled={loading}>
+                <Check size={14} />{loading ? '儲存中...' : editingId ? '確認更新' : '確認新增'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* 搜尋列 */}
         <div style={{ marginBottom: '12px', position: 'relative' }}>
-          <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#8892a4' }} />
+          <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#8892a4' }} />
           <input style={{ ...inp, paddingLeft: '36px', backgroundColor: '#1a1d27', border: '1px solid #2e3349' }}
             placeholder="搜尋代號或名稱..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
@@ -238,10 +256,63 @@ export default function Trades() {
         <div style={card}>
           {filtered.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>
-              {search ? `找不到「${search}」相關紀錄` : '還沒有交易紀錄，請在上方新增或匯入 CSV'}
+              {search ? `找不到「${search}」相關紀錄` : '還沒有交易紀錄'}
+            </div>
+          ) : isMobile ? (
+            // 手機版：卡片式顯示
+            <div>
+              {filtered.map(trade => (
+                <div key={trade.id} className="trade-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                    onClick={() => setExpandedId(expandedId === trade.id ? null : trade.id!)}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+                      <span style={{ backgroundColor: trade.type === 'buy' ? 'rgba(255,87,87,0.15)' : 'rgba(0,200,150,0.15)', color: trade.type === 'buy' ? '#ff5757' : '#00c896', padding: '2px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, flexShrink: 0 }}>
+                        {trade.type === 'buy' ? '買' : '賣'}
+                      </span>
+                      <span style={{ color: '#4f8ef7', fontWeight: 700, fontSize: '14px', flexShrink: 0 }}>{trade.code}</span>
+                      <span style={{ color: '#e2e8f0', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{trade.name}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                      <span style={{ color: trade.type === 'buy' ? '#ff5757' : '#00c896', fontWeight: 600, fontSize: '13px' }}>
+                        ${trade.total.toLocaleString()}
+                      </span>
+                      {expandedId === trade.id ? <ChevronUp size={14} color="#8892a4" /> : <ChevronDown size={14} color="#8892a4" />}
+                    </div>
+                  </div>
+
+                  {expandedId === trade.id && (
+                    <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #2e3349' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '10px' }}>
+                        {[
+                          { label: '日期', value: trade.date },
+                          { label: '價格', value: trade.price.toLocaleString() },
+                          { label: '股數', value: trade.shares.toLocaleString() },
+                          { label: '手續費', value: trade.fee.toLocaleString() },
+                          { label: '交易稅', value: trade.tax.toLocaleString() },
+                          { label: '備註', value: trade.note || '—' },
+                        ].map(({ label, value }) => (
+                          <div key={label}>
+                            <div style={{ fontSize: '10px', color: '#8892a4' }}>{label}</div>
+                            <div style={{ fontSize: '13px', color: '#e2e8f0' }}>{value}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button onClick={() => handleEdit(trade)} style={{ ...btn('#21253a'), border: '1px solid #2e3349', fontSize: '12px', padding: '6px 12px' }}>
+                          <Pencil size={12} />編輯
+                        </button>
+                        <button onClick={() => handleDelete(trade.id!)} style={{ ...btn('rgba(255,87,87,0.15)'), color: '#ff5757', fontSize: '12px', padding: '6px 12px' }}>
+                          <Trash2 size={12} />刪除
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           ) : (
-            <div className="table-wrap">
+            // 桌面版：表格顯示
+            <div style={{ overflowX: 'auto' }}>
               <table className="trade-table">
                 <thead>
                   <tr>{['日期', '類型', '代號', '名稱', '價格', '股數', '手續費', '交易稅', '收付金額', '備註', ''].map(h => <th key={h}>{h}</th>)}</tr>
