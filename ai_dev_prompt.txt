@@ -1,0 +1,3327 @@
+【共生系統程式碼打包】
+
+
+/* =========================================
+ * 檔案位置: src\lib\auth.ts
+ * ========================================= */
+
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth'
+import type { User } from 'firebase/auth'
+import { investApp, kmsApp } from './firebase'
+
+export const investAuth = getAuth(investApp)
+export const kmsAuth = getAuth(kmsApp)
+
+// 同時登入兩個 Firebase 專案
+export async function signIn(email: string, password: string) {
+  await signInWithEmailAndPassword(investAuth, email, password)
+  await signInWithEmailAndPassword(kmsAuth, email, password)
+}
+
+// 同時登出兩個專案
+export async function signOutAll() {
+  await signOut(investAuth)
+  await signOut(kmsAuth)
+}
+
+// 監聽登入狀態
+export function onAuthChanged(callback: (user: User | null) => void) {
+  return onAuthStateChanged(investAuth, callback)
+}
+
+
+/* =========================================
+ * 檔案位置: src\lib\cache.ts
+ * ========================================= */
+
+interface CacheEntry {
+  data: any
+  timestamp: number
+  ttl: number
+}
+
+const store = new Map<string, CacheEntry>()
+
+export const cache = {
+  get<T>(key: string): T | null {
+    const entry = store.get(key)
+    if (!entry) return null
+    if (Date.now() - entry.timestamp > entry.ttl) {
+      store.delete(key)
+      return null
+    }
+    return entry.data as T
+  },
+
+  set(key: string, data: any, ttlSeconds = 60) {
+    store.set(key, { data, timestamp: Date.now(), ttl: ttlSeconds * 1000 })
+  },
+
+  invalidate(key: string) {
+    store.delete(key)
+  },
+
+  invalidatePrefix(prefix: string) {
+    store.forEach((_, k) => { if (k.startsWith(prefix)) store.delete(k) })
+  }
+}
+
+
+/* =========================================
+ * 檔案位置: src\lib\calc.ts
+ * ========================================= */
+
+export const FEE_RATE = 0.001425
+export const FEE_DISCOUNT = 0.6  // 6折
+export const MIN_FEE = 20
+export const TAX_RATE_STOCK = 0.003
+export const TAX_RATE_ETF = 0.001
+
+export const isETF = (code: string) => code.replace('.TW', '').startsWith('00')
+
+// 計算手續費（6折，無條件捨去，最低20元）
+export function calcFee(price: number, shares: number): number {
+  const amount = price * shares
+  const fee = Math.floor(amount * FEE_RATE * FEE_DISCOUNT)
+  return Math.max(fee, MIN_FEE)
+}
+
+// 計算交易稅（賣出才有）
+export function calcTax(price: number, shares: number, code: string): number {
+  const amount = price * shares
+  const rate = isETF(code) ? TAX_RATE_ETF : TAX_RATE_STOCK
+  return Math.floor(amount * rate)
+}
+
+export interface TradeRecord {
+  date: string
+  type: 'buy' | 'sell'
+  code: string
+  name: string
+  price: number
+  shares: number
+  fee: number
+  tax: number
+  total: number
+  note?: string
+}
+
+export interface HoldingPosition {
+  code: string
+  name: string
+  shares: number
+  avgCost: number
+  totalCost: number
+}
+
+export interface RealizedRecord {
+  date: string
+  code: string
+  name: string
+  shares: number
+  avgCost: number
+  sellPrice: number
+  realized: number
+  returnRate: number
+}
+
+export interface CalcResult {
+  holdings: Record<string, HoldingPosition>
+  realized: RealizedRecord[]
+}
+
+export function calcPositions(trades: TradeRecord[]): CalcResult {
+  const sorted = [...trades].sort((a, b) => a.date.localeCompare(b.date))
+  const holdings: Record<string, HoldingPosition> = {}
+  const realized: RealizedRecord[] = []
+
+  for (const t of sorted) {
+    const { code, name, type, price, shares, fee, tax } = t
+    if (!holdings[code]) {
+      holdings[code] = { code, name, shares: 0, avgCost: 0, totalCost: 0 }
+    }
+    const pos = holdings[code]
+
+    if (type === 'buy') {
+      const buyCost = price * shares + fee
+      const newTotalCost = pos.totalCost + buyCost
+      const newShares = pos.shares + shares
+      pos.avgCost = newShares > 0 ? newTotalCost / newShares : 0
+      pos.totalCost = newTotalCost
+      pos.shares = newShares
+      pos.name = name
+    } else {
+      const sellRevenue = price * shares - fee - tax
+      const costBasis = pos.avgCost * shares
+      const pnl = sellRevenue - costBasis
+      const returnRate = costBasis > 0 ? (pnl / costBasis) * 100 : 0
+      realized.push({
+        date: t.date, code, name, shares,
+        avgCost: pos.avgCost, sellPrice: price,
+        realized: pnl, returnRate
+      })
+      pos.shares -= shares
+      pos.totalCost = pos.avgCost * pos.shares
+      if (pos.shares <= 0) {
+        pos.shares = 0
+        pos.totalCost = 0
+        pos.avgCost = 0
+      }
+    }
+  }
+
+  const activeHoldings: Record<string, HoldingPosition> = {}
+  Object.entries(holdings).forEach(([code, pos]) => {
+    if (pos.shares > 0) activeHoldings[code] = pos
+  })
+
+  return { holdings: activeHoldings, realized: realized.reverse() }
+}
+
+export function calcAvailableCash(
+  trades: TradeRecord[],
+  cashRecords: { type: 'in' | 'out'; amount: number }[]
+): number {
+  const netCash = cashRecords.reduce((s, r) => r.type === 'in' ? s + r.amount : s - r.amount, 0)
+  const buyTotal = trades.filter(t => t.type === 'buy').reduce((s, t) => s + t.total, 0)
+  const sellTotal = trades.filter(t => t.type === 'sell').reduce((s, t) => s + t.total, 0)
+  return netCash - buyTotal + sellTotal
+}
+
+
+/* =========================================
+ * 檔案位置: src\lib\calendarData.ts
+ * ========================================= */
+
+export interface CalendarEvent {
+  id: string
+  date: string        // YYYY-MM-DD
+  title: string
+  type: 'fomc' | 'futures' | 'tech' | 'investor' | 'personal' | 'dividend'
+  description?: string
+  url?: string
+  stockCode?: string
+}
+
+// FOMC 會議日期 2025-2026
+export const FOMC_DATES: CalendarEvent[] = [
+  { id: 'fomc-2025-01', date: '2025-01-29', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2025-03', date: '2025-03-19', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2025-05', date: '2025-05-07', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2025-06', date: '2025-06-18', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2025-07', date: '2025-07-30', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2025-09', date: '2025-09-17', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2025-10', date: '2025-10-29', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2025-12', date: '2025-12-17', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2026-01', date: '2026-01-28', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2026-03', date: '2026-03-18', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2026-04', date: '2026-04-29', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2026-06', date: '2026-06-17', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2026-07', date: '2026-07-29', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2026-09', date: '2026-09-16', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2026-10', date: '2026-10-28', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+  { id: 'fomc-2026-12', date: '2026-12-16', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+]
+
+// 重要科技活動
+export const TECH_EVENTS: CalendarEvent[] = [
+  { id: 'gtc-2025', date: '2025-03-17', title: 'NVIDIA GTC 2025', type: 'tech', description: 'NVIDIA 年度開發者大會', url: 'https://www.nvidia.com/gtc/' },
+  { id: 'wwdc-2025', date: '2025-06-09', title: 'Apple WWDC 2025', type: 'tech', description: 'Apple 全球開發者大會' },
+  { id: 'build-2025', date: '2025-05-19', title: 'Microsoft Build 2025', type: 'tech', description: 'Microsoft 開發者大會' },
+  { id: 'google-io-2025', date: '2025-05-14', title: 'Google I/O 2025', type: 'tech', description: 'Google 開發者大會' },
+  { id: 'gtc-2026', date: '2026-03-16', title: 'NVIDIA GTC 2026', type: 'tech', description: 'NVIDIA 年度開發者大會' },
+  { id: 'wwdc-2026', date: '2026-06-08', title: 'Apple WWDC 2026', type: 'tech', description: 'Apple 全球開發者大會' },
+  { id: 'ces-2026', date: '2026-01-06', title: 'CES 2026', type: 'tech', description: '國際消費電子展', url: 'https://www.ces.tech/' },
+]
+
+// 計算台灣期貨結算日（每月第三個週三）
+export function getFuturesSettlementDates(year: number, month: number): CalendarEvent[] {
+  const results: CalendarEvent[] = []
+  for (let m = 1; m <= 12; m++) {
+    if (year === new Date().getFullYear() - 1) continue
+    let count = 0
+    for (let d = 1; d <= 31; d++) {
+      const date = new Date(year, m - 1, d)
+      if (date.getMonth() !== m - 1) break
+      if (date.getDay() === 3) { // 週三
+        count++
+        if (count === 3) {
+          const dateStr = `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+          results.push({
+            id: `futures-${year}-${m}`,
+            date: dateStr,
+            title: '台指期結算日',
+            type: 'futures',
+            description: '台灣加權指數期貨結算'
+          })
+          break
+        }
+      }
+    }
+  }
+  return results
+}
+
+export const EVENT_COLORS: Record<string, string> = {
+  fomc: '#ff5757',
+  futures: '#f5a623',
+  tech: '#a78bfa',
+  investor: '#00c896',
+  personal: '#4f8ef7',
+  dividend: '#00c896',
+}
+
+export const EVENT_LABELS: Record<string, string> = {
+  fomc: 'FOMC',
+  futures: '期貨結算',
+  tech: '科技活動',
+  investor: '法說會',
+  personal: '個人行程',
+  dividend: '除權息',
+}
+
+
+/* =========================================
+ * 檔案位置: src\lib\firebase.ts
+ * ========================================= */
+
+import { initializeApp } from 'firebase/app'
+import { getFirestore } from 'firebase/firestore'
+import { getStorage } from 'firebase/storage'
+
+const investConfig = {
+  apiKey: import.meta.env.VITE_INVEST_API_KEY,
+  authDomain: import.meta.env.VITE_INVEST_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_INVEST_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_INVEST_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_INVEST_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_INVEST_APP_ID,
+}
+
+const kmsConfig = {
+  apiKey: import.meta.env.VITE_KMS_API_KEY,
+  authDomain: import.meta.env.VITE_KMS_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_KMS_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_KMS_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_KMS_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_KMS_APP_ID,
+}
+
+export const investApp = initializeApp(investConfig, 'investment')
+export const kmsApp = initializeApp(kmsConfig, 'knowledge')
+
+export const investDB = getFirestore(investApp)
+export const kmsDB = getFirestore(kmsApp)
+export const kmsStorage = getStorage(kmsApp)
+
+
+/* =========================================
+ * 檔案位置: src\lib\fugle.ts
+ * ========================================= */
+
+const FUGLE_API_KEY = import.meta.env.VITE_FUGLE_API_KEY
+
+// 取得單一股票報價
+export async function getQuote(symbol: string) {
+  try {
+    const res = await fetch(
+      `https://api.fugle.tw/marketdata/v1.0/stock/intraday/quote/${symbol}`,
+      { headers: { 'X-API-KEY': FUGLE_API_KEY } }
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+    return data
+  } catch {
+    return null
+  }
+}
+
+// 從報價資料取得最佳現價
+// 優先順序：closePrice → lastPrice → referencePrice
+export function extractPrice(quote: any): number | null {
+  if (!quote) return null
+  return quote.closePrice || quote.lastPrice || quote.referencePrice || null
+}
+
+// 批次取得多檔股票現價
+export async function getMultipleQuotes(symbols: string[]): Promise<Record<string, number | null>> {
+  const results: Record<string, number | null> = {}
+  await Promise.all(
+    symbols.map(async (symbol) => {
+      const quote = await getQuote(symbol)
+      results[symbol] = extractPrice(quote)
+    })
+  )
+  return results
+}
+
+// 取得歷史收盤價
+export async function getHistoricalCandles(symbol: string, from: string, to: string) {
+  try {
+    const res = await fetch(
+      `https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/${symbol}?from=${from}&to=${to}`,
+      { headers: { 'X-API-KEY': FUGLE_API_KEY } }
+    )
+    if (!res.ok) return null
+    return res.json()
+  } catch {
+    return null
+  }
+}
+
+
+/* =========================================
+ * 檔案位置: src\lib\gemini.ts
+ * ========================================= */
+
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY
+
+const MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+]
+
+async function callGemini(prompt: string): Promise<string> {
+  for (const model of MODELS) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }]
+          })
+        }
+      )
+      if (!res.ok) {
+        const status = res.status
+        if (status === 429 || status === 404 || status === 400) {
+          console.warn(`Gemini model ${model} failed (${status}), trying next...`)
+          continue
+        }
+        throw new Error(`HTTP ${status}`)
+      }
+      const data = await res.json()
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+      if (!text) continue
+      console.log(`✅ Gemini using model: ${model}`)
+      return text
+    } catch (err) {
+      console.warn(`Gemini model ${model} error:`, err)
+      continue
+    }
+  }
+  throw new Error('所有 Gemini 模型都無法使用')
+}
+
+export async function generateHashtags(
+  content: string,
+  title: string,
+  existingTags: string[] = []
+): Promise<string[]> {
+  try {
+    const existingTagsStr = existingTags.length > 0
+      ? `\n\n現有標籤庫（優先從這裡選擇，若有合適的請直接使用，不要創造新標籤）：\n${existingTags.join('、')}`
+      : ''
+
+    const text = await callGemini(`請分析以下筆記內容，產生 3-6 個最相關的 hashtag 標籤。
+標籤規則：
+- 使用繁體中文
+- 每個標籤簡短精確（2-6個字）
+- 支援母子標籤格式，例如：投資/台股、料理/食譜
+- 優先使用現有標籤庫中的標籤，只在沒有合適標籤時才新增
+- 只回傳標籤陣列，格式為 JSON array，例如：["投資/台股","技術分析"]
+- 不要加 # 符號，不要有其他文字${existingTagsStr}
+
+標題：${title}
+內容：${content.slice(0, 1000)}`)
+
+    const clean = text.replace(/```json|```/g, '').trim()
+    const parsed = JSON.parse(clean)
+    return Array.isArray(parsed) ? parsed : []
+  } catch (err) {
+    console.error('generateHashtags error:', err)
+    return []
+  }
+}
+
+export async function summarizeContent(content: string): Promise<string> {
+  try {
+    const text = await callGemini(
+      `請用 2-3 句話總結以下內容的重點，使用繁體中文，簡潔扼要：\n\n${content.slice(0, 2000)}`
+    )
+    return text
+  } catch (err) {
+    console.error('summarizeContent error:', err)
+    return ''
+  }
+}
+
+export async function findRelatedNotes(
+  currentTitle: string,
+  currentContent: string,
+  allNotes: { id: string; title: string; content: string }[]
+): Promise<string[]> {
+  try {
+    const notesList = allNotes
+      .map(n => `ID: ${n.id} | 標題: ${n.title} | 內容摘要: ${n.content.slice(0, 100)}`)
+      .join('\n')
+
+    const text = await callGemini(`分析以下筆記，找出與「目標筆記」最相關的筆記 ID。
+
+目標筆記：
+標題：${currentTitle}
+內容：${currentContent.slice(0, 500)}
+
+所有筆記清單：
+${notesList}
+
+請回傳最相關的 3-5 筆筆記 ID，格式為 JSON array，例如：["id1", "id2", "id3"]
+只回傳 JSON array，不要其他文字。`)
+
+    const clean = text.replace(/```json|```/g, '').trim()
+    const parsed = JSON.parse(clean)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+export async function getDailyNews(): Promise<{ title: string; summary: string; category: string }[]> {
+  try {
+    const isLocalhost = window.location.hostname === 'localhost'
+
+    if (isLocalhost) {
+      // 本地開發：用 Gemini AI 生成（部署後會用真實新聞）
+      const today = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' })
+      const text = await callGemini(`今天是 ${today}。
+
+請整理 5-8 則近期全球重要新聞，特別關注：
+1. 金融市場（美股、台股、加密貨幣、匯率）
+2. 科技產業（AI、半導體、重要科技公司動態）
+3. 總體經濟（通膨、利率、各國政策）
+4. 地緣政治（重大國際事件）
+
+請回傳 JSON array，每則包含：
+- title：新聞標題（繁體中文，30字以內）
+- summary：2-3句重點摘要（繁體中文）
+- category：分類（市場/科技/經濟/政治）
+
+只回傳 JSON array，不要其他文字。`)
+
+      const clean = text.replace(/```json|```/g, '').trim()
+      return JSON.parse(clean)
+    }
+
+    // 部署環境：從 Netlify Function 取得真實新聞
+    const res = await fetch('/.netlify/functions/news-proxy')
+    const data = await res.json()
+
+    if (!data.articles?.length) throw new Error('No articles')
+
+    // 用 Gemini 翻譯 + 分類 + 摘要
+    const articleList = data.articles
+      .slice(0, 10)
+      .map((a: any, i: number) => `${i + 1}. ${a.title}${a.description ? ' — ' + a.description : ''}`)
+      .join('\n')
+
+    const text = await callGemini(`請將以下新聞整理成繁體中文摘要：
+
+${articleList}
+
+請回傳 JSON array，每則包含：
+- title：繁體中文標題（30字以內，重新撰寫使其清晰）
+- summary：2-3句繁體中文重點摘要
+- category：分類（市場/科技/經濟/政治）
+
+只回傳 JSON array，不要其他文字。`)
+
+    const clean = text.replace(/```json|```/g, '').trim()
+    return JSON.parse(clean)
+  } catch (err) {
+    console.error('getDailyNews error:', err)
+    return []
+  }
+}
+
+
+/* =========================================
+ * 檔案位置: src\pages\invest\AssetTrend.tsx
+ * ========================================= */
+
+import { useState, useEffect } from 'react'
+import { collection, getDocs, doc, setDoc, deleteDoc, orderBy, query, getDoc } from 'firebase/firestore'
+import { investDB } from '../../lib/firebase'
+import { calcPositions, calcAvailableCash, type TradeRecord } from '../../lib/calc'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { Save, Pencil, Trash2, Plus, X, Check, Zap } from 'lucide-react'
+
+interface SnapshotRecord {
+  date: string
+  totalAssets: number
+  marketValue: number
+  cash: number
+}
+
+const emptySnap: SnapshotRecord = {
+  date: new Date().toISOString().split('T')[0],
+  totalAssets: 0, marketValue: 0, cash: 0
+}
+
+const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
+const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
+
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null
+  return (
+    <div style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '8px', padding: '12px 16px' }}>
+      <p style={{ color: '#8892a4', fontSize: '12px', margin: '0 0 8px' }}>{label}</p>
+      {payload.map((p: any) => (
+        <p key={p.name} style={{ color: p.color, fontSize: '14px', fontWeight: 600, margin: '2px 0' }}>
+          {p.name}：${Number(p.value).toLocaleString()}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+export default function AssetTrend() {
+  const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [autoLoading, setAutoLoading] = useState(false)
+  const [range, setRange] = useState<'1M' | '3M' | '6M' | '1Y' | 'ALL'>('3M')
+  const [showForm, setShowForm] = useState(false)
+  const [editingDate, setEditingDate] = useState<string | null>(null)
+  const [form, setForm] = useState<SnapshotRecord>(emptySnap)
+  const [formLoading, setFormLoading] = useState(false)
+
+  const loadSnapshots = async () => {
+    setLoading(true)
+    const q = query(collection(investDB, 'assetSnapshots'), orderBy('date', 'asc'))
+    const snap = await getDocs(q)
+    setSnapshots(snap.docs.map(d => d.data() as SnapshotRecord))
+    setLoading(false)
+  }
+
+  useEffect(() => { loadSnapshots() }, [])
+
+  const handleAutoFill = async () => {
+    setAutoLoading(true)
+    try {
+      const tradesSnap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc')))
+      const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
+      const cashSnap = await getDocs(collection(investDB, 'cashflow'))
+      const cashRecords = cashSnap.docs.map(d => d.data() as any)
+
+      const { holdings: positions } = calcPositions(trades)
+
+      const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
+      const savedPrices: Record<string, any> = priceDoc.exists() ? priceDoc.data() : {}
+
+      let marketValue = 0
+      Object.values(positions).forEach(pos => {
+        const price = savedPrices[pos.code] ?? (pos.totalCost / pos.shares)
+        marketValue += price * pos.shares
+      })
+
+      const cash = calcAvailableCash(trades, cashRecords)
+      const totalAssets = marketValue + cash
+
+      setForm(f => ({
+        ...f,
+        totalAssets: Math.round(totalAssets),
+        marketValue: Math.round(marketValue),
+        cash: Math.round(cash)
+      }))
+    } catch (err) { console.error(err) }
+    setAutoLoading(false)
+  }
+
+  const saveToday = async () => {
+    setSaving(true)
+    try {
+      const tradesSnap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc')))
+      const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
+      const cashSnap = await getDocs(collection(investDB, 'cashflow'))
+      const cashRecords = cashSnap.docs.map(d => d.data() as any)
+
+      const { holdings: positions } = calcPositions(trades)
+      const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
+      const savedPrices: Record<string, any> = priceDoc.exists() ? priceDoc.data() : {}
+
+      let marketValue = 0
+      Object.values(positions).forEach(pos => {
+        const price = savedPrices[pos.code] ?? (pos.totalCost / pos.shares)
+        marketValue += price * pos.shares
+      })
+
+      const cash = calcAvailableCash(trades, cashRecords)
+      const totalAssets = marketValue + cash
+      const today = new Date().toISOString().split('T')[0]
+
+      await setDoc(doc(investDB, 'assetSnapshots', today), {
+        date: today,
+        totalAssets: Math.round(totalAssets),
+        marketValue: Math.round(marketValue),
+        cash: Math.round(cash)
+      })
+      await loadSnapshots()
+    } catch (err) { console.error(err) }
+    setSaving(false)
+  }
+
+  const handleSave = async () => {
+    if (!form.date) return
+    setFormLoading(true)
+    await setDoc(doc(investDB, 'assetSnapshots', form.date), { ...form })
+    setShowForm(false); setEditingDate(null); setForm(emptySnap)
+    setFormLoading(false); loadSnapshots()
+  }
+
+  const handleEdit = (s: SnapshotRecord) => { setForm({ ...s }); setEditingDate(s.date); setShowForm(true) }
+  const handleDelete = async (date: string) => {
+    if (!confirm(`確定要刪除 ${date} 的紀錄？`)) return
+    await deleteDoc(doc(investDB, 'assetSnapshots', date)); loadSnapshots()
+  }
+  const handleCancel = () => { setShowForm(false); setEditingDate(null); setForm(emptySnap) }
+
+  const filterByRange = (data: SnapshotRecord[]) => {
+    if (range === 'ALL') return data
+    const now = new Date()
+    const months = range === '1M' ? 1 : range === '3M' ? 3 : range === '6M' ? 6 : 12
+    const from = new Date(now.setMonth(now.getMonth() - months)).toISOString().split('T')[0]
+    return data.filter(d => d.date >= from)
+  }
+
+  const filtered = filterByRange([...snapshots])
+  const latest = snapshots[snapshots.length - 1]
+  const oldest = filtered[0]
+  const change = latest && oldest ? latest.totalAssets - oldest.totalAssets : 0
+  const changeRate = oldest?.totalAssets > 0 ? (change / oldest.totalAssets) * 100 : 0
+  const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
+  const rangeButtons: ('1M' | '3M' | '6M' | '1Y' | 'ALL')[] = ['1M', '3M', '6M', '1Y', 'ALL']
+
+  return (
+    <>
+      <style>{`
+        .trend-stats { display: grid; gap: 16px; grid-template-columns: repeat(4, 1fr); margin-bottom: 20px; }
+        @media (max-width: 900px) { .trend-stats { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 480px) { .trend-stats { grid-template-columns: 1fr; } }
+        .snap-form-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); }
+        @media (max-width: 800px) { .snap-form-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 480px) { .snap-form-grid { grid-template-columns: 1fr; } }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
+
+      <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+          <div>
+            <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>資產趨勢</h1>
+            <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>共 {snapshots.length} 筆紀錄</p>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button onClick={() => { setForm(emptySnap); setEditingDate(null); setShowForm(true) }} style={btn('#21253a')}>
+              <Plus size={14} />手動新增
+            </button>
+            <button onClick={saveToday} disabled={saving} style={btn('#4f8ef7')}>
+              <Save size={14} style={{ animation: saving ? 'spin 1s linear infinite' : 'none' }} />
+              {saving ? '記錄中...' : '記錄今日資產'}
+            </button>
+          </div>
+        </div>
+
+        {/* 統計卡片 */}
+        <div className="trend-stats">
+          {[
+            { label: '最新總資產', value: latest?.totalAssets || 0, color: '#4f8ef7' },
+            { label: '股票市值', value: latest?.marketValue || 0, color: '#00c896' },
+            { label: '可用現金', value: latest?.cash || 0, color: '#f5a623' },
+            { label: `區間變化 (${range})`, value: change, color: pnlColor(change), extra: `${changeRate >= 0 ? '+' : ''}${changeRate.toFixed(2)}%` },
+          ].map(({ label, value, color, extra }) => (
+            <div key={label} style={card}>
+              <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>{label}</div>
+              <div style={{ fontSize: 'clamp(16px, 2vw, 20px)', fontWeight: 700, color }}>
+                {value < 0 ? '-' : ''}${Math.abs(value).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
+              </div>
+              {extra && <div style={{ fontSize: '13px', color, marginTop: '4px' }}>{extra}</div>}
+            </div>
+          ))}
+        </div>
+
+        {/* 手動新增／編輯表單 */}
+        {showForm && (
+          <div style={{ ...card, marginBottom: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>
+                {editingDate ? '✏️ 編輯紀錄' : '➕ 手動新增紀錄'}
+              </span>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button onClick={handleAutoFill} disabled={autoLoading} style={{ ...btn('#00c896'), fontSize: '13px', padding: '6px 12px' }}>
+                  <Zap size={13} style={{ animation: autoLoading ? 'spin 1s linear infinite' : 'none' }} />
+                  {autoLoading ? '計算中...' : '自動帶入'}
+                </button>
+                <button onClick={handleCancel} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
+              </div>
+            </div>
+            <p style={{ fontSize: '12px', color: '#8892a4', margin: '0 0 16px' }}>點「自動帶入」會從 Firebase 計算目前持倉市值與現金</p>
+            <div className="snap-form-grid">
+              <div>
+                <label style={lbl}>日期</label>
+                <input type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
+              </div>
+              <div>
+                <label style={lbl}>總資產</label>
+                <input type="number" style={inp} placeholder="0" value={form.totalAssets || ''} onChange={e => setForm(f => ({ ...f, totalAssets: parseFloat(e.target.value) || 0 }))} />
+              </div>
+              <div>
+                <label style={lbl}>股票市值</label>
+                <input type="number" style={inp} placeholder="0" value={form.marketValue || ''} onChange={e => setForm(f => ({ ...f, marketValue: parseFloat(e.target.value) || 0 }))} />
+              </div>
+              <div>
+                <label style={lbl}>現金</label>
+                <input type="number" style={inp} placeholder="0" value={form.cash || ''} onChange={e => setForm(f => ({ ...f, cash: parseFloat(e.target.value) || 0 }))} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
+              <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消</button>
+              <button style={btn('#4f8ef7')} onClick={handleSave} disabled={formLoading}>
+                <Check size={14} />{formLoading ? '儲存中...' : editingDate ? '確認更新' : '確認新增'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 折線圖 */}
+        <div style={{ ...card, marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>資產走勢圖</div>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              {rangeButtons.map(r => (
+                <button key={r} onClick={() => setRange(r)} style={{ backgroundColor: range === r ? '#4f8ef7' : '#21253a', border: '1px solid', borderColor: range === r ? '#4f8ef7' : '#2e3349', borderRadius: '6px', padding: '4px 12px', color: range === r ? '#fff' : '#8892a4', fontSize: '13px', cursor: 'pointer' }}>
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div>
+          ) : filtered.length < 2 ? (
+            <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>
+              <p style={{ fontSize: '15px' }}>資料不足，無法顯示趨勢圖</p>
+              <p style={{ fontSize: '13px', marginTop: '8px' }}>請累積至少 2 筆資料</p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={320}>
+              <LineChart data={filtered} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2e3349" />
+                <XAxis dataKey="date" tick={{ fill: '#8892a4', fontSize: 12 }} tickFormatter={d => d.slice(5)} />
+                <YAxis tick={{ fill: '#8892a4', fontSize: 12 }} tickFormatter={v => `${(v / 10000).toFixed(0)}萬`} width={60} />
+                <Tooltip content={<CustomTooltip />} />
+                <Line type="monotone" dataKey="totalAssets" name="總資產" stroke="#4f8ef7" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#4f8ef7' }} />
+                <Line type="monotone" dataKey="marketValue" name="股票市值" stroke="#00c896" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#00c896' }} />
+                <Line type="monotone" dataKey="cash" name="現金" stroke="#f5a623" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#f5a623' }} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* 歷史紀錄列表 */}
+        <div style={card}>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>歷史紀錄</div>
+          {snapshots.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4', fontSize: '13px' }}>還沒有紀錄</div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #2e3349' }}>
+                    {['日期', '總資產', '股票市值', '現金', ''].map(h => (
+                      <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#8892a4', fontWeight: 500 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...snapshots].reverse().map(s => (
+                    <tr key={s.date} style={{ borderBottom: '1px solid #2e3349', backgroundColor: editingDate === s.date ? 'rgba(79,142,247,0.06)' : 'transparent' }}>
+                      <td style={{ padding: '12px', color: '#8892a4' }}>{s.date}</td>
+                      <td style={{ padding: '12px', color: '#4f8ef7', fontWeight: 600 }}>${s.totalAssets.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                      <td style={{ padding: '12px', color: '#00c896' }}>${s.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                      <td style={{ padding: '12px', color: '#f5a623' }}>${s.cash.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                      <td style={{ padding: '12px' }}>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button onClick={() => handleEdit(s)} style={{ background: 'none', border: 'none', color: '#4f8ef7', cursor: 'pointer' }}><Pencil size={15} /></button>
+                          <button onClick={() => handleDelete(s.date)} style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer' }}><Trash2 size={15} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+
+/* =========================================
+ * 檔案位置: src\pages\invest\CashFlow.tsx
+ * ========================================= */
+
+import { useState, useEffect } from 'react'
+import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query } from 'firebase/firestore'
+import { investDB } from '../../lib/firebase'
+import { Pencil, Trash2, X, Check } from 'lucide-react'
+
+interface CashRecord {
+  id?: string
+  date: string
+  type: 'in' | 'out'
+  amount: number
+  note: string
+}
+
+const empty: CashRecord = { date: new Date().toISOString().split('T')[0], type: 'in', amount: 0, note: '' }
+const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
+const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
+
+export default function CashFlow() {
+  const [records, setRecords] = useState<CashRecord[]>([])
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState<CashRecord>(empty)
+  const [loading, setLoading] = useState(false)
+
+  const load = async () => {
+    const q = query(collection(investDB, 'cashflow'), orderBy('date', 'desc'))
+    const snap = await getDocs(q)
+    setRecords(snap.docs.map(d => ({ id: d.id, ...d.data() } as CashRecord)))
+  }
+
+  useEffect(() => { load() }, [])
+
+  const handleSave = async () => {
+    if (!form.amount) return
+    setLoading(true)
+    if (editingId) {
+      await updateDoc(doc(investDB, 'cashflow', editingId), { ...form })
+    } else {
+      await addDoc(collection(investDB, 'cashflow'), { ...form })
+    }
+    setEditingId(null); setForm(empty); setLoading(false); load()
+  }
+
+  const handleEdit = (r: CashRecord) => { setForm(r); setEditingId(r.id!) }
+  const handleCancel = () => { setForm(empty); setEditingId(null) }
+  const handleDelete = async (id: string) => {
+    if (!confirm('確定要刪除？')) return
+    await deleteDoc(doc(investDB, 'cashflow', id)); load()
+  }
+
+  const totalIn = records.filter(r => r.type === 'in').reduce((s, r) => s + r.amount, 0)
+  const totalOut = records.filter(r => r.type === 'out').reduce((s, r) => s + r.amount, 0)
+  const net = totalIn - totalOut
+
+  return (
+    <>
+      <style>{`
+        .cash-form-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); }
+        @media (max-width: 900px) { .cash-form-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 480px) { .cash-form-grid { grid-template-columns: 1fr; } }
+        .cash-stats { display: grid; gap: 16px; grid-template-columns: repeat(3, 1fr); margin-bottom: 20px; }
+        @media (max-width: 600px) { .cash-stats { grid-template-columns: 1fr; } }
+        .table-wrap { overflow-x: auto; }
+        .cash-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .cash-table th, .cash-table td { padding: 10px 12px; text-align: left; }
+        .cash-table th { color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; }
+        .cash-table td { border-bottom: 1px solid #2e3349; color: #e2e8f0; }
+      `}</style>
+
+      <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
+        <div style={{ marginBottom: '24px' }}>
+          <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>出入金</h1>
+          <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>共 {records.length} 筆紀錄</p>
+        </div>
+
+        {/* 統計卡片 */}
+        <div className="cash-stats">
+          {[{ label: '總入金', value: totalIn, color: '#00c896' }, { label: '總出金', value: totalOut, color: '#ff5757' }, { label: '淨值', value: net, color: net >= 0 ? '#00c896' : '#ff5757' }].map(({ label, value, color }) => (
+            <div key={label} style={card}>
+              <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>{label}</div>
+              <div style={{ fontSize: 'clamp(18px, 2vw, 22px)', fontWeight: 700, color }}>{value.toLocaleString()}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* 表單 */}
+        <div style={{ ...card, marginBottom: '20px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>
+            {editingId ? '✏️ 編輯紀錄' : '➕ 新增紀錄'}
+          </div>
+          <div className="cash-form-grid">
+            <div><label style={lbl}>日期</label><input type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} /></div>
+            <div><label style={lbl}>類型</label>
+              <select style={inp} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value as 'in' | 'out' }))}>
+                <option value="in">入金</option>
+                <option value="out">出金</option>
+              </select>
+            </div>
+            <div><label style={lbl}>金額</label><input type="number" style={inp} placeholder="0" value={form.amount || ''} onChange={e => setForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))} /></div>
+            <div><label style={lbl}>備註</label><input style={inp} placeholder="選填" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
+            {editingId && <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消編輯</button>}
+            <button style={btn('#4f8ef7')} onClick={handleSave} disabled={loading}>
+              <Check size={14} />{loading ? '儲存中...' : editingId ? '確認更新' : '確認新增'}
+            </button>
+          </div>
+        </div>
+
+        {/* 列表 */}
+        <div style={card}>
+          {records.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}><p>還沒有出入金紀錄，請在上方新增</p></div>
+          ) : (
+            <div className="table-wrap">
+              <table className="cash-table">
+                <thead>
+                  <tr>{['日期', '類型', '金額', '備註', ''].map(h => <th key={h}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {records.map(r => (
+                    <tr key={r.id} style={{ backgroundColor: editingId === r.id ? 'rgba(79,142,247,0.06)' : 'transparent' }}>
+                      <td>{r.date}</td>
+                      <td><span style={{ backgroundColor: r.type === 'in' ? 'rgba(0,200,150,0.15)' : 'rgba(255,87,87,0.15)', color: r.type === 'in' ? '#00c896' : '#ff5757', padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>{r.type === 'in' ? '入金' : '出金'}</span></td>
+                      <td style={{ color: r.type === 'in' ? '#00c896' : '#ff5757', fontWeight: 600 }}>{r.amount.toLocaleString()}</td>
+                      <td style={{ color: '#8892a4' }}>{r.note}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button onClick={() => handleEdit(r)} style={{ background: 'none', border: 'none', color: '#4f8ef7', cursor: 'pointer' }}><Pencil size={15} /></button>
+                          <button onClick={() => handleDelete(r.id!)} style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer' }}><Trash2 size={15} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+
+/* =========================================
+ * 檔案位置: src\pages\invest\Dashboard.tsx
+ * ========================================= */
+
+import { useState, useEffect } from 'react'
+import { collection, getDocs, orderBy, query, doc, setDoc, getDoc } from 'firebase/firestore'
+import { investDB } from '../../lib/firebase'
+import { getMultipleQuotes } from '../../lib/fugle'
+import { calcPositions, calcAvailableCash, type TradeRecord } from '../../lib/calc'
+import { DollarSign, BarChart2, RefreshCw, Calendar } from 'lucide-react'
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
+import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates } from '../../lib/calendarData'
+import { useNavigate } from 'react-router-dom'
+
+const COLORS = ['#4f8ef7', '#00c896', '#f5a623', '#ff5757', '#a78bfa', '#34d399', '#fb923c', '#60a5fa']
+const CASH_COLOR = '#8892a4'
+const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
+const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '16px' }
+
+const EVENT_COLORS: Record<string, string> = {
+  fomc: '#ff5757', futures: '#f5a623', tech: '#a78bfa',
+  investor: '#00c896', personal: '#4f8ef7', task: '#4f8ef7', dividend: '#00c896'
+}
+
+export default function Dashboard() {
+  const navigate = useNavigate()
+  const [holdings, setHoldings] = useState<any[]>([])
+  const [totalCash, setTotalCash] = useState(0)
+  const [realizedPnL, setRealizedPnL] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [priceLoading, setPriceLoading] = useState(false)
+  const [lastUpdated, setLastUpdated] = useState('')
+  const [hasPrice, setHasPrice] = useState(false)
+  const [upcomingEvents, setUpcomingEvents] = useState<any[]>([])
+
+  const loadData = async () => {
+    setLoading(true)
+    try {
+      const [tradesSnap, cashSnap, priceDoc] = await Promise.all([
+        getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
+        getDocs(collection(investDB, 'cashflow')),
+        getDoc(doc(investDB, 'settings', 'lastPrices'))
+      ])
+
+      const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
+      const cashRecords = cashSnap.docs.map(d => d.data() as any)
+      const { holdings: positions, realized } = calcPositions(trades)
+      setRealizedPnL(realized.reduce((s, r) => s + r.realized, 0))
+
+      const savedPrices: Record<string, any> = priceDoc.exists() ? priceDoc.data() : {}
+      const savedAt = savedPrices._updatedAt || ''
+
+      let totalMarketValue = 0
+      let priceAvailable = false
+
+      const holdingList = Object.values(positions).map(pos => {
+        const currentPrice = savedPrices[pos.code] ?? null
+        if (currentPrice) priceAvailable = true
+        const marketValue = currentPrice ? currentPrice * pos.shares : pos.totalCost
+        const unrealizedPnL = currentPrice ? marketValue - pos.totalCost : 0
+        const returnRate = pos.totalCost > 0 ? (unrealizedPnL / pos.totalCost) * 100 : 0
+        totalMarketValue += marketValue
+        return { ...pos, currentPrice, marketValue, unrealizedPnL, returnRate, ratio: 0 }
+      })
+
+      holdingList.forEach(h => { h.ratio = totalMarketValue > 0 ? (h.marketValue / totalMarketValue) * 100 : 0 })
+      holdingList.sort((a, b) => b.marketValue - a.marketValue)
+
+      setHoldings(holdingList)
+      setTotalCash(calcAvailableCash(trades, cashRecords))
+      setHasPrice(priceAvailable)
+      if (savedAt) setLastUpdated(savedAt)
+    } catch (err) { console.error(err) }
+    setLoading(false)
+  }
+
+  const loadUpcoming = async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0]
+      const futureDate = new Date()
+      futureDate.setDate(futureDate.getDate() + 14)
+      const futureDateStr = futureDate.toISOString().split('T')[0]
+
+      const [personalSnap, taskSnap] = await Promise.all([
+        getDocs(collection(investDB, 'calendarEvents')),
+        getDocs(collection(investDB, 'tasks'))
+      ])
+
+      const personal = personalSnap.docs.map(d => ({ ...d.data(), type: 'personal' }))
+        .filter((e: any) => e.date >= today && e.date <= futureDateStr)
+
+      const tasks = taskSnap.docs.map(d => d.data())
+        .filter(t => t.dueDate && !t.done && t.dueDate >= today && t.dueDate <= futureDateStr)
+        .map(t => ({ title: `📋 ${t.title}`, date: t.dueDate, type: 'task' }))
+
+      const now = new Date()
+      const y = now.getFullYear()
+      const m = now.getMonth() + 1
+      const ny = m === 12 ? y + 1 : y
+      const nm = m === 12 ? 1 : m + 1
+      const builtin = [
+        ...FOMC_DATES, ...TECH_EVENTS,
+        ...getFuturesSettlementDates(y, m),
+        ...getFuturesSettlementDates(ny, nm),
+      ].filter(e => e.date >= today && e.date <= futureDateStr)
+
+      const all = [...personal, ...tasks, ...builtin]
+        .sort((a: any, b: any) => a.date.localeCompare(b.date))
+        .slice(0, 6)
+
+      setUpcomingEvents(all)
+    } catch (err) { console.error(err) }
+  }
+
+  const updatePrices = async () => {
+    setPriceLoading(true)
+    try {
+      const symbols = holdings.map(h => h.code)
+      if (symbols.length === 0) { setPriceLoading(false); return }
+
+      const quotes = await getMultipleQuotes(symbols)
+      const now = new Date().toLocaleString('zh-TW')
+
+      const priceData: Record<string, any> = { _updatedAt: now }
+      symbols.forEach(s => { if (quotes[s] !== null) priceData[s] = quotes[s] })
+      await setDoc(doc(investDB, 'settings', 'lastPrices'), priceData)
+
+      let totalMarketValue = 0
+      let priceAvailable = false
+
+      const updated = holdings.map(h => {
+        const currentPrice = quotes[h.code] ?? null
+        if (currentPrice) priceAvailable = true
+        const marketValue = currentPrice ? currentPrice * h.shares : h.totalCost
+        const unrealizedPnL = currentPrice ? marketValue - h.totalCost : 0
+        const returnRate = h.totalCost > 0 ? (unrealizedPnL / h.totalCost) * 100 : 0
+        totalMarketValue += marketValue
+        return { ...h, currentPrice, marketValue, unrealizedPnL, returnRate }
+      })
+
+      updated.forEach(h => { h.ratio = totalMarketValue > 0 ? (h.marketValue / totalMarketValue) * 100 : 0 })
+      updated.sort((a, b) => b.marketValue - a.marketValue)
+
+      setHoldings(updated)
+      setHasPrice(priceAvailable)
+      setLastUpdated(now)
+    } catch (err) { console.error(err) }
+    setPriceLoading(false)
+  }
+
+  useEffect(() => {
+    Promise.all([loadData(), loadUpcoming()])
+  }, [])
+
+  const totalMarketValue = holdings.reduce((s, h) => s + h.marketValue, 0)
+  const totalCost = holdings.reduce((s, h) => s + h.totalCost, 0)
+  const totalUnrealized = holdings.reduce((s, h) => s + h.unrealizedPnL, 0)
+  const totalAssets = totalMarketValue + totalCash
+
+  const pieData = [
+    ...holdings.map(h => ({ name: `${h.code} ${h.name}`, value: h.marketValue })),
+    ...(totalCash > 0 ? [{ name: '現金', value: totalCash }] : [])
+  ]
+  const pieColors = [...holdings.map((_, i) => COLORS[i % COLORS.length]), CASH_COLOR]
+
+  return (
+    <>
+      <style>{`
+        .dash-stats { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); margin-bottom: 10px; }
+        @media (max-width: 900px) { .dash-stats { grid-template-columns: repeat(3, 1fr); } }
+        @media (max-width: 480px) { .dash-stats { grid-template-columns: repeat(2, 1fr); gap: 8px; } }
+        .dash-bottom { display: grid; gap: 12px; grid-template-columns: 280px 1fr; }
+        @media (max-width: 900px) { .dash-bottom { grid-template-columns: 1fr; } }
+        .dash-lower { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; margin-top: 12px; }
+        @media (max-width: 900px) { .dash-lower { grid-template-columns: 1fr; } }
+        .h-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        .h-table th { padding: 6px 6px; text-align: left; color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; white-space: nowrap; }
+        .h-table td { padding: 7px 6px; border-bottom: 1px solid #2e3349; color: #e2e8f0; white-space: nowrap; }
+        .stat-card { background: #1a1d27; border: 1px solid #2e3349; border-radius: 10px; padding: 12px; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
+
+      <div style={{ padding: 'clamp(12px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
+
+        {/* 標題列 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+          <div>
+            <h1 style={{ fontSize: 'clamp(16px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>儀表板</h1>
+            <p style={{ fontSize: '11px', color: '#8892a4', margin: '2px 0 0' }}>
+              {lastUpdated ? `現價更新：${lastUpdated}` : '尚未更新現價'}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button onClick={() => Promise.all([loadData(), loadUpcoming()])} disabled={loading}
+              style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '8px', padding: '7px 10px', color: '#e2e8f0', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <RefreshCw size={12} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+              <span style={{ display: 'none' }} className="btn-label">重新載入</span>
+            </button>
+            <button onClick={updatePrices} disabled={priceLoading || loading}
+              style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '7px 12px', color: '#fff', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <RefreshCw size={12} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
+              {priceLoading ? '更新中...' : '更新現價'}
+            </button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: '80px', color: '#8892a4' }}>載入中...</div>
+        ) : (
+          <>
+            {/* 第一排統計：3欄（手機也是3欄，字小一點） */}
+            <div className="dash-stats">
+              {[
+                { label: '總資產', value: `$${totalAssets.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#4f8ef7', icon: DollarSign },
+                { label: '股票市值', value: `$${totalMarketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#4f8ef7', icon: BarChart2 },
+                { label: '可用現金', value: `$${totalCash.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#f5a623', icon: DollarSign },
+              ].map(({ label, value, color, icon: Icon }) => (
+                <div key={label} className="stat-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '6px', whiteSpace: 'nowrap' }}>{label}</div>
+                      <div style={{ fontSize: 'clamp(13px, 3.5vw, 20px)', fontWeight: 700, color, wordBreak: 'break-all' }}>{value}</div>
+                    </div>
+                    <Icon size={14} color={color} style={{ opacity: 0.4, flexShrink: 0, marginLeft: '4px' }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* 第二排統計：手機 2欄（最後一個佔滿） */}
+            <div className="dash-stats" style={{ marginBottom: '12px' }}>
+              {[
+                { label: '股票總成本', value: `$${totalCost.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#8892a4' },
+                { label: '未實現損益', value: hasPrice ? `${totalUnrealized >= 0 ? '+' : ''}$${totalUnrealized.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` : '—', color: pnlColor(totalUnrealized) },
+                { label: '已實現損益', value: `${realizedPnL >= 0 ? '+' : ''}$${realizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: pnlColor(realizedPnL) },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="stat-card">
+                  <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '6px' }}>{label}</div>
+                  <div style={{ fontSize: 'clamp(13px, 3.5vw, 18px)', fontWeight: 700, color, wordBreak: 'break-all' }}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* 資產分布 + 持倉表格 */}
+            <div className="dash-bottom">
+              <div style={card}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0', marginBottom: '12px' }}>資產分布</div>
+                {pieData.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '40px', color: '#8892a4', fontSize: '13px' }}>尚無持倉</div>
+                ) : (
+                  <>
+                    <ResponsiveContainer width="100%" height={160}>
+                      <PieChart>
+                        <Pie data={pieData} cx="50%" cy="50%" innerRadius={38} outerRadius={65} paddingAngle={2} dataKey="value">
+                          {pieData.map((_, i) => <Cell key={i} fill={pieColors[i]} />)}
+                        </Pie>
+                        <Tooltip formatter={(v: any) => [`$${Number(v).toLocaleString()}`, '金額']} contentStyle={{ backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '8px', color: '#e2e8f0', fontSize: '12px' }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{ marginTop: '6px' }}>
+                      {pieData.map((item, i) => (
+                        <div key={item.name} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: '11px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', overflow: 'hidden' }}>
+                            <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: pieColors[i], flexShrink: 0 }} />
+                            <span style={{ color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                          </div>
+                          <span style={{ color: '#8892a4', flexShrink: 0, marginLeft: '6px' }}>{totalAssets > 0 ? ((item.value / totalAssets) * 100).toFixed(1) : 0}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* 持倉表格：手機上只顯示關鍵欄位 */}
+              <div style={card}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0', marginBottom: '12px' }}>目前持倉</div>
+                {holdings.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '40px', color: '#8892a4', fontSize: '13px' }}>尚無持倉資料</div>
+                ) : (
+                  <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                    <table className="h-table">
+                      <thead>
+                        <tr>{['代號', '名稱', '均價', '現價', '報酬率', '佔比'].map(h => <th key={h}>{h}</th>)}</tr>
+                      </thead>
+                      <tbody>
+                        {holdings.map((h, i) => (
+                          <tr key={h.code}>
+                            <td style={{ color: '#4f8ef7', fontWeight: 700 }}>{h.code}</td>
+                            <td style={{ maxWidth: '60px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.name}</td>
+                            <td>{h.avgCost.toFixed(1)}</td>
+                            <td style={{ color: h.currentPrice === null ? '#8892a4' : h.currentPrice > h.avgCost ? '#00c896' : '#ff5757', fontWeight: 600 }}>
+                              {h.currentPrice === null ? '—' : h.currentPrice.toFixed(1)}
+                            </td>
+                            <td>
+                              {h.currentPrice === null
+                                ? <span style={{ color: '#8892a4', fontSize: '10px' }}>—</span>
+                                : <span style={{ backgroundColor: h.returnRate >= 0 ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)', color: pnlColor(h.returnRate), padding: '1px 5px', borderRadius: '20px', fontSize: '11px', fontWeight: 600 }}>
+                                    {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(1)}%
+                                  </span>
+                              }
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <div style={{ flex: 1, height: '3px', backgroundColor: '#2e3349', borderRadius: '2px', minWidth: '24px' }}>
+                                  <div style={{ width: `${h.ratio}%`, height: '100%', backgroundColor: COLORS[i % COLORS.length], borderRadius: '2px' }} />
+                                </div>
+                                <span style={{ fontSize: '10px', color: '#8892a4', minWidth: '28px' }}>{h.ratio.toFixed(0)}%</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 近 14 天行事曆 + 待辦任務 */}
+            <div className="dash-lower">
+              <div style={card}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Calendar size={14} color="#4f8ef7" />
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>近 14 天行程</span>
+                  </div>
+                  <button onClick={() => navigate('/calendar')}
+                    style={{ background: 'none', border: 'none', color: '#4f8ef7', fontSize: '11px', cursor: 'pointer' }}>
+                    全部 →
+                  </button>
+                </div>
+                {upcomingEvents.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '20px', color: '#8892a4', fontSize: '12px' }}>近 14 天沒有行程</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                    {upcomingEvents.map((ev: any, i) => {
+                      const todayStr = new Date().toISOString().split('T')[0]
+                      const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0]
+                      const isToday = ev.date === todayStr
+                      const isTomorrow = ev.date === tomorrowStr
+                      const dateLabel = isToday ? '今天' : isTomorrow ? '明天' : ev.date.slice(5).replace('-', '/')
+                      const color = EVENT_COLORS[ev.type] || '#4f8ef7'
+                      return (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', backgroundColor: '#0f1117', borderRadius: '7px', borderLeft: `3px solid ${color}` }}>
+                          <span style={{ fontSize: '10px', color: isToday ? '#ff5757' : '#8892a4', fontWeight: isToday ? 700 : 400, flexShrink: 0, minWidth: '28px' }}>{dateLabel}</span>
+                          <span style={{ fontSize: '12px', color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{ev.title}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div style={card}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>📋 待辦任務</span>
+                  <button onClick={() => navigate('/calendar/tasks')}
+                    style={{ background: 'none', border: 'none', color: '#4f8ef7', fontSize: '11px', cursor: 'pointer' }}>
+                    全部 →
+                  </button>
+                </div>
+                <TodoWidget />
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
+function TodoWidget() {
+  const [tasks, setTasks] = useState<any[]>([])
+
+  useEffect(() => {
+    const load = async () => {
+      const snap = await getDocs(query(collection(investDB, 'tasks'), orderBy('order', 'asc')))
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter((t: any) => !t.done)
+        .slice(0, 5)
+      setTasks(data)
+    }
+    load()
+  }, [])
+
+  const PRIORITY_COLORS: Record<string, string> = { high: '#ff5757', medium: '#f5a623', low: '#00c896' }
+
+  if (tasks.length === 0) {
+    return <div style={{ textAlign: 'center', padding: '20px', color: '#8892a4', fontSize: '12px' }}>🎉 沒有待辦任務</div>
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+      {tasks.map((t: any) => {
+        const isOverdue = t.dueDate && new Date(t.dueDate) < new Date()
+        return (
+          <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', backgroundColor: '#0f1117', borderRadius: '7px', borderLeft: `3px solid ${PRIORITY_COLORS[t.priority] || '#4f8ef7'}` }}>
+            <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: PRIORITY_COLORS[t.priority] || '#4f8ef7', flexShrink: 0 }} />
+            <span style={{ fontSize: '12px', color: '#e2e8f0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
+            {t.dueDate && (
+              <span style={{ fontSize: '10px', color: isOverdue ? '#ff5757' : '#8892a4', flexShrink: 0 }}>
+                {isOverdue ? '⚠️' : ''}{t.dueDate.slice(5).replace('-', '/')}
+              </span>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+
+/* =========================================
+ * 檔案位置: src\pages\invest\Dividend.tsx
+ * ========================================= */
+
+import { useState, useEffect } from 'react'
+import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query } from 'firebase/firestore'
+import { investDB } from '../../lib/firebase'
+import { Pencil, Trash2, X, Check } from 'lucide-react'
+
+interface DividendRecord {
+  id?: string
+  date: string
+  code: string
+  name: string
+  cashDividend: number
+  stockDividend: number
+  note: string
+}
+
+const empty: DividendRecord = { date: new Date().toISOString().split('T')[0], code: '', name: '', cashDividend: 0, stockDividend: 0, note: '' }
+const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
+const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
+
+export default function Dividend() {
+  const [records, setRecords] = useState<DividendRecord[]>([])
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState<DividendRecord>(empty)
+  const [loading, setLoading] = useState(false)
+  const [stockDict, setStockDict] = useState<Record<string, string>>({})
+
+  const load = async () => {
+    const q = query(collection(investDB, 'dividends'), orderBy('date', 'desc'))
+    const snap = await getDocs(q)
+    setRecords(snap.docs.map(d => ({ id: d.id, ...d.data() } as DividendRecord)))
+  }
+
+  const loadDict = async () => {
+    const snap = await getDocs(collection(investDB, 'stockDict'))
+    const dict: Record<string, string> = {}
+    snap.docs.forEach(d => { dict[d.id] = d.data().name })
+    setStockDict(dict)
+  }
+
+  useEffect(() => { load(); loadDict() }, [])
+
+  const handleCodeChange = (code: string) => {
+    const upper = code.toUpperCase()
+    setForm(f => ({ ...f, code: upper, name: stockDict[upper] || f.name }))
+  }
+
+  const handleSave = async () => {
+    if (!form.code || !form.date) return
+    setLoading(true)
+    if (editingId) {
+      await updateDoc(doc(investDB, 'dividends', editingId), { ...form })
+    } else {
+      await addDoc(collection(investDB, 'dividends'), { ...form })
+    }
+    setEditingId(null); setForm(empty); setLoading(false); load()
+  }
+
+  const handleEdit = (r: DividendRecord) => { setForm(r); setEditingId(r.id!) }
+  const handleCancel = () => { setForm(empty); setEditingId(null) }
+  const handleDelete = async (id: string) => {
+    if (!confirm('確定要刪除？')) return
+    await deleteDoc(doc(investDB, 'dividends', id)); load()
+  }
+
+  const totalCash = records.reduce((s, r) => s + r.cashDividend, 0)
+  const totalStock = records.reduce((s, r) => s + r.stockDividend, 0)
+
+  return (
+    <>
+      <style>{`
+        .div-form-grid { display: grid; gap: 12px; grid-template-columns: repeat(3, 1fr); }
+        @media (max-width: 900px) { .div-form-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 480px) { .div-form-grid { grid-template-columns: 1fr; } }
+        .div-stats { display: grid; gap: 16px; grid-template-columns: repeat(2, 1fr); margin-bottom: 20px; }
+        @media (max-width: 480px) { .div-stats { grid-template-columns: 1fr; } }
+        .table-wrap { overflow-x: auto; }
+        .div-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .div-table th, .div-table td { padding: 10px 12px; text-align: left; }
+        .div-table th { color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; }
+        .div-table td { border-bottom: 1px solid #2e3349; color: #e2e8f0; }
+      `}</style>
+
+      <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
+        <div style={{ marginBottom: '24px' }}>
+          <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>除權息</h1>
+          <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>共 {records.length} 筆紀錄</p>
+        </div>
+
+        {/* 統計卡片 */}
+        <div className="div-stats">
+          {[{ label: '累計現金股利', value: `${totalCash.toLocaleString()} 元`, color: '#00c896' }, { label: '累計股票股利', value: `${totalStock.toLocaleString()} 股`, color: '#4f8ef7' }].map(({ label, value, color }) => (
+            <div key={label} style={card}>
+              <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>{label}</div>
+              <div style={{ fontSize: 'clamp(18px, 2vw, 22px)', fontWeight: 700, color }}>{value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* 表單 */}
+        <div style={{ ...card, marginBottom: '20px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>
+            {editingId ? '✏️ 編輯紀錄' : '➕ 新增紀錄'}
+          </div>
+          <div className="div-form-grid">
+            <div><label style={lbl}>日期</label><input type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} /></div>
+            <div><label style={lbl}>股票代號</label><input style={inp} placeholder="例：2330" value={form.code} onChange={e => handleCodeChange(e.target.value)} /></div>
+            <div><label style={lbl}>股票名稱</label><input style={inp} placeholder="例：台積電" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
+            <div><label style={lbl}>現金股利（元）</label><input type="number" style={inp} placeholder="0" value={form.cashDividend || ''} onChange={e => setForm(f => ({ ...f, cashDividend: parseFloat(e.target.value) || 0 }))} /></div>
+            <div><label style={lbl}>股票股利（股）</label><input type="number" style={inp} placeholder="0" value={form.stockDividend || ''} onChange={e => setForm(f => ({ ...f, stockDividend: parseFloat(e.target.value) || 0 }))} /></div>
+            <div><label style={lbl}>備註</label><input style={inp} placeholder="選填" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
+            {editingId && <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消編輯</button>}
+            <button style={btn('#4f8ef7')} onClick={handleSave} disabled={loading}>
+              <Check size={14} />{loading ? '儲存中...' : editingId ? '確認更新' : '確認新增'}
+            </button>
+          </div>
+        </div>
+
+        {/* 列表 */}
+        <div style={card}>
+          {records.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}><p>還沒有除權息紀錄，請在上方新增</p></div>
+          ) : (
+            <div className="table-wrap">
+              <table className="div-table">
+                <thead>
+                  <tr>{['日期', '代號', '名稱', '現金股利', '股票股利', '備註', ''].map(h => <th key={h}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {records.map(r => (
+                    <tr key={r.id} style={{ backgroundColor: editingId === r.id ? 'rgba(79,142,247,0.06)' : 'transparent' }}>
+                      <td>{r.date}</td>
+                      <td style={{ color: '#4f8ef7', fontWeight: 600 }}>{r.code}</td>
+                      <td>{r.name}</td>
+                      <td style={{ color: '#00c896', fontWeight: 600 }}>{r.cashDividend.toLocaleString()} 元</td>
+                      <td style={{ color: '#4f8ef7', fontWeight: 600 }}>{r.stockDividend.toLocaleString()} 股</td>
+                      <td style={{ color: '#8892a4' }}>{r.note}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button onClick={() => handleEdit(r)} style={{ background: 'none', border: 'none', color: '#4f8ef7', cursor: 'pointer' }}><Pencil size={15} /></button>
+                          <button onClick={() => handleDelete(r.id!)} style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer' }}><Trash2 size={15} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+
+/* =========================================
+ * 檔案位置: src\pages\invest\HistoryPnL.tsx
+ * ========================================= */
+
+import { useState, useEffect } from 'react'
+import { collection, getDocs, orderBy, query } from 'firebase/firestore'
+import { investDB } from '../../lib/firebase'
+import { calcPositions, type TradeRecord } from '../../lib/calc'
+import { Search } from 'lucide-react'
+
+const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
+
+export default function HistoryPnL() {
+  const [records, setRecords] = useState<any[]>([])
+  const [dividends, setDividends] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState<'realized' | 'dividend'>('realized')
+  const [search, setSearch] = useState('')
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const tradesSnap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc')))
+      const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
+      const divSnap = await getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'desc')))
+      setDividends(divSnap.docs.map(d => d.data()))
+      const { realized } = calcPositions(trades)
+      setRecords(realized)
+    } catch (err) { console.error(err) }
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [])
+
+  const totalRealized = records.reduce((s, r) => s + r.realized, 0)
+  const totalDividend = dividends.reduce((s, d) => s + d.cashDividend, 0)
+  const winCount = records.filter(r => r.realized > 0).length
+  const winRate = records.length > 0 ? (winCount / records.length) * 100 : 0
+
+  const filteredRecords = records.filter(r =>
+    !search || r.code.toLowerCase().includes(search.toLowerCase()) || r.name.includes(search)
+  )
+  const filteredDividends = dividends.filter(d =>
+    !search || d.code.toLowerCase().includes(search.toLowerCase()) || d.name.includes(search)
+  )
+
+  return (
+    <>
+      <style>{`
+        .history-stats { display: grid; gap: 16px; grid-template-columns: repeat(4, 1fr); margin-bottom: 20px; }
+        @media (max-width: 900px) { .history-stats { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 480px) { .history-stats { grid-template-columns: 1fr; } }
+      `}</style>
+
+      <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
+        <div style={{ marginBottom: '24px' }}>
+          <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>歷史損益</h1>
+          <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>所有已實現損益與股利紀錄</p>
+        </div>
+
+        <div className="history-stats">
+          {[
+            { label: '累計已實現損益', value: totalRealized, color: pnlColor(totalRealized), fmt: (v: number) => `${v >= 0 ? '+' : ''}$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
+            { label: '累計股利收入', value: totalDividend, color: '#4f8ef7', fmt: (v: number) => `$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
+            { label: '交易勝率', value: winRate, color: winRate >= 50 ? '#00c896' : '#ff5757', fmt: (v: number) => `${v.toFixed(1)}%` },
+            { label: '已實現交易筆數', value: records.length, color: '#e2e8f0', fmt: (v: number) => `${v} 筆` },
+          ].map(({ label, value, color, fmt }) => (
+            <div key={label} style={card}>
+              <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>{label}</div>
+              <div style={{ fontSize: 'clamp(16px, 2vw, 20px)', fontWeight: 700, color }}>{fmt(value)}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Tab + 搜尋列 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', gap: '4px', backgroundColor: '#21253a', padding: '4px', borderRadius: '8px' }}>
+            {[{ key: 'realized', label: '已實現損益' }, { key: 'dividend', label: '股利紀錄' }].map(t => (
+              <button key={t.key} onClick={() => setTab(t.key as any)} style={{ backgroundColor: tab === t.key ? '#1a1d27' : 'transparent', border: 'none', borderRadius: '6px', padding: '6px 16px', color: tab === t.key ? '#e2e8f0' : '#8892a4', fontSize: '14px', cursor: 'pointer', fontWeight: tab === t.key ? 600 : 400 }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ position: 'relative', minWidth: '220px' }}>
+            <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#8892a4' }} />
+            <input style={{ ...inp, paddingLeft: '36px', backgroundColor: '#1a1d27' }}
+              placeholder="搜尋代號或名稱..." value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+        </div>
+
+        {/* 已實現損益 */}
+        {tab === 'realized' && (
+          <div style={card}>
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div>
+            ) : filteredRecords.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>
+                {search ? `找不到「${search}」相關紀錄` : '還沒有已實現損益紀錄'}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #2e3349' }}>
+                      {['賣出日期', '代號', '名稱', '股數', '均買價', '賣出價', '已實現損益', '報酬率'].map(h => (
+                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#8892a4', fontWeight: 500, whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRecords.map((r, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid #2e3349' }}>
+                        <td style={{ padding: '12px', color: '#8892a4' }}>{r.date}</td>
+                        <td style={{ padding: '12px', color: '#4f8ef7', fontWeight: 600 }}>{r.code}</td>
+                        <td style={{ padding: '12px', color: '#e2e8f0' }}>{r.name}</td>
+                        <td style={{ padding: '12px', color: '#e2e8f0' }}>{r.shares.toLocaleString()}</td>
+                        <td style={{ padding: '12px', color: '#e2e8f0' }}>{r.avgCost.toFixed(2)}</td>
+                        <td style={{ padding: '12px', color: '#e2e8f0' }}>{r.sellPrice.toFixed(2)}</td>
+                        <td style={{ padding: '12px', color: pnlColor(r.realized), fontWeight: 600 }}>
+                          {r.realized >= 0 ? '+' : ''}{r.realized.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
+                        </td>
+                        <td style={{ padding: '12px' }}>
+                          <span style={{ backgroundColor: r.returnRate >= 0 ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)', color: pnlColor(r.returnRate), padding: '3px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>
+                            {r.returnRate >= 0 ? '+' : ''}{r.returnRate.toFixed(2)}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 股利 */}
+        {tab === 'dividend' && (
+          <div style={card}>
+            {filteredDividends.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>
+                {search ? `找不到「${search}」相關紀錄` : '還沒有股利紀錄'}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #2e3349' }}>
+                      {['日期', '代號', '名稱', '現金股利', '股票股利', '備註'].map(h => (
+                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#8892a4', fontWeight: 500 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredDividends.map((d, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid #2e3349' }}>
+                        <td style={{ padding: '12px', color: '#8892a4' }}>{d.date}</td>
+                        <td style={{ padding: '12px', color: '#4f8ef7', fontWeight: 600 }}>{d.code}</td>
+                        <td style={{ padding: '12px', color: '#e2e8f0' }}>{d.name}</td>
+                        <td style={{ padding: '12px', color: '#00c896', fontWeight: 600 }}>{d.cashDividend.toLocaleString()} 元</td>
+                        <td style={{ padding: '12px', color: '#4f8ef7', fontWeight: 600 }}>{d.stockDividend.toLocaleString()} 股</td>
+                        <td style={{ padding: '12px', color: '#8892a4' }}>{d.note}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+
+/* =========================================
+ * 檔案位置: src\pages\invest\Holdings.tsx
+ * ========================================= */
+
+import { useState, useEffect } from 'react'
+import { collection, getDocs, orderBy, query, doc, getDoc } from 'firebase/firestore'
+import { investDB } from '../../lib/firebase'
+import { calcPositions, type TradeRecord } from '../../lib/calc'
+import { RefreshCw, TrendingUp, TrendingDown } from 'lucide-react'
+
+interface DisplayHolding {
+  code: string
+  name: string
+  shares: number
+  avgCost: number
+  currentPrice: number | null
+  marketValue: number
+  totalCost: number
+  unrealizedPnL: number
+  returnRate: number
+}
+
+export default function Holdings() {
+  const [holdings, setHoldings] = useState<DisplayHolding[]>([])
+  const [loading, setLoading] = useState(true)
+  const [lastUpdated, setLastUpdated] = useState('')
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const snap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc')))
+      const trades = snap.docs.map(d => d.data() as TradeRecord)
+      const { holdings: positions } = calcPositions(trades)
+
+      // 讀取 Firebase 儲存的現價（跟儀表板共用）
+      const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
+      const savedPrices: Record<string, any> = priceDoc.exists() ? priceDoc.data() : {}
+      const savedAt = savedPrices._updatedAt || ''
+      if (savedAt) setLastUpdated(savedAt)
+
+      const list: DisplayHolding[] = Object.values(positions).map(pos => {
+        const currentPrice = savedPrices[pos.code] ?? null
+        const marketValue = currentPrice ? currentPrice * pos.shares : pos.totalCost
+        const unrealizedPnL = currentPrice ? marketValue - pos.totalCost : 0
+        const returnRate = pos.totalCost > 0 ? (unrealizedPnL / pos.totalCost) * 100 : 0
+        return {
+          code: pos.code, name: pos.name, shares: pos.shares,
+          avgCost: pos.avgCost, currentPrice, marketValue,
+          totalCost: pos.totalCost, unrealizedPnL, returnRate
+        }
+      }).sort((a, b) => b.marketValue - a.marketValue)
+
+      setHoldings(list)
+    } catch (err) { console.error(err) }
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [])
+
+  const totalMarketValue = holdings.reduce((s, h) => s + h.marketValue, 0)
+  const totalCost = holdings.reduce((s, h) => s + h.totalCost, 0)
+  const totalPnL = holdings.reduce((s, h) => s + h.unrealizedPnL, 0)
+  const totalReturn = totalCost > 0 ? (totalPnL / totalCost) * 100 : 0
+  const hasPrice = holdings.some(h => h.currentPrice !== null)
+  const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
+  const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
+
+  return (
+    <>
+      <style>{`
+        .holdings-stats { display: grid; gap: 16px; grid-template-columns: repeat(4, 1fr); margin-bottom: 20px; }
+        @media (max-width: 900px) { .holdings-stats { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 480px) { .holdings-stats { grid-template-columns: 1fr; } }
+        .table-wrap { overflow-x: auto; }
+        .holdings-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .holdings-table th, .holdings-table td { padding: 12px 14px; text-align: left; white-space: nowrap; }
+        .holdings-table th { color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; font-size: 13px; }
+        .holdings-table td { border-bottom: 1px solid #2e3349; color: #e2e8f0; }
+        .holdings-table tr:hover td { background-color: rgba(79,142,247,0.04); }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
+
+      <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+          <div>
+            <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>股票持倉</h1>
+            <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>
+              {lastUpdated ? `現價更新：${lastUpdated}` : '尚未更新現價，請至儀表板點「更新現價」'}
+            </p>
+          </div>
+          <button onClick={load} disabled={loading} style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 14px', color: '#e2e8f0', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+            {loading ? '載入中...' : '重新載入'}
+          </button>
+        </div>
+
+        <div className="holdings-stats">
+          {[
+            { label: '持倉總市值', value: totalMarketValue, color: '#4f8ef7', fmt: (v: number) => `$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
+            { label: '持倉總成本', value: totalCost, color: '#8892a4', fmt: (v: number) => `$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
+            { label: '未實現損益', value: totalPnL, color: pnlColor(totalPnL), fmt: (v: number) => hasPrice ? `${v >= 0 ? '+' : ''}$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` : '—' },
+            { label: '整體報酬率', value: totalReturn, color: pnlColor(totalReturn), fmt: (v: number) => hasPrice ? `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` : '—' },
+          ].map(({ label, value, color, fmt }) => (
+            <div key={label} style={card}>
+              <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>{label}</div>
+              <div style={{ fontSize: 'clamp(16px, 2vw, 22px)', fontWeight: 700, color, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {fmt(value)}
+                {label === '未實現損益' && hasPrice && (value >= 0 ? <TrendingUp size={16} /> : <TrendingDown size={16} />)}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={card}>
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div>
+          ) : holdings.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>
+              <p style={{ fontSize: '15px' }}>目前沒有持倉</p>
+              <p style={{ fontSize: '13px', marginTop: '8px' }}>請先在買賣紀錄新增買入交易</p>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table className="holdings-table">
+                <thead>
+                  <tr>
+                    {['代號', '名稱', '股數', '均價（含手續費）', '現價', '成本', '市值', '未實現損益', '報酬率'].map(h => (
+                      <th key={h}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {holdings.map(h => (
+                    <tr key={h.code}>
+                      <td style={{ color: '#4f8ef7', fontWeight: 700 }}>{h.code}</td>
+                      <td>{h.name}</td>
+                      <td>{h.shares.toLocaleString()}</td>
+                      <td>{h.avgCost.toFixed(2)}</td>
+                      <td style={{ color: h.currentPrice === null ? '#8892a4' : h.currentPrice > h.avgCost ? '#00c896' : '#ff5757', fontWeight: 600 }}>
+                        {h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)}
+                      </td>
+                      <td>{h.totalCost.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                      <td style={{ color: '#4f8ef7' }}>{h.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                      <td>
+                        <span style={{ color: h.currentPrice === null ? '#8892a4' : pnlColor(h.unrealizedPnL), fontWeight: 600 }}>
+                          {h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`}
+                        </span>
+                      </td>
+                      <td>
+                        {h.currentPrice === null ? (
+                          <span style={{ color: '#8892a4', fontSize: '12px' }}>請更新現價</span>
+                        ) : (
+                          <span style={{ backgroundColor: h.returnRate >= 0 ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)', color: pnlColor(h.returnRate), padding: '3px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>
+                            {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+
+/* =========================================
+ * 檔案位置: src\pages\invest\InvestSettings.tsx
+ * ========================================= */
+
+import { useState } from 'react'
+import { collection, getDocs, doc, setDoc, orderBy, query } from 'firebase/firestore'
+import { investDB } from '../../lib/firebase'
+import { Download, Upload, FileSpreadsheet } from 'lucide-react'
+import * as XLSX from 'xlsx'
+
+const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '24px' }
+const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '10px 18px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' })
+
+export default function InvestSettings() {
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<{ success: number; failed: number } | null>(null)
+  const [exportLoading, setExportLoading] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const showMsg = (text: string, isError = false) => {
+    setMsg(text)
+    setTimeout(() => setMsg(''), 4000)
+  }
+
+  // 匯入 Excel 股票字典
+  const handleImportDict = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImporting(true)
+    setImportResult(null)
+
+    const reader = new FileReader()
+    reader.onload = async (evt) => {
+      try {
+        const data = new Uint8Array(evt.target!.result as ArrayBuffer)
+        const workbook = XLSX.read(data, { type: 'array' })
+        const sheet = workbook.Sheets[workbook.SheetNames[0]]
+        const rows: any[] = XLSX.utils.sheet_to_json(sheet)
+
+        let success = 0
+        let failed = 0
+
+        // 支援多種欄位名稱格式
+        for (const row of rows) {
+          const code = String(row['股票代號'] || row['代號'] || row['code'] || row['Code'] || '').trim()
+          const name = String(row['股票名稱'] || row['名稱'] || row['name'] || row['Name'] || '').trim()
+
+          if (code && name) {
+            try {
+              await setDoc(doc(investDB, 'stockDict', code), { name })
+              success++
+            } catch { failed++ }
+          } else { failed++ }
+        }
+
+        setImportResult({ success, failed })
+        showMsg(`✅ 匯入完成！成功 ${success} 筆，失敗 ${failed} 筆`)
+      } catch (err) {
+        showMsg('❌ 檔案格式錯誤，請確認欄位名稱為「股票代號」和「股票名稱」')
+      }
+      setImporting(false)
+      e.target.value = ''
+    }
+    reader.readAsArrayBuffer(file)
+  }
+
+  // 匯出交易紀錄 CSV
+  const exportTrades = async () => {
+    setExportLoading(true)
+    const snap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'desc')))
+    const trades = snap.docs.map(d => d.data())
+    const header = ['日期', '類型', '代號', '名稱', '價格', '股數', '手續費', '交易稅', '收付金額', '備註']
+    const rows = trades.map((t: any) => [t.date, t.type === 'buy' ? '買入' : '賣出', t.code, t.name, t.price, t.shares, t.fee, t.tax, t.total, t.note || ''])
+    const csv = [header, ...rows].map(r => r.join(',')).join('\n')
+    downloadCSV(csv, `買賣紀錄_${today()}.csv`)
+    setExportLoading(false)
+    showMsg('✅ 已匯出買賣紀錄')
+  }
+
+  const exportCashFlow = async () => {
+    const snap = await getDocs(query(collection(investDB, 'cashflow'), orderBy('date', 'desc')))
+    const records = snap.docs.map(d => d.data())
+    const header = ['日期', '類型', '金額', '備註']
+    const rows = records.map((r: any) => [r.date, r.type === 'in' ? '入金' : '出金', r.amount, r.note || ''])
+    downloadCSV([header, ...rows].map(r => r.join(',')).join('\n'), `出入金紀錄_${today()}.csv`)
+    showMsg('✅ 已匯出出入金紀錄')
+  }
+
+  const exportDividends = async () => {
+    const snap = await getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'desc')))
+    const records = snap.docs.map(d => d.data())
+    const header = ['日期', '代號', '名稱', '現金股利', '股票股利', '備註']
+    const rows = records.map((r: any) => [r.date, r.code, r.name, r.cashDividend, r.stockDividend, r.note || ''])
+    downloadCSV([header, ...rows].map(r => r.join(',')).join('\n'), `除權息紀錄_${today()}.csv`)
+    showMsg('✅ 已匯出除權息紀錄')
+  }
+
+  const downloadCSV = (csv: string, filename: string) => {
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const today = () => new Date().toISOString().split('T')[0]
+
+  return (
+    <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '900px', margin: '0 auto' }}>
+      <div style={{ marginBottom: '24px' }}>
+        <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>設定與備份</h1>
+        <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>匯入股票字典、匯出報表</p>
+      </div>
+
+      {/* 訊息提示 */}
+      {msg && (
+        <div style={{ backgroundColor: msg.startsWith('❌') ? 'rgba(255,87,87,0.12)' : 'rgba(0,200,150,0.12)', border: `1px solid ${msg.startsWith('❌') ? 'rgba(255,87,87,0.3)' : 'rgba(0,200,150,0.3)'}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '20px', color: msg.startsWith('❌') ? '#ff5757' : '#00c896', fontSize: '14px' }}>
+          {msg}
+        </div>
+      )}
+
+      {/* 股票字典匯入 */}
+      <div style={{ ...card, marginBottom: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+          <FileSpreadsheet size={18} color="#4f8ef7" />
+          <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>匯入股票字典</span>
+        </div>
+        <p style={{ fontSize: '13px', color: '#8892a4', marginBottom: '16px', lineHeight: 1.6 }}>
+          支援 <strong style={{ color: '#e2e8f0' }}>.xlsx / .xls</strong> 格式，欄位需包含 <strong style={{ color: '#4f8ef7' }}>「股票代號」</strong> 和 <strong style={{ color: '#4f8ef7' }}>「股票名稱」</strong>。<br />
+          匯入後輸入代號時會自動帶入名稱，重複代號會自動覆蓋更新。
+        </p>
+
+        {/* 匯入按鈕 */}
+        <label style={{ ...btn('#4f8ef7'), width: 'fit-content', cursor: 'pointer', opacity: importing ? 0.6 : 1 }}>
+          <Upload size={16} />
+          {importing ? '匯入中...' : '選擇 Excel 檔案匯入'}
+          <input type="file" accept=".xlsx,.xls" onChange={handleImportDict} disabled={importing} style={{ display: 'none' }} />
+        </label>
+
+        {/* 匯入結果 */}
+        {importResult && (
+          <div style={{ marginTop: '16px', padding: '16px', backgroundColor: '#0f1117', borderRadius: '8px', border: '1px solid #2e3349' }}>
+            <div style={{ display: 'flex', gap: '24px' }}>
+              <div>
+                <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>成功匯入</div>
+                <div style={{ fontSize: '22px', fontWeight: 700, color: '#00c896' }}>{importResult.success} 筆</div>
+              </div>
+              {importResult.failed > 0 && (
+                <div>
+                  <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>略過（格式錯誤）</div>
+                  <div style={{ fontSize: '22px', fontWeight: 700, color: '#ff5757' }}>{importResult.failed} 筆</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 匯出報表 */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+          <Download size={18} color="#00c896" />
+          <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>匯出報表（CSV）</span>
+        </div>
+        <p style={{ fontSize: '13px', color: '#8892a4', marginBottom: '16px' }}>
+          匯出後可直接用 Excel 開啟，所有中文字符完整顯示。
+        </p>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          <button style={btn('#4f8ef7')} onClick={exportTrades} disabled={exportLoading}>
+            <Download size={16} />買賣紀錄
+          </button>
+          <button style={btn('#00c896')} onClick={exportCashFlow}>
+            <Download size={16} />出入金紀錄
+          </button>
+          <button style={btn('#f5a623')} onClick={exportDividends}>
+            <Download size={16} />除權息紀錄
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+/* =========================================
+ * 檔案位置: src\pages\invest\Trades.tsx
+ * ========================================= */
+
+import { useState, useEffect, useRef } from 'react'
+import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query, setDoc } from 'firebase/firestore'
+import { investDB } from '../../lib/firebase'
+import { calcFee, calcTax, isETF } from '../../lib/calc'
+import { Pencil, Trash2, X, Check, Upload, Search, ChevronDown, ChevronUp } from 'lucide-react'
+
+interface Trade {
+  id?: string
+  date: string
+  type: 'buy' | 'sell'
+  code: string
+  name: string
+  price: number
+  shares: number
+  fee: number
+  tax: number
+  total: number
+  note: string
+}
+
+const emptyTrade: Trade = {
+  date: new Date().toISOString().split('T')[0],
+  type: 'buy', code: '', name: '', price: 0, shares: 0, fee: 0, tax: 0, total: 0, note: ''
+}
+
+const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
+const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
+
+export default function Trades() {
+  const [trades, setTrades] = useState<Trade[]>([])
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState<Trade>(emptyTrade)
+  const [loading, setLoading] = useState(false)
+  const [stockDict, setStockDict] = useState<Record<string, string>>({})
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<{ success: number; failed: number; skipped: number } | null>(null)
+  const [search, setSearch] = useState('')
+  const [showForm, setShowForm] = useState(false)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const handle = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', handle)
+    return () => window.removeEventListener('resize', handle)
+  }, [])
+
+  const load = async () => {
+    const q = query(collection(investDB, 'trades'), orderBy('date', 'desc'))
+    const snap = await getDocs(q)
+    setTrades(snap.docs.map(d => ({ id: d.id, ...d.data() } as Trade)))
+  }
+
+  const loadDict = async () => {
+    const snap = await getDocs(collection(investDB, 'stockDict'))
+    const dict: Record<string, string> = {}
+    snap.docs.forEach(d => { dict[d.id] = d.data().name })
+    setStockDict(dict)
+  }
+
+  useEffect(() => { load(); loadDict() }, [])
+
+  const handleCodeChange = (code: string) => {
+    const upper = code.toUpperCase()
+    setForm(f => {
+      const name = stockDict[upper] || f.name
+      const fee = f.price && f.shares ? calcFee(f.price, f.shares) : f.fee
+      const tax = f.type === 'sell' && f.price && f.shares ? calcTax(f.price, f.shares, upper) : 0
+      const u = { ...f, code: upper, name, fee, tax }
+      u.total = f.type === 'buy' ? f.price * f.shares + u.fee : f.price * f.shares - u.fee - u.tax
+      return u
+    })
+  }
+
+  const calcTotal = (f: Trade) => f.type === 'buy' ? f.price * f.shares + f.fee : f.price * f.shares - f.fee - f.tax
+
+  const handleChange = (key: keyof Trade, value: any) => {
+    setForm(f => {
+      const u = { ...f, [key]: value }
+      if (['price', 'shares', 'type', 'code'].includes(key)) {
+        if (u.price && u.shares) {
+          u.fee = calcFee(u.price, u.shares)
+          u.tax = u.type === 'sell' ? calcTax(u.price, u.shares, u.code) : 0
+        }
+      }
+      u.total = calcTotal(u)
+      return u
+    })
+  }
+
+  const handleSave = async () => {
+    if (!form.code || !form.price || !form.shares) return
+    setLoading(true)
+    if (form.name && form.code) await setDoc(doc(investDB, 'stockDict', form.code), { name: form.name })
+    if (editingId) {
+      await updateDoc(doc(investDB, 'trades', editingId), { ...form })
+    } else {
+      await addDoc(collection(investDB, 'trades'), { ...form })
+    }
+    setEditingId(null); setForm(emptyTrade); setLoading(false); setShowForm(false)
+    load(); loadDict()
+  }
+
+  const handleEdit = (t: Trade) => { setForm(t); setEditingId(t.id!); setShowForm(true); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+  const handleCancel = () => { setForm(emptyTrade); setEditingId(null); setShowForm(false) }
+  const handleDelete = async (id: string) => {
+    if (!confirm('確定要刪除？')) return
+    await deleteDoc(doc(investDB, 'trades', id)); load()
+  }
+
+  const handleImportCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImporting(true); setImportResult(null)
+    const text = await file.text()
+    const lines = text.split('\n').filter(l => l.trim())
+    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''))
+    let success = 0, failed = 0, skipped = 0
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',').map(c => c.trim().replace(/"/g, ''))
+      const row: Record<string, string> = {}
+      headers.forEach((h, idx) => { row[h] = cols[idx] || '' })
+      const type = row['類型']
+      const date = row['日期']
+
+      if (type === '入金') {
+        const amount = parseFloat(row['價格/金額']) || 0
+        if (amount > 0) { await addDoc(collection(investDB, 'cashflow'), { date, type: 'in', amount, note: row['備註/筆記'] || '' }); success++ }
+        else skipped++
+        continue
+      }
+      if (type !== '買進' && type !== '賣出') { skipped++; continue }
+
+      const rawCode = (row['代號'] || '').replace('.TW', '').replace('.tw', '').trim()
+      const name = (row['名稱'] || '').trim()
+      const price = parseFloat(row['價格/金額']) || 0
+      const shares = parseInt(row['股數']) || 0
+      if (!rawCode || !price || !shares) { failed++; continue }
+
+      const tradeType = type === '買進' ? 'buy' : 'sell'
+      const fee = calcFee(price, shares)
+      const tax = tradeType === 'sell' ? calcTax(price, shares, rawCode) : 0
+      const total = tradeType === 'buy' ? price * shares + fee : price * shares - fee - tax
+
+      try {
+        await addDoc(collection(investDB, 'trades'), { date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total, note: row['備註/筆記'] || '' })
+        if (name && rawCode) await setDoc(doc(investDB, 'stockDict', rawCode), { name })
+        success++
+      } catch { failed++ }
+    }
+
+    setImportResult({ success, failed, skipped })
+    setImporting(false); e.target.value = ''
+    load(); loadDict()
+  }
+
+  const filtered = trades.filter(t =>
+    !search || t.code.toLowerCase().includes(search.toLowerCase()) || t.name.includes(search)
+  )
+
+  return (
+    <>
+      <style>{`
+        .trades-grid { display: grid; gap: 12px; grid-template-columns: repeat(5, 1fr); }
+        .trades-grid .span2 { grid-column: span 2; }
+        @media (max-width: 1100px) { .trades-grid { grid-template-columns: repeat(3, 1fr); } }
+        @media (max-width: 700px) { .trades-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 480px) { .trades-grid { grid-template-columns: 1fr; } .trades-grid .span2 { grid-column: span 1; } }
+        .trade-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .trade-table th { padding: 8px 10px; text-align: left; color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; white-space: nowrap; }
+        .trade-table td { padding: 10px; border-bottom: 1px solid #2e3349; color: #e2e8f0; white-space: nowrap; }
+        .trade-table tr:hover td { background-color: rgba(79,142,247,0.04); }
+        .trade-card { background: #0f1117; border-radius: 10px; padding: 12px 14px; border: 1px solid #2e3349; margin-bottom: 8px; }
+        .trade-card:active { border-color: #4f8ef7; }
+      `}</style>
+
+      <div style={{ padding: 'clamp(12px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
+
+        {/* 標題列 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+          <div>
+            <h1 style={{ fontSize: 'clamp(16px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>買賣紀錄</h1>
+            <p style={{ fontSize: '12px', color: '#8892a4', margin: '2px 0 0' }}>共 {trades.length} 筆交易</p>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <label style={{ ...btn('#21253a'), border: '1px solid #2e3349', cursor: 'pointer', fontSize: '12px', padding: '7px 10px' }}>
+              <Upload size={13} />{isMobile ? 'CSV' : importing ? '匯入中...' : '匯入歷史紀錄 CSV'}
+              <input ref={fileRef} type="file" accept=".csv" onChange={handleImportCSV} disabled={importing} style={{ display: 'none' }} />
+            </label>
+            <button style={{ ...btn('#4f8ef7'), fontSize: '12px', padding: '7px 12px' }} onClick={() => { setForm(emptyTrade); setEditingId(null); setShowForm(v => !v) }}>
+              {showForm ? <X size={13} /> : <Check size={13} />}{showForm ? '收起' : '新增交易'}
+            </button>
+          </div>
+        </div>
+
+        {importResult && (
+          <div style={{ backgroundColor: 'rgba(0,200,150,0.08)', border: '1px solid rgba(0,200,150,0.25)', borderRadius: '10px', padding: '12px 16px', marginBottom: '12px', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+            <div><span style={{ fontSize: '11px', color: '#8892a4' }}>成功匯入</span><div style={{ fontSize: '16px', fontWeight: 700, color: '#00c896' }}>{importResult.success} 筆</div></div>
+            {importResult.failed > 0 && <div><span style={{ fontSize: '11px', color: '#8892a4' }}>失敗</span><div style={{ fontSize: '16px', fontWeight: 700, color: '#ff5757' }}>{importResult.failed} 筆</div></div>}
+            {importResult.skipped > 0 && <div><span style={{ fontSize: '11px', color: '#8892a4' }}>略過</span><div style={{ fontSize: '16px', fontWeight: 700, color: '#8892a4' }}>{importResult.skipped} 筆</div></div>}
+          </div>
+        )}
+
+        {/* 表單 */}
+        {showForm && (
+          <div style={{ ...card, marginBottom: '16px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>
+              {editingId ? '✏️ 編輯交易' : '➕ 新增交易'}
+            </div>
+            <div className="trades-grid">
+              <div><label style={lbl}>日期</label><input type="date" style={inp} value={form.date} onChange={e => handleChange('date', e.target.value)} /></div>
+              <div><label style={lbl}>類型</label>
+                <select style={inp} value={form.type} onChange={e => handleChange('type', e.target.value)}>
+                  <option value="buy">買入</option>
+                  <option value="sell">賣出</option>
+                </select>
+              </div>
+              <div><label style={lbl}>股票代號</label><input style={inp} placeholder="例：2330" value={form.code} onChange={e => handleCodeChange(e.target.value)} /></div>
+              <div><label style={lbl}>股票名稱</label><input style={inp} placeholder="例：台積電" value={form.name} onChange={e => handleChange('name', e.target.value)} /></div>
+              <div><label style={lbl}>價格</label><input type="number" style={inp} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} /></div>
+              <div><label style={lbl}>股數</label><input type="number" style={inp} placeholder="0" value={form.shares || ''} onChange={e => handleChange('shares', parseInt(e.target.value) || 0)} /></div>
+              <div>
+                <label style={lbl}>手續費 <span style={{ color: '#4f8ef7', fontSize: '11px' }}>（6折自動計算）</span></label>
+                <input type="number" style={inp} value={form.fee || ''} onChange={e => handleChange('fee', parseFloat(e.target.value) || 0)} />
+              </div>
+              <div>
+                <label style={lbl}>交易稅 <span style={{ color: form.type === 'sell' ? (isETF(form.code) ? '#f5a623' : '#4f8ef7') : '#2e3349', fontSize: '11px' }}>
+                  {form.type === 'sell' ? (isETF(form.code) ? '（ETF千分之一）' : '（千分之三）') : '（買入免稅）'}
+                </span></label>
+                <input type="number" style={inp} value={form.tax || ''} onChange={e => handleChange('tax', parseFloat(e.target.value) || 0)} />
+              </div>
+              <div><label style={lbl}>收付金額</label><input type="number" style={{ ...inp, color: form.type === 'buy' ? '#ff5757' : '#00c896' }} value={form.total} readOnly /></div>
+              <div className="span2"><label style={lbl}>備註</label><input style={inp} placeholder="選填" value={form.note} onChange={e => handleChange('note', e.target.value)} /></div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
+              {editingId && <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消</button>}
+              <button style={btn('#4f8ef7')} onClick={handleSave} disabled={loading}>
+                <Check size={14} />{loading ? '儲存中...' : editingId ? '確認更新' : '確認新增'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 搜尋列 */}
+        <div style={{ marginBottom: '12px', position: 'relative' }}>
+          <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#8892a4' }} />
+          <input style={{ ...inp, paddingLeft: '36px', backgroundColor: '#1a1d27', border: '1px solid #2e3349' }}
+            placeholder="搜尋代號或名稱..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+
+        {/* 列表 */}
+        <div style={card}>
+          {filtered.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>
+              {search ? `找不到「${search}」相關紀錄` : '還沒有交易紀錄'}
+            </div>
+          ) : isMobile ? (
+            // 手機版：卡片式顯示
+            <div>
+              {filtered.map(trade => (
+                <div key={trade.id} className="trade-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                    onClick={() => setExpandedId(expandedId === trade.id ? null : trade.id!)}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+                      <span style={{ backgroundColor: trade.type === 'buy' ? 'rgba(255,87,87,0.15)' : 'rgba(0,200,150,0.15)', color: trade.type === 'buy' ? '#ff5757' : '#00c896', padding: '2px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, flexShrink: 0 }}>
+                        {trade.type === 'buy' ? '買' : '賣'}
+                      </span>
+                      <span style={{ color: '#4f8ef7', fontWeight: 700, fontSize: '14px', flexShrink: 0 }}>{trade.code}</span>
+                      <span style={{ color: '#e2e8f0', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{trade.name}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                      <span style={{ color: trade.type === 'buy' ? '#ff5757' : '#00c896', fontWeight: 600, fontSize: '13px' }}>
+                        ${trade.total.toLocaleString()}
+                      </span>
+                      {expandedId === trade.id ? <ChevronUp size={14} color="#8892a4" /> : <ChevronDown size={14} color="#8892a4" />}
+                    </div>
+                  </div>
+
+                  {expandedId === trade.id && (
+                    <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #2e3349' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '10px' }}>
+                        {[
+                          { label: '日期', value: trade.date },
+                          { label: '價格', value: trade.price.toLocaleString() },
+                          { label: '股數', value: trade.shares.toLocaleString() },
+                          { label: '手續費', value: trade.fee.toLocaleString() },
+                          { label: '交易稅', value: trade.tax.toLocaleString() },
+                          { label: '備註', value: trade.note || '—' },
+                        ].map(({ label, value }) => (
+                          <div key={label}>
+                            <div style={{ fontSize: '10px', color: '#8892a4' }}>{label}</div>
+                            <div style={{ fontSize: '13px', color: '#e2e8f0' }}>{value}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button onClick={() => handleEdit(trade)} style={{ ...btn('#21253a'), border: '1px solid #2e3349', fontSize: '12px', padding: '6px 12px' }}>
+                          <Pencil size={12} />編輯
+                        </button>
+                        <button onClick={() => handleDelete(trade.id!)} style={{ ...btn('rgba(255,87,87,0.15)'), color: '#ff5757', fontSize: '12px', padding: '6px 12px' }}>
+                          <Trash2 size={12} />刪除
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            // 桌面版：表格顯示
+            <div style={{ overflowX: 'auto' }}>
+              <table className="trade-table">
+                <thead>
+                  <tr>{['日期', '類型', '代號', '名稱', '價格', '股數', '手續費', '交易稅', '收付金額', '備註', ''].map(h => <th key={h}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {filtered.map(trade => (
+                    <tr key={trade.id} style={{ backgroundColor: editingId === trade.id ? 'rgba(79,142,247,0.06)' : 'transparent' }}>
+                      <td>{trade.date}</td>
+                      <td><span style={{ backgroundColor: trade.type === 'buy' ? 'rgba(255,87,87,0.15)' : 'rgba(0,200,150,0.15)', color: trade.type === 'buy' ? '#ff5757' : '#00c896', padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>{trade.type === 'buy' ? '買入' : '賣出'}</span></td>
+                      <td style={{ color: '#4f8ef7', fontWeight: 700 }}>{trade.code}</td>
+                      <td>{trade.name}</td>
+                      <td>{trade.price.toLocaleString()}</td>
+                      <td>{trade.shares.toLocaleString()}</td>
+                      <td>{trade.fee.toLocaleString()}</td>
+                      <td>{trade.tax.toLocaleString()}</td>
+                      <td style={{ color: trade.type === 'buy' ? '#ff5757' : '#00c896', fontWeight: 600 }}>{trade.total.toLocaleString()}</td>
+                      <td style={{ color: '#8892a4' }}>{trade.note}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button onClick={() => handleEdit(trade)} style={{ background: 'none', border: 'none', color: '#4f8ef7', cursor: 'pointer' }}><Pencil size={15} /></button>
+                          <button onClick={() => handleDelete(trade.id!)} style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer' }}><Trash2 size={15} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+
+/* =========================================
+ * 檔案位置: src\pages\invest\Watchlist.tsx
+ * ========================================= */
+
+import { useState, useEffect } from 'react'
+import { collection, getDocs, setDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore'
+import { investDB } from '../../lib/firebase'
+import { getMultipleQuotes } from '../../lib/fugle'
+import { Plus, Trash2, RefreshCw, TrendingUp, TrendingDown, Pencil, Check, X, FileText } from 'lucide-react'
+
+interface WatchItem {
+  code: string
+  name: string
+  targetHigh?: number
+  targetLow?: number
+  note?: string
+  currentPrice?: number
+  addedAt: string
+}
+
+const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
+const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
+
+export default function Watchlist() {
+  const [items, setItems] = useState<WatchItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [priceLoading, setPriceLoading] = useState(false)
+  const [showForm, setShowForm] = useState(false)
+  const [editingCode, setEditingCode] = useState<string | null>(null)
+  const [expandedNote, setExpandedNote] = useState<string | null>(null)
+  const [stockDict, setStockDict] = useState<Record<string, string>>({})
+  const [form, setForm] = useState({ code: '', name: '', targetHigh: '', targetLow: '', note: '' })
+  const [lastUpdated, setLastUpdated] = useState('')
+
+  const load = async () => {
+    setLoading(true)
+    const snap = await getDocs(collection(investDB, 'watchlist'))
+    const data = snap.docs.map(d => ({ code: d.id, ...d.data() } as WatchItem))
+    // 讀取儲存的現價
+    const priceDoc = await doc(investDB, 'settings', 'watchlistPrices')
+    const priceSnap = await getDocs(collection(investDB, 'settings'))
+    const priceData = priceSnap.docs.find(d => d.id === 'watchlistPrices')?.data() || {}
+    const savedAt = priceData._updatedAt || ''
+    if (savedAt) setLastUpdated(savedAt)
+    data.forEach(item => { item.currentPrice = priceData[item.code] ?? undefined })
+    setItems(data.sort((a, b) => a.code.localeCompare(b.code)))
+
+    // 讀取股票字典
+    const dictSnap = await getDocs(collection(investDB, 'stockDict'))
+    const dict: Record<string, string> = {}
+    dictSnap.docs.forEach(d => { dict[d.id] = d.data().name })
+    setStockDict(dict)
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [])
+
+  // 更新現價
+  const updatePrices = async () => {
+    if (items.length === 0) return
+    setPriceLoading(true)
+    try {
+      const codes = items.map(i => i.code)
+      const quotes = await getMultipleQuotes(codes)
+      const now = new Date().toLocaleString('zh-TW')
+      const priceData: Record<string, any> = { _updatedAt: now }
+      codes.forEach(c => { if (quotes[c] !== null) priceData[c] = quotes[c] })
+      await setDoc(doc(investDB, 'settings', 'watchlistPrices'), priceData)
+      setItems(prev => prev.map(item => ({ ...item, currentPrice: quotes[item.code] ?? item.currentPrice })))
+      setLastUpdated(now)
+    } catch (err) { console.error(err) }
+    setPriceLoading(false)
+  }
+
+  const handleAdd = async () => {
+    if (!form.code.trim()) return
+    const code = form.code.trim()
+    const name = form.name.trim() || stockDict[code] || code
+    await setDoc(doc(investDB, 'watchlist', code), {
+      name,
+      targetHigh: form.targetHigh ? parseFloat(form.targetHigh) : null,
+      targetLow: form.targetLow ? parseFloat(form.targetLow) : null,
+      note: form.note || null,
+      addedAt: new Date().toISOString()
+    })
+    setForm({ code: '', name: '', targetHigh: '', targetLow: '', note: '' })
+    setShowForm(false); load()
+  }
+
+  const handleEdit = async (code: string) => {
+    const item = items.find(i => i.code === code)
+    if (!item) return
+    await updateDoc(doc(investDB, 'watchlist', code), {
+      targetHigh: form.targetHigh ? parseFloat(form.targetHigh) : null,
+      targetLow: form.targetLow ? parseFloat(form.targetLow) : null,
+      note: form.note || null,
+      name: form.name || item.name
+    })
+    setEditingCode(null); load()
+  }
+
+  const handleDelete = async (code: string) => {
+    if (!confirm(`確定要從自選股移除 ${code}？`)) return
+    await deleteDoc(doc(investDB, 'watchlist', code)); load()
+  }
+
+  const handleCodeChange = (code: string) => {
+    setForm(f => ({ ...f, code, name: stockDict[code] || f.name }))
+  }
+
+  const getPriceStatus = (item: WatchItem) => {
+    if (!item.currentPrice) return 'normal'
+    if (item.targetHigh && item.currentPrice >= item.targetHigh) return 'high'
+    if (item.targetLow && item.currentPrice <= item.targetLow) return 'low'
+    return 'normal'
+  }
+
+  const getDistancePct = (current: number, target: number) =>
+    (((target - current) / current) * 100).toFixed(1)
+
+  return (
+    <>
+      <style>{`
+        .watch-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+        @media (max-width: 700px) { .watch-grid { grid-template-columns: 1fr; } }
+        .form-grid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+        @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .watch-card { transition: border-color 0.2s; }
+        .watch-card:hover { border-color: #4f8ef7 !important; }
+      `}</style>
+
+      <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1400px', margin: '0 auto' }}>
+        {/* 標題列 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+          <div>
+            <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>自選股追蹤</h1>
+            <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>
+              {lastUpdated ? `現價更新：${lastUpdated}` : '點「更新現價」取得最新報價'}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={updatePrices} disabled={priceLoading || items.length === 0} style={btn('#21253a')}>
+              <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
+              {priceLoading ? '更新中...' : '更新現價'}
+            </button>
+            <button onClick={() => { setShowForm(true) }} style={btn('#4f8ef7')}>
+              <Plus size={14} />新增自選股
+            </button>
+          </div>
+        </div>
+
+        {/* 新增表單 */}
+        {showForm && (
+          <div style={{ ...card, marginBottom: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>➕ 新增自選股</span>
+              <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
+            </div>
+            <div className="form-grid">
+              <div>
+                <label style={lbl}>股票代號 *</label>
+                <input style={inp} placeholder="例如：2330" value={form.code}
+                  onChange={e => handleCodeChange(e.target.value)} />
+              </div>
+              <div>
+                <label style={lbl}>股票名稱</label>
+                <input style={inp} placeholder="自動帶入" value={form.name}
+                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+              </div>
+              <div>
+                <label style={lbl}>目標上標價（賣出參考）</label>
+                <input type="number" style={inp} placeholder="0" value={form.targetHigh}
+                  onChange={e => setForm(f => ({ ...f, targetHigh: e.target.value }))} />
+              </div>
+              <div>
+                <label style={lbl}>目標下標價（買入參考）</label>
+                <input type="number" style={inp} placeholder="0" value={form.targetLow}
+                  onChange={e => setForm(f => ({ ...f, targetLow: e.target.value }))} />
+              </div>
+              <div style={{ gridColumn: 'span 2' }}>
+                <label style={lbl}>個人評估筆記</label>
+                <textarea style={{ ...inp, minHeight: '80px', resize: 'vertical', fontFamily: 'sans-serif' }}
+                  placeholder="記錄這支股票的評估理由、觀察重點..."
+                  value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
+              <button style={btn('#2e3349')} onClick={() => setShowForm(false)}><X size={14} />取消</button>
+              <button style={btn('#4f8ef7')} onClick={handleAdd}><Check size={14} />新增</button>
+            </div>
+          </div>
+        )}
+
+        {/* 自選股列表 */}
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: '64px', color: '#8892a4' }}>載入中...</div>
+        ) : items.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '64px', color: '#8892a4' }}>
+            <p style={{ fontSize: '15px' }}>還沒有自選股</p>
+            <p style={{ fontSize: '13px', marginTop: '8px' }}>點「新增自選股」開始追蹤</p>
+          </div>
+        ) : (
+          <div className="watch-grid">
+            {items.map(item => {
+              const status = getPriceStatus(item)
+              const isEditing = editingCode === item.code
+              const borderColor = status === 'high' ? '#00c896' : status === 'low' ? '#ff5757' : '#2e3349'
+
+              return (
+                <div key={item.code} className="watch-card"
+                  style={{ ...card, border: `1px solid ${borderColor}`, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+
+                  {/* 卡片頭 */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '18px', fontWeight: 700, color: '#4f8ef7' }}>{item.code}</span>
+                        {status === 'high' && <span style={{ fontSize: '11px', backgroundColor: 'rgba(0,200,150,0.15)', color: '#00c896', borderRadius: '10px', padding: '2px 8px' }}>🎯 達到上標</span>}
+                        {status === 'low' && <span style={{ fontSize: '11px', backgroundColor: 'rgba(255,87,87,0.15)', color: '#ff5757', borderRadius: '10px', padding: '2px 8px' }}>🎯 達到下標</span>}
+                      </div>
+                      <div style={{ fontSize: '14px', color: '#e2e8f0', marginTop: '2px' }}>{item.name}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button onClick={() => {
+                        setEditingCode(item.code)
+                        setForm({ code: item.code, name: item.name, targetHigh: item.targetHigh?.toString() || '', targetLow: item.targetLow?.toString() || '', note: item.note || '' })
+                      }} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><Pencil size={14} /></button>
+                      <button onClick={() => handleDelete(item.code)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><Trash2 size={14} /></button>
+                    </div>
+                  </div>
+
+                  {/* 現價 */}
+                  <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '2px' }}>現價</div>
+                      <div style={{ fontSize: '22px', fontWeight: 700, color: '#e2e8f0' }}>
+                        {item.currentPrice ? item.currentPrice.toFixed(2) : '—'}
+                      </div>
+                    </div>
+                    {item.currentPrice && item.targetHigh && (
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>
+                          上標 {item.targetHigh}
+                          <span style={{ color: item.currentPrice >= item.targetHigh ? '#00c896' : '#f5a623', marginLeft: '4px' }}>
+                            ({item.currentPrice >= item.targetHigh ? '+' : ''}{getDistancePct(item.currentPrice, item.targetHigh)}%)
+                          </span>
+                        </div>
+                        <div style={{ height: '4px', backgroundColor: '#2e3349', borderRadius: '2px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', backgroundColor: '#00c896', borderRadius: '2px', width: `${Math.min(100, (item.currentPrice / item.targetHigh) * 100)}%` }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 目標價 */}
+                  {isEditing ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={lbl}>名稱</label>
+                          <input style={inp} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={lbl}>上標價</label>
+                          <input type="number" style={inp} placeholder="賣出參考" value={form.targetHigh}
+                            onChange={e => setForm(f => ({ ...f, targetHigh: e.target.value }))} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <label style={lbl}>下標價</label>
+                          <input type="number" style={inp} placeholder="買入參考" value={form.targetLow}
+                            onChange={e => setForm(f => ({ ...f, targetLow: e.target.value }))} />
+                        </div>
+                      </div>
+                      <div>
+                        <label style={lbl}>評估筆記</label>
+                        <textarea style={{ ...inp, minHeight: '60px', resize: 'vertical', fontFamily: 'sans-serif' }}
+                          value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button style={{ ...btn('#2e3349'), fontSize: '12px', padding: '6px 12px' }} onClick={() => setEditingCode(null)}><X size={12} />取消</button>
+                        <button style={{ ...btn('#4f8ef7'), fontSize: '12px', padding: '6px 12px' }} onClick={() => handleEdit(item.code)}><Check size={12} />儲存</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* 目標價顯示 */}
+                      <div style={{ display: 'flex', gap: '12px' }}>
+                        {item.targetLow && (
+                          <div style={{ flex: 1, backgroundColor: 'rgba(255,87,87,0.08)', borderRadius: '8px', padding: '8px 12px' }}>
+                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '2px' }}>下標（買入）</div>
+                            <div style={{ fontSize: '15px', fontWeight: 600, color: '#ff5757' }}>
+                              {item.targetLow}
+                              {item.currentPrice && (
+                                <span style={{ fontSize: '11px', color: '#8892a4', marginLeft: '6px' }}>
+                                  ({getDistancePct(item.currentPrice, item.targetLow)}%)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {item.targetHigh && (
+                          <div style={{ flex: 1, backgroundColor: 'rgba(0,200,150,0.08)', borderRadius: '8px', padding: '8px 12px' }}>
+                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '2px' }}>上標（賣出）</div>
+                            <div style={{ fontSize: '15px', fontWeight: 600, color: '#00c896' }}>
+                              {item.targetHigh}
+                              {item.currentPrice && (
+                                <span style={{ fontSize: '11px', color: '#8892a4', marginLeft: '6px' }}>
+                                  ({getDistancePct(item.currentPrice, item.targetHigh)}%)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 評估筆記 */}
+                      {item.note && (
+                        <div style={{ borderTop: '1px solid #2e3349', paddingTop: '10px' }}>
+                          <button onClick={() => setExpandedNote(expandedNote === item.code ? null : item.code)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', fontSize: '12px', padding: 0, marginBottom: '6px' }}>
+                            <FileText size={12} />評估筆記
+                          </button>
+                          {expandedNote === item.code && (
+                            <p style={{ fontSize: '12px', color: '#8892a4', margin: 0, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{item.note}</p>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  <div style={{ fontSize: '11px', color: '#8892a4', borderTop: '1px solid #2e3349', paddingTop: '8px' }}>
+                    加入於 {new Date(item.addedAt).toLocaleDateString('zh-TW')}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+
+/* =========================================
+ * 檔案位置: src\pages\invest\YearReview.tsx
+ * ========================================= */
+
+import { useState, useEffect } from 'react'
+import { collection, getDocs, orderBy, query } from 'firebase/firestore'
+import { investDB } from '../../lib/firebase'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line, Legend } from 'recharts'
+import { calcPositions, calcAvailableCash, type TradeRecord } from '../../lib/calc'
+
+interface MonthlyPnL {
+  month: string
+  realized: number
+  dividend: number
+  total: number
+}
+
+interface YearlyPerf {
+  year: number
+  startValue: number
+  endValue: number
+  invested: number
+  cagr: number
+  totalReturn: number
+}
+
+const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', outline: 'none' }
+const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
+
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null
+  return (
+    <div style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '8px', padding: '12px 16px' }}>
+      <p style={{ color: '#8892a4', fontSize: '12px', margin: '0 0 8px' }}>{label}</p>
+      {payload.map((p: any) => (
+        <p key={p.name} style={{ color: p.color, fontSize: '14px', fontWeight: 600, margin: '2px 0' }}>
+          {p.name}：{typeof p.value === 'number' && p.name.includes('%') ? `${p.value.toFixed(2)}%` : `$${Number(p.value).toLocaleString()}`}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+// 計算 CAGR
+function calcCAGR(startValue: number, endValue: number, years: number): number {
+  if (startValue <= 0 || years <= 0) return 0
+  return (Math.pow(endValue / startValue, 1 / years) - 1) * 100
+}
+
+export default function YearReview() {
+  const [monthlyData, setMonthlyData] = useState<MonthlyPnL[]>([])
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
+  const [startMonth, setStartMonth] = useState(1)
+  const [endMonth, setEndMonth] = useState(12)
+  const [loading, setLoading] = useState(true)
+  const [years, setYears] = useState<number[]>([])
+
+  // 績效報告 state
+  const [yearlyPerf, setYearlyPerf] = useState<YearlyPerf[]>([])
+  const [customStart, setCustomStart] = useState('')
+  const [customEnd, setCustomEnd] = useState('')
+  const [customCAGR, setCustomCAGR] = useState<number | null>(null)
+  const [assetSnapshots, setAssetSnapshots] = useState<Record<string, number>>({})
+  const [perfLoading, setPerfLoading] = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const [tradesSnap, dividendsSnap, snapshotsSnap] = await Promise.all([
+        getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
+        getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'asc'))),
+        getDocs(query(collection(investDB, 'assetSnapshots'), orderBy('date', 'asc')))
+      ])
+
+      const trades = tradesSnap.docs.map(d => d.data())
+      const dividends = dividendsSnap.docs.map(d => d.data())
+
+      // 資產快照
+      const snapshots: Record<string, number> = {}
+      snapshotsSnap.docs.forEach(d => { snapshots[d.data().date] = d.data().totalAssets })
+      setAssetSnapshots(snapshots)
+
+      // 取得所有年份
+      const allDates = [...trades.map((t: any) => t.date), ...dividends.map((d: any) => d.date)]
+      const allYears = [...new Set(allDates.map((d: string) => parseInt(d.slice(0, 4))))].sort()
+      if (allYears.length > 0) {
+        setYears(allYears)
+        // 預設自訂區間
+        if (!customStart) setCustomStart(`${allYears[0]}-01-01`)
+        if (!customEnd) setCustomEnd(new Date().toISOString().split('T')[0])
+      }
+
+      // 計算每月已實現損益
+      const map: Record<string, { shares: number; cost: number }> = {}
+      const monthlyRealized: Record<string, number> = {}
+      const monthlyDividend: Record<string, number> = {}
+
+      trades.forEach((t: any) => {
+        const code = t.code
+        if (!map[code]) map[code] = { shares: 0, cost: 0 }
+        if (t.type === 'buy') {
+          map[code].shares += t.shares
+          map[code].cost += t.price * t.shares + t.fee
+        } else {
+          const avg = map[code].shares > 0 ? map[code].cost / map[code].shares : 0
+          const pnl = (t.price - avg) * t.shares - t.fee - t.tax
+          const month = t.date.slice(0, 7)
+          monthlyRealized[month] = (monthlyRealized[month] || 0) + pnl
+          map[code].shares -= t.shares
+          map[code].cost -= avg * t.shares
+        }
+      })
+
+      dividends.forEach((d: any) => {
+        const month = d.date.slice(0, 7)
+        monthlyDividend[month] = (monthlyDividend[month] || 0) + d.cashDividend
+      })
+
+      const result: MonthlyPnL[] = []
+      for (let m = 1; m <= 12; m++) {
+        const month = `${selectedYear}-${String(m).padStart(2, '0')}`
+        const realized = monthlyRealized[month] || 0
+        const dividend = monthlyDividend[month] || 0
+        result.push({ month: `${m}月`, realized, dividend, total: realized + dividend })
+      }
+      setMonthlyData(result)
+
+      // 計算年度績效
+      calcYearlyPerf(allYears, snapshots, trades as TradeRecord[])
+    } catch (err) { console.error(err) }
+    setLoading(false)
+  }
+
+  const calcYearlyPerf = (allYears: number[], snapshots: Record<string, number>, trades: TradeRecord[]) => {
+    const perf: YearlyPerf[] = []
+
+    allYears.forEach(year => {
+      // 找該年度最接近年初和年末的快照
+      const yearDates = Object.keys(snapshots).filter(d => d.startsWith(`${year}`)).sort()
+      const prevYearDates = Object.keys(snapshots).filter(d => d.startsWith(`${year - 1}`)).sort()
+
+      const startDate = prevYearDates[prevYearDates.length - 1] || yearDates[0]
+      const endDate = yearDates[yearDates.length - 1]
+
+      if (!startDate || !endDate) return
+
+      const startValue = snapshots[startDate] || 0
+      const endValue = snapshots[endDate] || 0
+
+      // 該年度淨投入
+      const yearTrades = trades.filter(t => t.date.startsWith(`${year}`))
+      const invested = yearTrades.reduce((s, t) => {
+        if (t.type === 'buy') return s + t.price * t.shares + (t.fee || 0)
+        return s - t.price * t.shares + (t.fee || 0) + (t.tax || 0)
+      }, 0)
+
+      const totalReturn = startValue > 0 ? ((endValue - startValue) / startValue) * 100 : 0
+      const cagr = calcCAGR(startValue, endValue, 1)
+
+      perf.push({ year, startValue, endValue, invested, cagr, totalReturn })
+    })
+
+    setYearlyPerf(perf)
+  }
+
+  // 計算自訂區間 CAGR
+  const calcCustomCAGR = () => {
+    if (!customStart || !customEnd) return
+    setPerfLoading(true)
+
+    const startDates = Object.keys(assetSnapshots).filter(d => d >= customStart).sort()
+    const endDates = Object.keys(assetSnapshots).filter(d => d <= customEnd).sort()
+
+    const startDate = startDates[0]
+    const endDate = endDates[endDates.length - 1]
+
+    if (!startDate || !endDate) { setCustomCAGR(null); setPerfLoading(false); return }
+
+    const startValue = assetSnapshots[startDate]
+    const endValue = assetSnapshots[endDate]
+
+    const startMs = new Date(startDate).getTime()
+    const endMs = new Date(endDate).getTime()
+    const years = (endMs - startMs) / (365.25 * 24 * 60 * 60 * 1000)
+
+    setCustomCAGR(calcCAGR(startValue, endValue, years))
+    setPerfLoading(false)
+  }
+
+  useEffect(() => { load() }, [selectedYear])
+
+  const filtered = monthlyData.slice(startMonth - 1, endMonth)
+  const totalRealized = filtered.reduce((s, m) => s + m.realized, 0)
+  const totalDividend = filtered.reduce((s, m) => s + m.dividend, 0)
+  const totalPnL = totalRealized + totalDividend
+  const months = Array.from({ length: 12 }, (_, i) => i + 1)
+
+  // 整體 CAGR（第一筆到最新）
+  const overallCAGR = (() => {
+    const dates = Object.keys(assetSnapshots).sort()
+    if (dates.length < 2) return null
+    const startValue = assetSnapshots[dates[0]]
+    const endValue = assetSnapshots[dates[dates.length - 1]]
+    const years = (new Date(dates[dates.length - 1]).getTime() - new Date(dates[0]).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
+    return calcCAGR(startValue, endValue, years)
+  })()
+
+  const perfChartData = yearlyPerf.map(p => ({
+    year: `${p.year}`,
+    '年度報酬率%': parseFloat(p.totalReturn.toFixed(2)),
+    '年末資產': p.endValue
+  }))
+
+  return (
+    <>
+      <style>{`
+        .review-stats { display: grid; gap: 16px; grid-template-columns: repeat(3, 1fr); margin-bottom: 20px; }
+        @media (max-width: 700px) { .review-stats { grid-template-columns: 1fr; } }
+        .perf-stats { display: grid; gap: 16px; grid-template-columns: repeat(4, 1fr); margin-bottom: 20px; }
+        @media (max-width: 900px) { .perf-stats { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 480px) { .perf-stats { grid-template-columns: 1fr; } }
+        .perf-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .perf-table th { padding: 10px 12px; text-align: left; color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; white-space: nowrap; }
+        .perf-table td { padding: 12px; border-bottom: 1px solid #2e3349; color: #e2e8f0; white-space: nowrap; }
+      `}</style>
+
+      <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
+
+        {/* ===== 年度復盤（原有功能）===== */}
+        <div style={{ marginBottom: '24px' }}>
+          <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>年度復盤</h1>
+          <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>已實現損益與股利收入分析</p>
+        </div>
+
+        {/* 篩選列 */}
+        <div style={{ ...card, marginBottom: '20px', display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div>
+            <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>年度</label>
+            <select style={inp} value={selectedYear} onChange={e => setSelectedYear(parseInt(e.target.value))}>
+              {years.length === 0
+                ? <option value={new Date().getFullYear()}>{new Date().getFullYear()}</option>
+                : years.map(y => <option key={y} value={y}>{y}</option>)
+              }
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>起始月份</label>
+            <select style={inp} value={startMonth} onChange={e => setStartMonth(parseInt(e.target.value))}>
+              {months.map(m => <option key={m} value={m}>{m} 月</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>結束月份</label>
+            <select style={inp} value={endMonth} onChange={e => setEndMonth(parseInt(e.target.value))}>
+              {months.filter(m => m >= startMonth).map(m => <option key={m} value={m}>{m} 月</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* 統計卡片 */}
+        <div className="review-stats">
+          {[
+            { label: '已實現損益', value: totalRealized, color: pnlColor(totalRealized) },
+            { label: '股利收入', value: totalDividend, color: '#4f8ef7' },
+            { label: '合計收益', value: totalPnL, color: pnlColor(totalPnL) },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={card}>
+              <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>{label}</div>
+              <div style={{ fontSize: 'clamp(18px, 2vw, 22px)', fontWeight: 700, color }}>
+                {value >= 0 ? '+' : ''}{value.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* 長條圖 */}
+        <div style={{ ...card, marginBottom: '20px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '20px' }}>
+            {selectedYear} 年 {startMonth}–{endMonth} 月 損益分佈
+          </div>
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={filtered} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2e3349" />
+                <XAxis dataKey="month" tick={{ fill: '#8892a4', fontSize: 12 }} />
+                <YAxis tick={{ fill: '#8892a4', fontSize: 12 }} tickFormatter={v => `${(v / 1000).toFixed(0)}K`} width={50} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="realized" name="已實現損益" radius={[4, 4, 0, 0]}>
+                  {filtered.map((entry, i) => <Cell key={i} fill={entry.realized >= 0 ? '#00c896' : '#ff5757'} />)}
+                </Bar>
+                <Bar dataKey="dividend" name="股利收入" fill="#4f8ef7" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* 月份明細表 */}
+        <div style={{ ...card, marginBottom: '40px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>月份明細</div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #2e3349' }}>
+                  {['月份', '已實現損益', '股利收入', '合計'].map(h => (
+                    <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#8892a4', fontWeight: 500 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(m => (
+                  <tr key={m.month} style={{ borderBottom: '1px solid #2e3349' }}>
+                    <td style={{ padding: '12px', color: '#e2e8f0', fontWeight: 500 }}>{selectedYear} {m.month}</td>
+                    <td style={{ padding: '12px', color: pnlColor(m.realized), fontWeight: 600 }}>
+                      {m.realized >= 0 ? '+' : ''}{m.realized.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
+                    </td>
+                    <td style={{ padding: '12px', color: '#4f8ef7', fontWeight: 600 }}>
+                      +{m.dividend.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
+                    </td>
+                    <td style={{ padding: '12px', color: pnlColor(m.total), fontWeight: 700 }}>
+                      {m.total >= 0 ? '+' : ''}{m.total.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* ===== 投資績效報告（新增）===== */}
+        <div style={{ marginBottom: '24px' }}>
+          <h2 style={{ fontSize: 'clamp(16px, 2vw, 20px)', fontWeight: 700, color: '#e2e8f0', margin: '0 0 4px' }}>投資績效報告</h2>
+          <p style={{ fontSize: '13px', color: '#8892a4', margin: 0 }}>基於資產趨勢快照計算，請先在「資產趨勢」頁面記錄每年資產</p>
+        </div>
+
+        {Object.keys(assetSnapshots).length < 2 ? (
+          <div style={{ ...card, textAlign: 'center', padding: '48px', color: '#8892a4' }}>
+            <p style={{ fontSize: '15px' }}>資料不足</p>
+            <p style={{ fontSize: '13px', marginTop: '8px' }}>請先在「資產趨勢」頁面至少記錄 2 筆以上的資產快照才能計算績效</p>
+          </div>
+        ) : (
+          <>
+            {/* 整體績效卡片 */}
+            <div className="perf-stats">
+              {[
+                {
+                  label: '整體 CAGR',
+                  value: overallCAGR !== null ? `${overallCAGR >= 0 ? '+' : ''}${overallCAGR.toFixed(2)}%` : '—',
+                  color: overallCAGR !== null ? pnlColor(overallCAGR) : '#8892a4',
+                  desc: '年化複合報酬率'
+                },
+                {
+                  label: '記錄年數',
+                  value: `${(() => {
+                    const dates = Object.keys(assetSnapshots).sort()
+                    if (dates.length < 2) return 0
+                    return ((new Date(dates[dates.length - 1]).getTime() - new Date(dates[0]).getTime()) / (365.25 * 24 * 60 * 60 * 1000)).toFixed(1)
+                  })()}`,
+                  color: '#4f8ef7',
+                  desc: '年'
+                },
+                {
+                  label: '最新總資產',
+                  value: `$${(assetSnapshots[Object.keys(assetSnapshots).sort().pop()!] || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`,
+                  color: '#4f8ef7',
+                  desc: '最近一筆快照'
+                },
+                {
+                  label: '起始資產',
+                  value: `$${(assetSnapshots[Object.keys(assetSnapshots).sort()[0]] || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`,
+                  color: '#8892a4',
+                  desc: '第一筆快照'
+                },
+              ].map(({ label, value, color, desc }) => (
+                <div key={label} style={card}>
+                  <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>{label}</div>
+                  <div style={{ fontSize: 'clamp(18px, 2vw, 22px)', fontWeight: 700, color, marginBottom: '4px' }}>{value}</div>
+                  <div style={{ fontSize: '11px', color: '#8892a4' }}>{desc}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* 自訂區間 CAGR */}
+            <div style={{ ...card, marginBottom: '20px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>自訂區間 CAGR</div>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div>
+                  <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>起始日期</label>
+                  <input type="date" style={inp} value={customStart} onChange={e => setCustomStart(e.target.value)} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>結束日期</label>
+                  <input type="date" style={inp} value={customEnd} onChange={e => setCustomEnd(e.target.value)} />
+                </div>
+                <button onClick={calcCustomCAGR} disabled={perfLoading}
+                  style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer' }}>
+                  計算
+                </button>
+                {customCAGR !== null && (
+                  <div style={{ backgroundColor: customCAGR >= 0 ? 'rgba(0,200,150,0.1)' : 'rgba(255,87,87,0.1)', border: `1px solid ${customCAGR >= 0 ? 'rgba(0,200,150,0.3)' : 'rgba(255,87,87,0.3)'}`, borderRadius: '8px', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '12px', color: '#8892a4' }}>區間 CAGR</span>
+                    <span style={{ fontSize: '22px', fontWeight: 700, color: pnlColor(customCAGR) }}>
+                      {customCAGR >= 0 ? '+' : ''}{customCAGR.toFixed(2)}%
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 年度報酬率長條圖 */}
+            {perfChartData.length >= 2 && (
+              <div style={{ ...card, marginBottom: '20px' }}>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '20px' }}>年度報酬率趨勢</div>
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={perfChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#2e3349" />
+                    <XAxis dataKey="year" tick={{ fill: '#8892a4', fontSize: 12 }} />
+                    <YAxis tick={{ fill: '#8892a4', fontSize: 12 }} tickFormatter={v => `${v}%`} width={50} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Bar dataKey="年度報酬率%" radius={[4, 4, 0, 0]}>
+                      {perfChartData.map((entry, i) => (
+                        <Cell key={i} fill={entry['年度報酬率%'] >= 0 ? '#00c896' : '#ff5757'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* 年度績效明細表 */}
+            <div style={card}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>年度績效明細</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="perf-table">
+                  <thead>
+                    <tr>
+                      {['年度', '年初資產', '年末資產', '年度報酬率', 'CAGR'].map(h => (
+                        <th key={h}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {yearlyPerf.map(p => (
+                      <tr key={p.year}>
+                        <td style={{ color: '#4f8ef7', fontWeight: 600 }}>{p.year}</td>
+                        <td>${p.startValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                        <td>${p.endValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                        <td style={{ color: pnlColor(p.totalReturn), fontWeight: 600 }}>
+                          {p.totalReturn >= 0 ? '+' : ''}{p.totalReturn.toFixed(2)}%
+                        </td>
+                        <td style={{ color: pnlColor(p.cagr), fontWeight: 600 }}>
+                          {p.cagr >= 0 ? '+' : ''}{p.cagr.toFixed(2)}%
+                        </td>
+                      </tr>
+                    ))}
+                    {yearlyPerf.length > 0 && (
+                      <tr style={{ borderTop: '2px solid #2e3349', backgroundColor: 'rgba(79,142,247,0.05)' }}>
+                        <td style={{ color: '#e2e8f0', fontWeight: 700 }}>整體</td>
+                        <td>${(assetSnapshots[Object.keys(assetSnapshots).sort()[0]] || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                        <td>${(assetSnapshots[Object.keys(assetSnapshots).sort().pop()!] || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                        <td style={{ color: pnlColor((() => {
+                          const dates = Object.keys(assetSnapshots).sort()
+                          if (dates.length < 2) return 0
+                          return ((assetSnapshots[dates[dates.length - 1]] - assetSnapshots[dates[0]]) / assetSnapshots[dates[0]]) * 100
+                        })()), fontWeight: 600 }}>
+                          {(() => {
+                            const dates = Object.keys(assetSnapshots).sort()
+                            if (dates.length < 2) return '—'
+                            const r = ((assetSnapshots[dates[dates.length - 1]] - assetSnapshots[dates[0]]) / assetSnapshots[dates[0]]) * 100
+                            return `${r >= 0 ? '+' : ''}${r.toFixed(2)}%`
+                          })()}
+                        </td>
+                        <td style={{ color: overallCAGR !== null ? pnlColor(overallCAGR) : '#8892a4', fontWeight: 700 }}>
+                          {overallCAGR !== null ? `${overallCAGR >= 0 ? '+' : ''}${overallCAGR.toFixed(2)}%` : '—'}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+

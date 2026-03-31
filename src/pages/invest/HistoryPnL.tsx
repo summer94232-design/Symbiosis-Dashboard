@@ -32,7 +32,9 @@ export default function HistoryPnL() {
 
   const totalRealized = records.reduce((s, r) => s + r.realized, 0)
   const totalDividend = dividends.reduce((s, d) => s + d.cashDividend, 0)
-  const winCount = records.filter(r => r.realized > 0).length
+
+  // ✅ 修正：用 > 0.5 避免浮點數誤差把 -0.001 元算成虧損
+  const winCount = records.filter(r => r.realized > 0.5).length
   const winRate = records.length > 0 ? (winCount / records.length) * 100 : 0
 
   const filteredRecords = records.filter(r =>
@@ -60,7 +62,8 @@ export default function HistoryPnL() {
           {[
             { label: '累計已實現損益', value: totalRealized, color: pnlColor(totalRealized), fmt: (v: number) => `${v >= 0 ? '+' : ''}$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
             { label: '累計股利收入', value: totalDividend, color: '#4f8ef7', fmt: (v: number) => `$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
-            { label: '交易勝率', value: winRate, color: winRate >= 50 ? '#00c896' : '#ff5757', fmt: (v: number) => `${v.toFixed(1)}%` },
+            // ✅ 修正：勝率用修正後的 winCount
+            { label: '交易勝率', value: winRate, color: winRate >= 50 ? '#00c896' : '#ff5757', fmt: (v: number) => records.length > 0 ? `${v.toFixed(1)}%` : '—' },
             { label: '已實現交易筆數', value: records.length, color: '#e2e8f0', fmt: (v: number) => `${v} 筆` },
           ].map(({ label, value, color, fmt }) => (
             <div key={label} style={card}>
