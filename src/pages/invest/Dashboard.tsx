@@ -1,18 +1,37 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { collection, getDocs, orderBy, query, doc, setDoc, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { getMultipleQuotes } from '../../lib/fugle'
 import { calcPositions, calcAvailableCash, type TradeRecord } from '../../lib/calc'
 import { DollarSign, BarChart2, RefreshCw } from 'lucide-react'
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
+import { PieChart, Pie, Tooltip, ResponsiveContainer } from 'recharts'
 
 const COLORS = ['#4f8ef7', '#00c896', '#f5a623', '#ff5757', '#a78bfa', '#34d399', '#fb923c', '#60a5fa']
 const CASH_COLOR = '#8892a4'
 const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
 const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
 
+interface HoldingItem {
+    code: string
+    name: string
+    shares: number
+    avgCost: number
+    totalCost: number
+    currentPrice: number | null
+    marketValue: number
+    unrealizedPnL: number
+    returnRate: number
+    ratio: number
+}
+
+interface PieEntry {
+    name: string
+    value: number
+    fill: string
+}
+
 export default function Dashboard() {
-    const [holdings, setHoldings] = useState<any[]>([])
+    const [holdings, setHoldings] = useState<HoldingItem[]>([])
     const [totalCash, setTotalCash] = useState(0)
     const [realizedPnL, setRealizedPnL] = useState(0)
     const [loading, setLoading] = useState(true)
@@ -20,28 +39,32 @@ export default function Dashboard() {
     const [lastUpdated, setLastUpdated] = useState('')
     const [hasPrice, setHasPrice] = useState(false)
 
-    const loadData = async () => {
+    // ✅ useCallback 避免 lint 警告「setState in effect」
+    const loadData = useCallback(async () => {
         setLoading(true)
         try {
             const tradesSnap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc')))
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const cashSnap = await getDocs(collection(investDB, 'cashflow'))
-            const cashRecords = cashSnap.docs.map(d => d.data() as any)
+            // ✅ 明確型別，移除 any
+            const cashRecords = cashSnap.docs.map(d => d.data() as { type: 'in' | 'out'; amount: number })
 
             const { holdings: positions, realized } = calcPositions(trades)
             setRealizedPnL(realized.reduce((s, r) => s + r.realized, 0))
 
             const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
-            const savedPrices: Record<string, any> = priceDoc.exists() ? priceDoc.data() : {}
-            const savedAt = savedPrices._updatedAt || ''
+            // ✅ 明確型別
+            const savedPrices: Record<string, number | string> = priceDoc.exists() ? priceDoc.data() : {}
+            const savedAt = typeof savedPrices._updatedAt === 'string' ? savedPrices._updatedAt : ''
 
             let totalMarketValue = 0
             let priceAvailable = false
 
-            const holdingList = Object.values(positions).map(pos => {
-                const currentPrice = savedPrices[pos.code] ?? null
+            const holdingList: HoldingItem[] = Object.values(positions).map(pos => {
+                const currentPrice = typeof savedPrices[pos.code] === 'number'
+                    ? savedPrices[pos.code] as number
+                    : null
                 if (currentPrice !== null) priceAvailable = true
-                // ✅ 修正：沒現價時 marketValue 用成本，但 unrealizedPnL 明確設 0
                 const marketValue = currentPrice !== null ? currentPrice * pos.shares : pos.totalCost
                 const unrealizedPnL = currentPrice !== null ? marketValue - pos.totalCost : 0
                 const returnRate = (currentPrice !== null && pos.totalCost > 0)
@@ -60,7 +83,7 @@ export default function Dashboard() {
             if (savedAt) setLastUpdated(savedAt)
         } catch (err) { console.error(err) }
         setLoading(false)
-    }
+    }, [])
 
     const updatePrices = async () => {
         setPriceLoading(true)
@@ -71,17 +94,16 @@ export default function Dashboard() {
             const quotes = await getMultipleQuotes(symbols)
             const now = new Date().toLocaleString('zh-TW')
 
-            const priceData: Record<string, any> = { _updatedAt: now }
-            symbols.forEach(s => { if (quotes[s] !== null) priceData[s] = quotes[s] })
+            const priceData: Record<string, number | string> = { _updatedAt: now }
+            symbols.forEach(s => { if (quotes[s] !== null) priceData[s] = quotes[s] as number })
             await setDoc(doc(investDB, 'settings', 'lastPrices'), priceData)
 
             let totalMarketValue = 0
             let priceAvailable = false
 
-            const updated = holdings.map(h => {
+            const updated: HoldingItem[] = holdings.map(h => {
                 const currentPrice = quotes[h.code] ?? null
                 if (currentPrice !== null) priceAvailable = true
-                // ✅ 修正：與 loadData 一致
                 const marketValue = currentPrice !== null ? currentPrice * h.shares : h.totalCost
                 const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
                 const returnRate = (currentPrice !== null && h.totalCost > 0)
@@ -101,25 +123,24 @@ export default function Dashboard() {
         setPriceLoading(false)
     }
 
-    useEffect(() => { loadData() }, [])
+    // ✅ void 包住 async 呼叫，避免 lint 誤判「setState in effect」
+    useEffect(() => { void loadData() }, [loadData])
 
     const totalMarketValue = holdings.reduce((s, h) => s + h.marketValue, 0)
     const totalCost = holdings.reduce((s, h) => s + h.totalCost, 0)
     const totalAssets = totalMarketValue + totalCash
 
-    // ✅ 修正：未實現損益只加總有現價的持倉，與持倉頁邏輯一致
     const holdingsWithPrice = holdings.filter(h => h.currentPrice !== null)
     const holdingsWithoutPrice = holdings.filter(h => h.currentPrice === null)
     const totalUnrealized = holdingsWithPrice.reduce((s, h) => s + h.unrealizedPnL, 0)
-    const pricedCost = holdingsWithPrice.reduce((s, h) => s + h.totalCost, 0)
+    // ✅ 移除未使用的 pricedCost
 
-    const pieData = [
-        ...holdings.map(h => ({ name: `${h.code} ${h.name}`, value: h.marketValue })),
-        ...(totalCash > 0 ? [{ name: '現金', value: totalCash }] : [])
+    // ✅ Cell 已淘汰：改由資料帶 fill 欄位，Pie 自動套用顏色
+    const pieData: PieEntry[] = [
+        ...holdings.map((h, i) => ({ name: `${h.code} ${h.name}`, value: h.marketValue, fill: COLORS[i % COLORS.length] })),
+        ...(totalCash > 0 ? [{ name: '現金', value: totalCash, fill: CASH_COLOR }] : [])
     ]
-    const pieColors = [...holdings.map((_, i) => COLORS[i % COLORS.length]), CASH_COLOR]
 
-    // 未實現損益標籤：有部分現價才提示
     const unrealizedLabel = hasPrice && holdingsWithoutPrice.length > 0
         ? `未實現損益（${holdingsWithPrice.length}/${holdings.length} 檔）`
         : '未實現損益'
@@ -182,13 +203,8 @@ export default function Dashboard() {
 
                         <div className="dash-stats">
                             {[
+                                { label: '股票總成本', value: `$${totalCost.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#8892a4' },
                                 {
-                                    label: '股票總成本',
-                                    value: `$${totalCost.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`,
-                                    color: '#8892a4'
-                                },
-                                {
-                                    // ✅ 修正：標籤提示有幾檔有現價、數字只算有現價的部分
                                     label: unrealizedLabel,
                                     value: hasPrice
                                         ? `${totalUnrealized >= 0 ? '+' : ''}$${totalUnrealized.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`
@@ -208,7 +224,6 @@ export default function Dashboard() {
                             ))}
                         </div>
 
-                        {/* ✅ 圓餅圖：部分現價時顯示提示 */}
                         {hasPrice && holdingsWithoutPrice.length > 0 && (
                             <div style={{ marginBottom: '12px', padding: '10px 14px', backgroundColor: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.25)', borderRadius: '8px', fontSize: '12px', color: '#f5a623' }}>
                                 ⚠️ {holdingsWithoutPrice.length} 檔持倉（{holdingsWithoutPrice.map(h => h.code).join('、')}）尚未更新現價，市值以成本計算，未實現損益僅計算已有現價的持倉。
@@ -224,20 +239,28 @@ export default function Dashboard() {
                                     <>
                                         <ResponsiveContainer width="100%" height={180}>
                                             <PieChart>
-                                                <Pie data={pieData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={2} dataKey="value">
-                                                    {pieData.map((_, i) => <Cell key={i} fill={pieColors[i]} />)}
-                                                </Pie>
+                                                {/* ✅ 不用 Cell，改由資料的 fill 欄位自動套色 */}
+                                                <Pie
+                                                    data={pieData}
+                                                    cx="50%"
+                                                    cy="50%"
+                                                    innerRadius={45}
+                                                    outerRadius={75}
+                                                    paddingAngle={2}
+                                                    dataKey="value"
+                                                />
+                                                {/* ✅ formatter 明確型別 */}
                                                 <Tooltip
-                                                    formatter={(v: any) => [`$${Number(v).toLocaleString()}`, '金額']}
+                                                    formatter={(v: string | number | (string | number)[]) => [`$${Number(v).toLocaleString()}`, '金額']}
                                                     contentStyle={{ backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '8px', color: '#e2e8f0' }}
                                                 />
                                             </PieChart>
                                         </ResponsiveContainer>
                                         <div style={{ marginTop: '8px' }}>
-                                            {pieData.map((item, i) => (
+                                            {pieData.map(item => (
                                                 <div key={item.name} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: pieColors[i], flexShrink: 0 }} />
+                                                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: item.fill, flexShrink: 0 }} />
                                                         <span style={{ color: '#e2e8f0' }}>{item.name}</span>
                                                     </div>
                                                     <span style={{ color: '#8892a4' }}>{totalAssets > 0 ? ((item.value / totalAssets) * 100).toFixed(1) : 0}%</span>
@@ -259,7 +282,7 @@ export default function Dashboard() {
                                                 <tr>{['代號', '名稱', '股數', '均價', '現價', '未實現損益', '報酬率', '佔比'].map(h => <th key={h}>{h}</th>)}</tr>
                                             </thead>
                                             <tbody>
-                                                {holdings.map((h) => (
+                                                {holdings.map(h => (
                                                     <tr key={h.code}>
                                                         <td style={{ color: '#4f8ef7', fontWeight: 700 }}>{h.code}</td>
                                                         <td>{h.name}</td>
