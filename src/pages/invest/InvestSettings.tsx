@@ -1,12 +1,51 @@
-import { useState, useEffect } from 'react'
-import { collection, getDocs, doc, setDoc, getDoc, orderBy, query } from 'firebase/firestore'
+import { useState } from 'react'
+import { collection, getDocs, doc, setDoc, orderBy, query } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { Download, Upload, FileSpreadsheet } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
+interface StockRow {
+    '股票代號'?: string
+    '代號'?: string
+    code?: string
+    Code?: string
+    '股票名稱'?: string
+    '名稱'?: string
+    name?: string
+    Name?: string
+}
+
+interface TradeRow {
+    date: string
+    type: string
+    code: string
+    name: string
+    price: number
+    shares: number
+    fee: number
+    tax: number
+    total: number
+    note?: string
+}
+
+interface CashflowRow {
+    date: string
+    type: string
+    amount: number
+    note?: string
+}
+
+interface DividendRow {
+    date: string
+    code: string
+    name: string
+    cashDividend: number
+    stockDividend: number
+    note?: string
+}
+
 const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '24px' }
 const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '10px 18px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' })
-const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', outline: 'none' }
 
 export default function InvestSettings() {
     const [importing, setImporting] = useState(false)
@@ -14,45 +53,9 @@ export default function InvestSettings() {
     const [exportLoading, setExportLoading] = useState(false)
     const [msg, setMsg] = useState('')
 
-    // 績效起始日設定
-    const [perfStartDate, setPerfStartDate] = useState('')
-    const [perfStartValue, setPerfStartValue] = useState('')
-    const [perfConfigLoading, setPerfConfigLoading] = useState(true)
-    const [perfConfigSaving, setPerfConfigSaving] = useState(false)
-
     const showMsg = (text: string) => {
         setMsg(text)
         setTimeout(() => setMsg(''), 4000)
-    }
-
-    useEffect(() => {
-        getDoc(doc(investDB, 'settings', 'performanceConfig')).then(d => {
-            if (d.exists()) {
-                const data = d.data()
-                setPerfStartDate(data.startDate || '')
-                setPerfStartValue(data.startValue ? String(data.startValue) : '')
-            }
-            setPerfConfigLoading(false)
-        }).catch(() => setPerfConfigLoading(false))
-    }, [])
-
-    const savePerfConfig = async () => {
-        setPerfConfigSaving(true)
-        const startValue = parseFloat(perfStartValue.replace(/,/g, ''))
-        await setDoc(doc(investDB, 'settings', 'performanceConfig'), {
-            startDate: perfStartDate || null,
-            startValue: !isNaN(startValue) && startValue > 0 ? startValue : null,
-        })
-        setPerfConfigSaving(false)
-        showMsg('✅ 設定已儲存！重新載入年度復盤頁將生效。')
-    }
-
-    const clearPerfConfig = async () => {
-        if (!confirm('確定要清除起始日設定？')) return
-        await setDoc(doc(investDB, 'settings', 'performanceConfig'), { startDate: null, startValue: null })
-        setPerfStartDate('')
-        setPerfStartValue('')
-        showMsg('✅ 已清除設定')
     }
 
     const handleImportDict = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -66,11 +69,11 @@ export default function InvestSettings() {
                 const data = new Uint8Array(evt.target!.result as ArrayBuffer)
                 const workbook = XLSX.read(data, { type: 'array' })
                 const sheet = workbook.Sheets[workbook.SheetNames[0]]
-                const rows: any[] = XLSX.utils.sheet_to_json(sheet)
+                const rows = XLSX.utils.sheet_to_json<StockRow>(sheet)
                 let success = 0, failed = 0
                 for (const row of rows) {
-                    const code = String(row['股票代號'] || row['代號'] || row['code'] || row['Code'] || '').trim()
-                    const name = String(row['股票名稱'] || row['名稱'] || row['name'] || row['Name'] || '').trim()
+                    const code = String(row['股票代號'] || row['代號'] || row.code || row.Code || '').trim()
+                    const name = String(row['股票名稱'] || row['名稱'] || row.name || row.Name || '').trim()
                     if (code && name) {
                         try { await setDoc(doc(investDB, 'stockDict', code), { name }); success++ }
                         catch { failed++ }
@@ -78,7 +81,9 @@ export default function InvestSettings() {
                 }
                 setImportResult({ success, failed })
                 showMsg(`✅ 匯入完成！成功 ${success} 筆，失敗 ${failed} 筆`)
-            } catch { showMsg('❌ 檔案格式錯誤，請確認欄位名稱為「股票代號」和「股票名稱」') }
+            } catch {
+                showMsg('❌ 檔案格式錯誤，請確認欄位名稱為「股票代號」和「股票名稱」')
+            }
             setImporting(false)
             e.target.value = ''
         }
@@ -88,9 +93,9 @@ export default function InvestSettings() {
     const exportTrades = async () => {
         setExportLoading(true)
         const snap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'desc')))
-        const trades = snap.docs.map(d => d.data())
+        const trades = snap.docs.map(d => d.data() as TradeRow)
         const header = ['日期', '類型', '代號', '名稱', '價格', '股數', '手續費', '交易稅', '收付金額', '備註']
-        const rows = trades.map((t: any) => [t.date, t.type === 'buy' ? '買入' : '賣出', t.code, t.name, t.price, t.shares, t.fee, t.tax, t.total, t.note || ''])
+        const rows = trades.map(t => [t.date, t.type === 'buy' ? '買入' : '賣出', t.code, t.name, t.price, t.shares, t.fee, t.tax, t.total, t.note ?? ''])
         downloadCSV([header, ...rows].map(r => r.join(',')).join('\n'), `買賣紀錄_${today()}.csv`)
         setExportLoading(false)
         showMsg('✅ 已匯出買賣紀錄')
@@ -98,18 +103,18 @@ export default function InvestSettings() {
 
     const exportCashFlow = async () => {
         const snap = await getDocs(query(collection(investDB, 'cashflow'), orderBy('date', 'desc')))
-        const records = snap.docs.map(d => d.data())
+        const records = snap.docs.map(d => d.data() as CashflowRow)
         const header = ['日期', '類型', '金額', '備註']
-        const rows = records.map((r: any) => [r.date, r.type === 'in' ? '入金' : '出金', r.amount, r.note || ''])
+        const rows = records.map(r => [r.date, r.type === 'in' ? '入金' : '出金', r.amount, r.note ?? ''])
         downloadCSV([header, ...rows].map(r => r.join(',')).join('\n'), `出入金紀錄_${today()}.csv`)
         showMsg('✅ 已匯出出入金紀錄')
     }
 
     const exportDividends = async () => {
         const snap = await getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'desc')))
-        const records = snap.docs.map(d => d.data())
+        const records = snap.docs.map(d => d.data() as DividendRow)
         const header = ['日期', '代號', '名稱', '現金股利', '股票股利', '備註']
-        const rows = records.map((r: any) => [r.date, r.code, r.name, r.cashDividend, r.stockDividend, r.note || ''])
+        const rows = records.map(r => [r.date, r.code, r.name, r.cashDividend, r.stockDividend, r.note ?? ''])
         downloadCSV([header, ...rows].map(r => r.join(',')).join('\n'), `除權息紀錄_${today()}.csv`)
         showMsg('✅ 已匯出除權息紀錄')
     }
@@ -136,63 +141,6 @@ export default function InvestSettings() {
                     {msg}
                 </div>
             )}
-
-            {/* 績效計算起始日 */}
-            <div style={{ ...card, marginBottom: '20px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '18px' }}>📅</span>
-                    <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>績效計算起始日</span>
-                </div>
-                <p style={{ fontSize: '13px', color: '#8892a4', marginBottom: '16px', lineHeight: 1.6 }}>
-                    設定後，「年度復盤」的自訂區間 CAGR 將<strong style={{ color: '#e2e8f0' }}>自動忽略此日期前的所有交易資料</strong>，不需每次手動輸入。<br />
-                    起始資產可不填（系統自動用持倉成本推算），但建議填入實際金額讓結果更準確。
-                </p>
-
-                {perfConfigLoading ? (
-                    <div style={{ color: '#8892a4', fontSize: '13px' }}>載入中...</div>
-                ) : (
-                    <>
-                        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '16px' }}>
-                            <div>
-                                <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>起始日期</label>
-                                <input type="date" style={inp} value={perfStartDate} onChange={e => setPerfStartDate(e.target.value)} />
-                            </div>
-                            <div>
-                                <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>起始資產（可選填）</label>
-                                <input
-                                    type="text" placeholder="例：260100"
-                                    style={{ ...inp, width: '160px' }}
-                                    value={perfStartValue}
-                                    onChange={e => setPerfStartValue(e.target.value)}
-                                />
-                            </div>
-                            <button onClick={savePerfConfig} disabled={perfConfigSaving || !perfStartDate}
-                                style={{ ...btn('#4f8ef7'), opacity: (!perfStartDate || perfConfigSaving) ? 0.5 : 1, cursor: !perfStartDate ? 'not-allowed' : 'pointer' }}>
-                                {perfConfigSaving ? '儲存中...' : '儲存設定'}
-                            </button>
-                            {perfStartDate && (
-                                <button onClick={clearPerfConfig} style={btn('#3a3f55')}>清除</button>
-                            )}
-                        </div>
-
-                        {perfStartDate ? (
-                            <div style={{ backgroundColor: 'rgba(79,142,247,0.1)', border: '1px solid rgba(79,142,247,0.3)', borderRadius: '8px', padding: '12px 16px', fontSize: '13px' }}>
-                                <span style={{ color: '#8892a4' }}>目前設定：</span>
-                                <span style={{ color: '#4f8ef7', fontWeight: 600, marginLeft: '6px' }}>從 {perfStartDate} 起算</span>
-                                {perfStartValue && (
-                                    <span style={{ color: '#8892a4', marginLeft: '12px' }}>
-                                        起始資產：<span style={{ color: '#00c896', fontWeight: 600 }}>${parseFloat(perfStartValue.replace(/,/g, '')).toLocaleString()}</span>
-                                    </span>
-                                )}
-                            </div>
-                        ) : (
-                            <div style={{ backgroundColor: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.25)', borderRadius: '8px', padding: '12px 16px', fontSize: '13px', color: '#f5a623' }}>
-                                尚未設定起始日，CAGR 計算會包含所有歷史交易資料。
-                            </div>
-                        )}
-                    </>
-                )}
-            </div>
 
             {/* 股票字典匯入 */}
             <div style={{ ...card, marginBottom: '20px' }}>
