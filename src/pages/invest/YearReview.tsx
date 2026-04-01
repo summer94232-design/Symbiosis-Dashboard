@@ -149,6 +149,10 @@ export default function YearReview() {
     const [customCAGR, setCustomCAGR] = useState<number | null>(null)
     const [assetSnapshots, setAssetSnapshots] = useState<Record<string, number>>({})
     const [perfLoading, setPerfLoading] = useState(false)
+    const [perfConfig, setPerfConfig] = useState<{ startDate: string | null; startValue: number | null }>({ startDate: null, startValue: null })
+    const allTradesRef = useRef<TradeRecord[]>([])
+    const allDividendsRef = useRef<{ date: string; cashDividend: number }[]>([])
+    const savedPricesRef = useRef<Record<string, number | string>>({})
 
     const [xirr, setXirr] = useState<number | null>(null)
     const [xirrCost, setXirrCost] = useState<number | null>(null)
@@ -218,6 +222,17 @@ export default function YearReview() {
             snapshotsSnap.docs.forEach(d => { snapshots[d.data().date as string] = d.data().totalAssets as number })
             setAssetSnapshots(snapshots)
 
+            // \u8b80\u53d6\u7e3e\u6548\u8a08\u7b97\u8d77\u59cb\u65e5\u8a2d\u5b9a
+            getDoc(doc(investDB, 'settings', 'performanceConfig')).then(pd => {
+                if (pd.exists()) setPerfConfig({ startDate: pd.data().startDate || null, startValue: pd.data().startValue || null })
+            }).catch(() => { })
+            // \u5132\u5b58\u4ea4\u6613/\u80a1\u5229/\u73fe\u50f9\u4f9b CAGR \u8a08\u7b97
+            allTradesRef.current = trades
+            allDividendsRef.current = dividends
+            getDoc(doc(investDB, 'settings', 'lastPrices')).then(pd => {
+                savedPricesRef.current = pd.exists() ? pd.data() as Record<string, number | string> : {}
+            }).catch(() => { })
+
             const allDates = [...trades.map(t => t.date), ...dividends.map(d => d.date)]
             const allYears = [...new Set(allDates.map(d => parseInt(d.slice(0, 4))))].sort()
             if (allYears.length > 0) {
@@ -276,14 +291,92 @@ export default function YearReview() {
     }, [selectedYear, calcYearlyPerf])
 
     const calcCustomCAGR = () => {
-        if (!customStart || !customEnd) return
+        if (!customStart || !customEnd || customStart >= customEnd) return
         setPerfLoading(true)
-        const startDates = Object.keys(assetSnapshots).filter(d => d >= customStart).sort()
-        const endDates = Object.keys(assetSnapshots).filter(d => d <= customEnd).sort()
-        const sd = startDates[0], ed = endDates[endDates.length - 1]
-        if (!sd || !ed) { setCustomCAGR(null); setPerfLoading(false); return }
-        const yrs = (new Date(ed).getTime() - new Date(sd).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
-        setCustomCAGR(calcCAGR(assetSnapshots[sd], assetSnapshots[ed], yrs))
+
+        const trades = allTradesRef.current
+        const dividends = allDividendsRef.current
+        const savedPrices = savedPricesRef.current
+
+        // \u8a2d\u5b9a\u9801\u7684\u8d77\u59cb\u65e5\u914d\u7f6e\uff1a\u5be6\u969b\u8a08\u7b97\u8d77\u59cb\u9ede = max(customStart, perfConfig.startDate)
+        const effectiveStart = perfConfig.startDate && perfConfig.startDate > customStart
+            ? perfConfig.startDate
+            : customStart
+
+        // \u671f\u521d\u8cc7\u7522\uff1a\u5982\u679c\u8a2d\u5b9a\u9801\u6709\u8d77\u59cb\u8cc7\u7522\u4e14\u8d77\u59cb\u65e5\u5931\u914d\uff0c\u7528\u90a3\u500b\u6578\u5b57
+        let startValue: number
+        if (perfConfig.startValue && perfConfig.startDate && effectiveStart === perfConfig.startDate) {
+            startValue = perfConfig.startValue
+        } else {
+            // \u81ea\u52d5\u63a8\u7b97\uff1a\u8dd1\u5b8c effectiveStart \u524d\u6240\u6709\u4ea4\u6613\u5f97\u5230\u6301\u5009\u6210\u672c
+            const posStart: Record<string, { shares: number; avgCost: number; totalCost: number }> = {}
+            for (const t of trades) {
+                if (t.date > effectiveStart) break
+                const { code, type, price, shares, fee } = t
+                if (!posStart[code]) posStart[code] = { shares: 0, avgCost: 0, totalCost: 0 }
+                const p = posStart[code]
+                if (type === 'buy') {
+                    const bc = price * shares + (fee || 0)
+                    p.totalCost += bc; p.shares += shares
+                    p.avgCost = p.shares > 0 ? p.totalCost / p.shares : 0
+                } else {
+                    p.shares -= shares; p.totalCost = p.avgCost * p.shares
+                    if (p.shares <= 0) { p.shares = 0; p.totalCost = 0; p.avgCost = 0 }
+                }
+            }
+            startValue = Object.values(posStart).reduce((s, p) => s + p.totalCost, 0)
+        }
+
+        // \u8dd1\u5b8c customEnd \u524d\u6240\u6709\u4ea4\u6613\uff0c\u5f97\u5230\u671f\u672b\u6301\u5009\uff08FIFO\uff09
+        const posEnd: Record<string, { shares: number; avgCost: number; totalCost: number; lots: { shares: number; cost: number }[] }> = {}
+        let realizedPnL = 0
+        for (const t of trades) {
+            if (t.date > customEnd) break
+            const { code, type, price, shares, fee, tax } = t
+            if (!posEnd[code]) posEnd[code] = { shares: 0, avgCost: 0, totalCost: 0, lots: [] }
+            const p = posEnd[code]
+            if (type === 'buy') {
+                const bc = price * shares + (fee || 0)
+                p.totalCost += bc; p.shares += shares
+                p.avgCost = p.shares > 0 ? p.totalCost / p.shares : 0
+                p.lots.push({ shares, cost: bc })
+            } else {
+                let remaining = shares, totalCb = 0
+                while (remaining > 0 && p.lots.length > 0) {
+                    const lot = p.lots[0]
+                    const uc = lot.cost / lot.shares
+                    if (lot.shares <= remaining) {
+                        totalCb += lot.cost; remaining -= lot.shares; p.lots.shift()
+                    } else {
+                        totalCb += remaining * uc; lot.shares -= remaining; lot.cost -= remaining * uc; remaining = 0
+                    }
+                }
+                if (t.date > effectiveStart) {
+                    realizedPnL += price * shares - (fee || 0) - (tax || 0) - totalCb
+                }
+                p.shares -= shares; p.totalCost = p.avgCost * p.shares
+                if (p.shares <= 0) { p.shares = 0; p.totalCost = 0; p.avgCost = 0; p.lots = [] }
+            }
+        }
+
+        const endPortfolioValue = Object.entries(posEnd).reduce((s, [code, p]) => {
+            if (p.shares <= 0) return s
+            const cp = savedPrices[code]
+            return s + (typeof cp === 'number' ? cp * p.shares : p.totalCost)
+        }, 0)
+
+        const dividendIncome = dividends
+            .filter(d => d.date > effectiveStart && d.date <= customEnd)
+            .reduce((s, d) => s + d.cashDividend, 0)
+
+        const endValue = endPortfolioValue + realizedPnL + dividendIncome
+
+        if (startValue <= 0 || endValue <= 0) { setCustomCAGR(null); setPerfLoading(false); return }
+
+        const yrs = (new Date(customEnd).getTime() - new Date(effectiveStart).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
+        if (yrs <= 0) { setCustomCAGR(null); setPerfLoading(false); return }
+
+        setCustomCAGR(calcCAGR(startValue, endValue, yrs))
         setPerfLoading(false)
     }
 
@@ -711,27 +804,37 @@ export default function YearReview() {
                                 </div>
 
                                 <div style={{ ...card, marginBottom: '20px' }}>
-                                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>自訂區間 CAGR</div>
+                                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '4px' }}>自訂區間 CAGR</div>
+                                    <p style={{ fontSize: '12px', color: '#8892a4', margin: '0 0 16px' }}>
+                                        依交易紀錄推算期初持倉成本與期末市值\u3002
+                                        {perfConfig.startDate && <span style={{ color: '#4f8ef7' }}>起\u59cb\u65e5\u8a2d\u5b9a\uff1a{perfConfig.startDate}\uff0c\u5ffd\u7565\u8a72\u65e5\u524d\u8cc7\u6599\u3002</span>}
+                                        {!perfConfig.startDate && <span style={{ color: '#f5a623' }}>\u63d0\u793a\uff1a\u53ef\u5230\u300c\u8a2d\u5b9a\u8207\u5099\u4efd\u300d\u8a2d\u5b9a\u8d77\u59cb\u65e5\uff0c\u8207\u8d77\u59cb\u8cc7\u7522\u3002</span>}
+                                    </p>
                                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                                         <div>
                                             <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>起始日期</label>
-                                            <input type="date" style={inp} value={customStart} onChange={e => setCustomStart(e.target.value)} />
+                                            <input type="date" style={inp} value={customStart} onChange={e => { setCustomStart(e.target.value); setCustomCAGR(null) }} />
                                         </div>
                                         <div>
                                             <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>結束日期</label>
-                                            <input type="date" style={inp} value={customEnd} onChange={e => setCustomEnd(e.target.value)} />
+                                            <input type="date" style={inp} value={customEnd} onChange={e => { setCustomEnd(e.target.value); setCustomCAGR(null) }} />
                                         </div>
-                                        <button onClick={calcCustomCAGR} disabled={perfLoading}
-                                            style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer' }}>
-                                            計算
+                                        <button onClick={calcCustomCAGR}
+                                            disabled={perfLoading || !customStart || !customEnd || customStart >= customEnd}
+                                            style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '8px 20px', color: '#fff', fontSize: '14px', cursor: 'pointer', opacity: (!customStart || !customEnd || customStart >= customEnd) ? 0.5 : 1 }}>
+                                            {perfLoading ? '輈算中...' : '輈算'}
                                         </button>
-                                        {customCAGR !== null && (
-                                            <div style={{ backgroundColor: customCAGR >= 0 ? 'rgba(0,200,150,0.1)' : 'rgba(255,87,87,0.1)', border: `1px solid ${customCAGR >= 0 ? 'rgba(0,200,150,0.3)' : 'rgba(255,87,87,0.3)'}`, borderRadius: '8px', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <span style={{ fontSize: '12px', color: '#8892a4' }}>區間 CAGR</span>
-                                                <span style={{ fontSize: '22px', fontWeight: 700, color: pnlColor(customCAGR) }}>{customCAGR >= 0 ? '+' : ''}{customCAGR.toFixed(2)}%</span>
-                                            </div>
-                                        )}
                                     </div>
+                                    {customCAGR !== null && (
+                                        <div style={{ marginTop: '16px', backgroundColor: customCAGR >= 0 ? 'rgba(0,200,150,0.1)' : 'rgba(255,87,87,0.1)', border: `1px solid ${customCAGR >= 0 ? 'rgba(0,200,150,0.3)' : 'rgba(255,87,87,0.3)'}`, borderRadius: '10px', padding: '16px 24px', display: 'inline-flex', flexDirection: 'column', gap: '4px' }}>
+                                            <span style={{ fontSize: '11px', color: '#8892a4' }}>年化 CAGR</span>
+                                            <span style={{ fontSize: '32px', fontWeight: 700, color: pnlColor(customCAGR) }}>{customCAGR >= 0 ? '+' : ''}{customCAGR.toFixed(2)}%</span>
+                                            <span style={{ fontSize: '11px', color: '#8892a4' }}>
+                                                {perfConfig.startDate && perfConfig.startDate > customStart ? perfConfig.startDate : customStart} \uff5e {customEnd}
+                                                {perfConfig.startValue && perfConfig.startDate && perfConfig.startDate >= customStart && ` \uff5c 起始 $${perfConfig.startValue.toLocaleString()}`}
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {perfChartData.length >= 2 && (
