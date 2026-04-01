@@ -88,7 +88,9 @@ export default function Dashboard() {
             setHasPrice(priceAvailable)
             if (savedAt) setLastUpdated(savedAt)
         } catch (err) { console.error(err) }
-        setLoading(false)
+        finally {
+            setLoading(false)
+        }
     }
 
     const updatePrices = async () => {

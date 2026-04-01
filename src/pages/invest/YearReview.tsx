@@ -60,6 +60,12 @@ interface MonthlyBarEntry {
     realizedFill: string
 }
 
+// ── 原始現金流（供 XIRR 區間計算使用）──
+interface RawCashflow {
+    date: string
+    amount: number // 負 = 流出（買入/入金），正 = 流入（賣出/出金/股利）
+}
+
 function calcXIRR(cashflows: { date: string; amount: number }[]): number | null {
     if (cashflows.length < 2) return null
     const t0 = new Date(cashflows[0].date).getTime()
@@ -156,7 +162,20 @@ export default function YearReview() {
     const [realizedTrades, setRealizedTrades] = useState<RealizedTrade[]>([])
     const [xirrLoading, setXirrLoading] = useState(true)
 
-    // ✅ 移到 load 前面，避免「accessed before declared」
+    // ── XIRR 區間篩選 ──
+    const [xirrRangeStart, setXirrRangeStart] = useState('')
+    const [xirrRangeEnd, setXirrRangeEnd] = useState('')
+    const [xirrRange, setXirrRange] = useState<number | null>(null)
+    const [xirrRangeLoading, setXirrRangeLoading] = useState(false)
+    // 儲存原始現金流供區間重算（loadPerformance 後設定）
+    const rawCashflowsRef = useRef<RawCashflow[]>([])
+    // 儲存每一天的持倉快照（日期 → {code: {shares, avgCost}}）供區間估算用
+    const posSnapshotRef = useRef<{
+        dates: string[]
+        snapshots: Record<string, Record<string, { shares: number; avgCost: number }>>
+        savedPrices: Record<string, number | string>
+    }>({ dates: [], snapshots: {}, savedPrices: {} })
+
     const calcYearlyPerf = useCallback((allYears: number[], snapshots: Record<string, number>, trades: TradeRecord[]) => {
         const perf: YearlyPerf[] = []
         allYears.forEach(year => {
@@ -203,7 +222,6 @@ export default function YearReview() {
             const allYears = [...new Set(allDates.map(d => parseInt(d.slice(0, 4))))].sort()
             if (allYears.length > 0) {
                 setYears(allYears)
-                // ✅ 用 functional updater 避免依賴 customStart/customEnd
                 setCustomStart(prev => prev || `${allYears[0]}-01-01`)
                 setCustomEnd(prev => prev || new Date().toISOString().split('T')[0])
             }
@@ -255,7 +273,7 @@ export default function YearReview() {
             calcYearlyPerf(allYears, snapshots, trades)
         } catch (err) { console.error(err) }
         setLoading(false)
-    }, [selectedYear, calcYearlyPerf])  // ✅ 不含 customStart/customEnd
+    }, [selectedYear, calcYearlyPerf])
 
     const calcCustomCAGR = () => {
         if (!customStart || !customEnd) return
@@ -267,6 +285,62 @@ export default function YearReview() {
         const yrs = (new Date(ed).getTime() - new Date(sd).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
         setCustomCAGR(calcCAGR(assetSnapshots[sd], assetSnapshots[ed], yrs))
         setPerfLoading(false)
+    }
+
+    // ── 計算 XIRR 區間 ──
+    const calcXirrRange = () => {
+        if (!xirrRangeStart || !xirrRangeEnd) return
+        if (xirrRangeStart >= xirrRangeEnd) return
+        setXirrRangeLoading(true)
+
+        const { dates: snapDates, snapshots: posSnaps, savedPrices } = posSnapshotRef.current
+        const allCfs = rawCashflowsRef.current
+
+        // 過濾出區間內的現金流
+        const inRange = allCfs.filter(cf => cf.date >= xirrRangeStart && cf.date <= xirrRangeEnd)
+
+        // 估算期初持倉市值（作為負現金流，代表「在這個時間點投入」）
+        // 找最接近 xirrRangeStart 且 <= xirrRangeStart 的快照日期
+        const beforeSnap = snapDates.filter(d => d <= xirrRangeStart).sort()
+        const startSnapDate = beforeSnap[beforeSnap.length - 1]
+        let startPortfolioValue = 0
+        if (startSnapDate) {
+            const snap = posSnaps[startSnapDate]
+            Object.entries(snap).forEach(([code, { shares, avgCost }]) => {
+                if (shares <= 0) return
+                const cp = savedPrices[code]
+                // 用現價估算，若無現價則用成本
+                startPortfolioValue += typeof cp === 'number' ? cp * shares : avgCost * shares
+            })
+        }
+
+        // 估算期末持倉市值（作為正現金流，代表「在這個時間點回收」）
+        const afterSnap = snapDates.filter(d => d <= xirrRangeEnd).sort()
+        const endSnapDate = afterSnap[afterSnap.length - 1]
+        let endPortfolioValue = 0
+        if (endSnapDate) {
+            const snap = posSnaps[endSnapDate]
+            Object.entries(snap).forEach(([code, { shares, avgCost }]) => {
+                if (shares <= 0) return
+                const cp = savedPrices[code]
+                endPortfolioValue += typeof cp === 'number' ? cp * shares : avgCost * shares
+            })
+        }
+
+        // 組合現金流：期初持倉（負）＋ 區間內現金流 ＋ 期末持倉（正）
+        const combined: { date: string; amount: number }[] = []
+        if (startPortfolioValue > 0) {
+            combined.push({ date: xirrRangeStart, amount: -startPortfolioValue })
+        }
+        inRange.forEach(cf => combined.push({ date: cf.date, amount: cf.amount }))
+        if (endPortfolioValue > 0) {
+            combined.push({ date: xirrRangeEnd, amount: endPortfolioValue })
+        }
+
+        const sorted = combined.sort((a, b) => a.date.localeCompare(b.date))
+        const result = sorted.length >= 2 ? calcXIRR(sorted) : null
+        setXirrRange(result)
+        setXirrRangeLoading(false)
     }
 
     const loadPerformance = useCallback(async () => {
@@ -293,6 +367,16 @@ export default function YearReview() {
             const realized: RealizedTrade[] = []
             let runningEquity = 0
             const equityCurve: number[] = []
+
+            // ── 建立持倉快照（每一筆交易後記錄一次）──
+            const snapDates: string[] = []
+            const posSnapshots: Record<string, Record<string, { shares: number; avgCost: number }>> = {}
+
+            // 收集原始現金流供區間計算
+            const rawCfs: RawCashflow[] = []
+            cashflows.forEach(cf => {
+                rawCfs.push({ date: cf.date, amount: cf.type === 'in' ? -cf.amount : cf.amount })
+            })
 
             for (const t of allTrades) {
                 const { code, name, type, price, shares, fee, tax, date } = t
@@ -326,7 +410,38 @@ export default function YearReview() {
                     runningEquity += pnl; equityCurve.push(runningEquity)
                     p.shares -= shares; p.totalCost = p.avgCost * p.shares
                     if (p.shares <= 0) { p.shares = 0; p.totalCost = 0; p.avgCost = 0; p.lots = [] }
+
+                    // 賣出的收益加入原始現金流
+                    rawCfs.push({ date, amount: price * shares - fee - tax })
                 }
+
+                // 每筆交易後儲存持倉快照
+                const snap: Record<string, { shares: number; avgCost: number }> = {}
+                Object.entries(posDetail).forEach(([c, pd]) => {
+                    snap[c] = { shares: pd.shares, avgCost: pd.avgCost }
+                })
+                if (!snapDates.includes(date)) snapDates.push(date)
+                posSnapshots[date] = snap
+            }
+
+            // 股利也加入原始現金流
+            dividends.forEach(d => {
+                if (d.cashDividend > 0) rawCfs.push({ date: d.date, amount: d.cashDividend })
+            })
+
+            // 儲存供區間計算使用
+            rawCashflowsRef.current = rawCfs.sort((a, b) => a.date.localeCompare(b.date))
+            posSnapshotRef.current = {
+                dates: snapDates.sort(),
+                snapshots: posSnapshots,
+                savedPrices
+            }
+
+            // 初始化區間日期（如果還沒設定）
+            if (rawCfs.length > 0) {
+                const sortedDates = rawCfs.map(c => c.date).sort()
+                setXirrRangeStart(prev => prev || sortedDates[0])
+                setXirrRangeEnd(prev => prev || new Date().toISOString().split('T')[0])
             }
 
             setRealizedTrades([...realized].reverse())
@@ -336,6 +451,7 @@ export default function YearReview() {
             setAvgHoldingDays(realized.length > 0 ? realized.reduce((s, r) => s + r.holdingDays, 0) / realized.length : null)
             setMdd(equityCurve.length > 0 ? calcMDD(equityCurve) : null)
 
+            // 全期 XIRR（出入金 + 股利，終值用現價）
             const xirrBase: { date: string; amount: number }[] = []
             cashflows.forEach(cf => { xirrBase.push({ date: cf.date, amount: cf.type === 'in' ? -cf.amount : cf.amount }) })
             dividends.forEach(d => { if (d.cashDividend > 0) xirrBase.push({ date: d.date, amount: d.cashDividend }) })
@@ -391,15 +507,15 @@ export default function YearReview() {
         setXirrLoading(false)
     }, [])
 
-    // ✅ 初始載入
-    const didLoad = useRef(false)
+    // 初始載入 + selectedYear 變動時重新載入
     useEffect(() => {
-        if (didLoad.current) return
-        didLoad.current = true
-        const timer = setTimeout(() => { void load() }, 0)
-        return () => clearTimeout(timer)
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+        let cancelled = false
+        const run = async () => {
+            await load()
+        }
+        if (!cancelled) void run()
+        return () => { cancelled = true }
+    }, [load])
 
     // ✅ tab 切換時載入進階績效
     const prevTab = useRef<string>('')
@@ -410,6 +526,7 @@ export default function YearReview() {
         return () => clearTimeout(timer)
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tab])
+
     const filtered = monthlyData.slice(startMonth - 1, endMonth)
     const totalRealized = filtered.reduce((s, m) => s + m.realized, 0)
     const totalDividend = filtered.reduce((s, m) => s + m.dividend, 0)
@@ -425,7 +542,6 @@ export default function YearReview() {
         return calcCAGR(assetSnapshots[dates[0]], assetSnapshots[dates[dates.length - 1]], yrs)
     })()
 
-    // ✅ 用資料帶 fill 取代 Cell
     const perfChartData: BarChartEntry[] = yearlyPerf.map(p => ({
         year: `${p.year}`,
         '年度報酬率%': parseFloat(p.totalReturn.toFixed(2)),
@@ -512,7 +628,6 @@ export default function YearReview() {
                             </div>
                             {loading ? <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div> : (
                                 <ResponsiveContainer width="100%" height={300}>
-                                    {/* ✅ 用資料的 fill 欄位，不用 Cell */}
                                     <BarChart data={filteredWithFill} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                                         <CartesianGrid strokeDasharray="3 3" stroke="#2e3349" />
                                         <XAxis dataKey="month" tick={{ fill: '#8892a4', fontSize: 12 }} />
@@ -681,6 +796,7 @@ export default function YearReview() {
                         ? <div style={{ textAlign: 'center', padding: '80px', color: '#8892a4' }}>計算中...</div>
                         : (
                             <>
+                                {/* ── XIRR 統計卡片 ── */}
                                 <div className="perf-stats">
                                     <div style={card}>
                                         <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>年化報酬率（XIRR）</div>
@@ -714,6 +830,85 @@ export default function YearReview() {
                                     </div>
                                 </div>
 
+                                {/* ── 自訂區間 XIRR ── */}
+                                <div style={{ ...card, marginBottom: '20px' }}>
+                                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '4px' }}>自訂區間 XIRR</div>
+                                    <p style={{ fontSize: '12px', color: '#8892a4', margin: '0 0 16px' }}>
+                                        計算指定時間區間內的年化報酬率。期初／期末持倉以成本或現價估值，區間內出入金與股利均納入計算。
+                                    </p>
+                                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>起始日期</label>
+                                            <input type="date" style={inp} value={xirrRangeStart} onChange={e => { setXirrRangeStart(e.target.value); setXirrRange(null) }} />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>結束日期</label>
+                                            <input type="date" style={inp} value={xirrRangeEnd} onChange={e => { setXirrRangeEnd(e.target.value); setXirrRange(null) }} />
+                                        </div>
+                                        <button
+                                            onClick={calcXirrRange}
+                                            disabled={xirrRangeLoading || !xirrRangeStart || !xirrRangeEnd || xirrRangeStart >= xirrRangeEnd}
+                                            style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '8px 20px', color: '#fff', fontSize: '14px', cursor: 'pointer', opacity: (!xirrRangeStart || !xirrRangeEnd || xirrRangeStart >= xirrRangeEnd) ? 0.5 : 1 }}>
+                                            {xirrRangeLoading ? '計算中...' : '計算'}
+                                        </button>
+
+                                        {xirrRange !== null && (
+                                            <div style={{
+                                                backgroundColor: xirrRange >= 0 ? 'rgba(0,200,150,0.1)' : 'rgba(255,87,87,0.1)',
+                                                border: `1px solid ${xirrRange >= 0 ? 'rgba(0,200,150,0.3)' : 'rgba(255,87,87,0.3)'}`,
+                                                borderRadius: '8px', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: '12px'
+                                            }}>
+                                                <div>
+                                                    <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '2px' }}>區間 XIRR</div>
+                                                    <div style={{ fontSize: '22px', fontWeight: 700, color: pnlColor(xirrRange) }}>
+                                                        {fmtPct(xirrRange * 100)}
+                                                    </div>
+                                                </div>
+                                                <div style={{ fontSize: '11px', color: '#8892a4', lineHeight: 1.6 }}>
+                                                    {xirrRangeStart} ～ {xirrRangeEnd}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {xirrRange === null && !xirrRangeLoading && xirrRangeStart && xirrRangeEnd && xirrRangeStart < xirrRangeEnd && (
+                                            <span style={{ fontSize: '12px', color: '#8892a4', alignSelf: 'center' }}>
+                                                點「計算」取得區間 XIRR
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    {/* 快速區間按鈕 */}
+                                    <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
+                                        <span style={{ fontSize: '12px', color: '#8892a4', alignSelf: 'center', marginRight: '4px' }}>快速選擇：</span>
+                                        {[
+                                            { label: '近 1 年', years: 1 },
+                                            { label: '近 2 年', years: 2 },
+                                            { label: '近 3 年', years: 3 },
+                                            { label: '近 5 年', years: 5 },
+                                        ].map(({ label, years: y }) => {
+                                            const end = new Date().toISOString().split('T')[0]
+                                            const start = new Date(Date.now() - y * 365.25 * 86400000).toISOString().split('T')[0]
+                                            return (
+                                                <button key={label} onClick={() => { setXirrRangeStart(start); setXirrRangeEnd(end); setXirrRange(null) }}
+                                                    style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '6px', padding: '4px 12px', color: '#8892a4', fontSize: '12px', cursor: 'pointer' }}>
+                                                    {label}
+                                                </button>
+                                            )
+                                        })}
+                                        {years.map(y => (
+                                            <button key={y} onClick={() => {
+                                                setXirrRangeStart(`${y}-01-01`)
+                                                setXirrRangeEnd(`${y}-12-31`)
+                                                setXirrRange(null)
+                                            }}
+                                                style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '6px', padding: '4px 12px', color: '#8892a4', fontSize: '12px', cursor: 'pointer' }}>
+                                                {y} 年
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* ── 各年度已實現績效 ── */}
                                 <div style={{ ...card, marginBottom: '20px' }}>
                                     <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>各年度已實現績效</div>
                                     {yearStats.length === 0
@@ -752,6 +947,7 @@ export default function YearReview() {
                                         )}
                                 </div>
 
+                                {/* ── 月份損益熱力圖 ── */}
                                 <div style={{ ...card, marginBottom: '20px' }}>
                                     <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>月份損益熱力圖（全歷史）</div>
                                     {heatYears.length === 0
@@ -788,6 +984,7 @@ export default function YearReview() {
                                         )}
                                 </div>
 
+                                {/* ── 已實現交易明細 ── */}
                                 <div style={card}>
                                     <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>
                                         已實現交易明細（最近 {Math.min(realizedTrades.length, 50)} 筆）
