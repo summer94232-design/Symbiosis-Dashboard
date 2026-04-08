@@ -146,7 +146,7 @@ export default function YearReview() {
     const [yearlyPerf, setYearlyPerf] = useState<YearlyPerf[]>([])
     const [customStart, setCustomStart] = useState('')
     const [customEnd, setCustomEnd] = useState('')
-    const [customCAGR, setCustomCAGR] = useState<{ totalReturn: number; annualizedReturn: number; cagr: number } | null>(null)
+    const [customCAGR, setCustomCAGR] = useState<number | null>(null)
     const [assetSnapshots, setAssetSnapshots] = useState<Record<string, number>>({})
     const [perfLoading, setPerfLoading] = useState(false)
     const [perfConfig, setPerfConfig] = useState<{ startDate: string | null; startValue: number | null }>({ startDate: null, startValue: null })
@@ -237,7 +237,7 @@ export default function YearReview() {
             const allYears = [...new Set(allDates.map(d => parseInt(d.slice(0, 4))))].sort()
             if (allYears.length > 0) {
                 setYears(allYears)
-                setCustomStart(prev => prev || '2025-11-01')
+                setCustomStart(prev => prev || `${allYears[0]}-01-01`)
                 setCustomEnd(prev => prev || new Date().toISOString().split('T')[0])
             }
 
@@ -376,10 +376,7 @@ export default function YearReview() {
         const yrs = (new Date(customEnd).getTime() - new Date(effectiveStart).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
         if (yrs <= 0) { setCustomCAGR(null); setPerfLoading(false); return }
 
-        const totalReturn = ((endValue - startValue) / startValue) * 100
-        const annualizedReturn = totalReturn / yrs
-        const cagr = calcCAGR(startValue, endValue, yrs)
-        setCustomCAGR({ totalReturn, annualizedReturn, cagr })
+        setCustomCAGR(calcCAGR(startValue, endValue, yrs))
         setPerfLoading(false)
     }
 
@@ -539,7 +536,6 @@ export default function YearReview() {
                 setXirrRangeEnd(prev => prev || new Date().toISOString().split('T')[0])
             }
 
-
             setRealizedTrades([...realized].reverse())
             const wins = realized.filter(r => r.pnl > 0.5).length
             setTotalWins(wins); setTotalTrades(realized.length)
@@ -651,7 +647,7 @@ export default function YearReview() {
     }))
 
     const heatYears = [...new Set(Object.keys(heatmapData).map(k => k.slice(0, 4)))].sort()
-    const heatMax = Math.max(...(Object.values(heatmapData) as number[]).map(v => Math.abs(v)), 1)
+    const heatMax = Math.max(...Object.values(heatmapData).map(Math.abs), 1)
 
     const tabBtn = (active: boolean): React.CSSProperties => ({
         backgroundColor: active ? '#1a1d27' : 'transparent', border: 'none', borderRadius: '6px',
@@ -792,35 +788,25 @@ export default function YearReview() {
                         ) : (
                             <>
                                 <div className="snap-stats">
-                                    {(() => {
-                                        const dates = Object.keys(assetSnapshots).sort()
-                                        const sv = dates.length > 0 ? assetSnapshots[dates[0]] || 0 : 0
-                                        const ev = dates.length > 0 ? assetSnapshots[dates[dates.length - 1]] || 0 : 0
-                                        const holdingYears = dates.length >= 2
-                                            ? (new Date(dates[dates.length - 1]).getTime() - new Date(dates[0]).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
-                                            : 0
-                                        const totalReturn = sv > 0 ? ((ev - sv) / sv) * 100 : 0
-                                        const annualizedReturn = holdingYears > 0 ? totalReturn / holdingYears : 0
-                                        return [
-                                            { label: '總報酬率', value: sv > 0 ? `${totalReturn >= 0 ? '+' : ''}${totalReturn.toFixed(2)}%` : '—', color: sv > 0 ? pnlColor(totalReturn) : '#8892a4', desc: '(期末－期初) ÷ 期初' },
-                                            { label: '年化報酬率', value: holdingYears > 0 ? `${annualizedReturn >= 0 ? '+' : ''}${annualizedReturn.toFixed(2)}%` : '—', color: holdingYears > 0 ? pnlColor(annualizedReturn) : '#8892a4', desc: '總報酬率 ÷ 持有年數' },
-                                            { label: 'CAGR 年複合成長率', value: overallCAGR !== null ? `${overallCAGR >= 0 ? '+' : ''}${overallCAGR.toFixed(2)}%` : '—', color: overallCAGR !== null ? pnlColor(overallCAGR) : '#8892a4', desc: '複利年化，最嚴謹指標' },
-                                            { label: '記錄年數', value: `${holdingYears.toFixed(1)} 年`, color: '#4f8ef7', desc: `${dates[0] || ''} ～ ${dates[dates.length - 1] || ''}` },
-                                        ].map(({ label, value, color, desc }) => (
-                                            <div key={label} style={card}>
-                                                <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>{label}</div>
-                                                <div style={{ fontSize: 'clamp(18px, 2vw, 22px)', fontWeight: 700, color, marginBottom: '4px' }}>{value}</div>
-                                                <div style={{ fontSize: '11px', color: '#8892a4' }}>{desc}</div>
-                                            </div>
-                                        ))
-                                    })()}
+                                    {[
+                                        { label: '整體 CAGR', value: overallCAGR !== null ? `${overallCAGR >= 0 ? '+' : ''}${overallCAGR.toFixed(2)}%` : '—', color: overallCAGR !== null ? pnlColor(overallCAGR) : '#8892a4', desc: '年化複合報酬率' },
+                                        { label: '記錄年數', value: `${(() => { const d = Object.keys(assetSnapshots).sort(); if (d.length < 2) return 0; return ((new Date(d[d.length - 1]).getTime() - new Date(d[0]).getTime()) / (365.25 * 24 * 60 * 60 * 1000)).toFixed(1) })()}`, color: '#4f8ef7', desc: '年' },
+                                        { label: '最新總資產', value: `$${(assetSnapshots[Object.keys(assetSnapshots).sort().pop()!] || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#4f8ef7', desc: '最近一筆快照' },
+                                        { label: '起始資產', value: `$${(assetSnapshots[Object.keys(assetSnapshots).sort()[0]] || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#8892a4', desc: '第一筆快照' },
+                                    ].map(({ label, value, color, desc }) => (
+                                        <div key={label} style={card}>
+                                            <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>{label}</div>
+                                            <div style={{ fontSize: 'clamp(18px, 2vw, 22px)', fontWeight: 700, color, marginBottom: '4px' }}>{value}</div>
+                                            <div style={{ fontSize: '11px', color: '#8892a4' }}>{desc}</div>
+                                        </div>
+                                    ))}
                                 </div>
 
                                 <div style={{ ...card, marginBottom: '20px' }}>
                                     <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '4px' }}>自訂區間 CAGR</div>
                                     <p style={{ fontSize: '12px', color: '#8892a4', margin: '0 0 16px' }}>
                                         依交易紀錄推算期初持倉成本與期末市值
-                                        {perfConfig.startDate && <span style={{ color: '#4f8ef7' }}>{perfConfig.startDate}</span>}
+                                        {perfConfig.startDate && <span style={{ color: '#4f8ef7' }}>起{perfConfig.startDate}</span>}
                                         {!perfConfig.startDate && <span style={{ color: '#f5a623' }}>\u63d0\u793a\uff1a\u53ef\u5230\u300c\u8a2d\u5b9a\u8207\u5099\u4efd\u300d\u8a2d\u5b9a\u8d77\u59cb\u65e5\uff0c\u8207\u8d77\u59cb\u8cc7\u7522\u3002</span>}
                                     </p>
                                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -839,24 +825,13 @@ export default function YearReview() {
                                         </button>
                                     </div>
                                     {customCAGR !== null && (
-                                        <div style={{ marginTop: '16px' }}>
-                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '8px' }}>
-                                                {perfConfig.startDate && perfConfig.startDate > customStart ? perfConfig.startDate : customStart} ～ {customEnd}
-                                                {perfConfig.startValue && perfConfig.startDate && perfConfig.startDate >= customStart && ` ｜ 起始 $${perfConfig.startValue.toLocaleString()}`}
-                                            </div>
-                                            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                                                {[
-                                                    { label: '總報酬率', value: customCAGR.totalReturn, desc: '(期末－期初) ÷ 期初' },
-                                                    { label: '年化報酬率', value: customCAGR.annualizedReturn, desc: '總報酬率 ÷ 持有年數' },
-                                                    { label: 'CAGR 年複合成長率', value: customCAGR.cagr, desc: '複利年化，最嚴謹指標' },
-                                                ].map(({ label, value, desc }) => (
-                                                    <div key={label} style={{ backgroundColor: value >= 0 ? 'rgba(0,200,150,0.1)' : 'rgba(255,87,87,0.1)', border: `1px solid ${value >= 0 ? 'rgba(0,200,150,0.3)' : 'rgba(255,87,87,0.3)'}`, borderRadius: '10px', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '150px' }}>
-                                                        <span style={{ fontSize: '11px', color: '#8892a4' }}>{label}</span>
-                                                        <span style={{ fontSize: '26px', fontWeight: 700, color: pnlColor(value) }}>{value >= 0 ? '+' : ''}{value.toFixed(2)}%</span>
-                                                        <span style={{ fontSize: '10px', color: '#8892a4' }}>{desc}</span>
-                                                    </div>
-                                                ))}
-                                            </div>
+                                        <div style={{ marginTop: '16px', backgroundColor: customCAGR >= 0 ? 'rgba(0,200,150,0.1)' : 'rgba(255,87,87,0.1)', border: `1px solid ${customCAGR >= 0 ? 'rgba(0,200,150,0.3)' : 'rgba(255,87,87,0.3)'}`, borderRadius: '10px', padding: '16px 24px', display: 'inline-flex', flexDirection: 'column', gap: '4px' }}>
+                                            <span style={{ fontSize: '11px', color: '#8892a4' }}>年化 CAGR</span>
+                                            <span style={{ fontSize: '32px', fontWeight: 700, color: pnlColor(customCAGR) }}>{customCAGR >= 0 ? '+' : ''}{customCAGR.toFixed(2)}%</span>
+                                            <span style={{ fontSize: '11px', color: '#8892a4' }}>
+                                                {perfConfig.startDate && perfConfig.startDate > customStart ? perfConfig.startDate : customStart} \uff5e {customEnd}
+                                                {perfConfig.startValue && perfConfig.startDate && perfConfig.startDate >= customStart && ` \uff5c 起始 $${perfConfig.startValue.toLocaleString()}`}
+                                            </span>
                                         </div>
                                     )}
                                 </div>
@@ -881,38 +856,28 @@ export default function YearReview() {
                                     <div style={{ overflowX: 'auto' }}>
                                         <table className="perf-table">
                                             <thead>
-                                                <tr>{['年度', '年初資產', '年末資產', '總報酬率', '年化報酬率', 'CAGR'].map(h => <th key={h}>{h}</th>)}</tr>
+                                                <tr>{['年度', '年初資產', '年末資產', '年度報酬率', 'CAGR'].map(h => <th key={h}>{h}</th>)}</tr>
                                             </thead>
                                             <tbody>
-                                                {yearlyPerf.map(p => {
-                                                    const holdingYears = (new Date(`${p.year}-12-31`).getTime() - new Date(`${p.year - 1}-12-31`).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
-                                                    const annualizedReturn = holdingYears > 0 ? p.totalReturn / holdingYears : 0
-                                                    return (
-                                                        <tr key={p.year}>
-                                                            <td style={{ color: '#4f8ef7', fontWeight: 600 }}>{p.year}</td>
-                                                            <td>${p.startValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
-                                                            <td>${p.endValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
-                                                            <td style={{ color: pnlColor(p.totalReturn), fontWeight: 600 }}>{p.totalReturn >= 0 ? '+' : ''}{p.totalReturn.toFixed(2)}%</td>
-                                                            <td style={{ color: pnlColor(annualizedReturn), fontWeight: 600 }}>{annualizedReturn >= 0 ? '+' : ''}{annualizedReturn.toFixed(2)}%</td>
-                                                            <td style={{ color: pnlColor(p.cagr), fontWeight: 600 }}>{p.cagr >= 0 ? '+' : ''}{p.cagr.toFixed(2)}%</td>
-                                                        </tr>
-                                                    )
-                                                })}
+                                                {yearlyPerf.map(p => (
+                                                    <tr key={p.year}>
+                                                        <td style={{ color: '#4f8ef7', fontWeight: 600 }}>{p.year}</td>
+                                                        <td>${p.startValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                                                        <td>${p.endValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                                                        <td style={{ color: pnlColor(p.totalReturn), fontWeight: 600 }}>{p.totalReturn >= 0 ? '+' : ''}{p.totalReturn.toFixed(2)}%</td>
+                                                        <td style={{ color: pnlColor(p.cagr), fontWeight: 600 }}>{p.cagr >= 0 ? '+' : ''}{p.cagr.toFixed(2)}%</td>
+                                                    </tr>
+                                                ))}
                                                 {yearlyPerf.length > 0 && (() => {
                                                     const dates = Object.keys(assetSnapshots).sort()
                                                     const sv = assetSnapshots[dates[0]] || 0, ev = assetSnapshots[dates[dates.length - 1]] || 0
-                                                    const totalReturn = sv > 0 ? ((ev - sv) / sv) * 100 : 0
-                                                    const holdingYears = dates.length >= 2
-                                                        ? (new Date(dates[dates.length - 1]).getTime() - new Date(dates[0]).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
-                                                        : 0
-                                                    const annualizedReturn = holdingYears > 0 ? totalReturn / holdingYears : 0
+                                                    const r = sv > 0 ? ((ev - sv) / sv) * 100 : 0
                                                     return (
                                                         <tr style={{ borderTop: '2px solid #2e3349', backgroundColor: 'rgba(79,142,247,0.05)' }}>
                                                             <td style={{ color: '#e2e8f0', fontWeight: 700 }}>整體</td>
                                                             <td>${sv.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
                                                             <td>${ev.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
-                                                            <td style={{ color: pnlColor(totalReturn), fontWeight: 600 }}>{totalReturn >= 0 ? '+' : ''}{totalReturn.toFixed(2)}%</td>
-                                                            <td style={{ color: pnlColor(annualizedReturn), fontWeight: 600 }}>{annualizedReturn >= 0 ? '+' : ''}{annualizedReturn.toFixed(2)}%</td>
+                                                            <td style={{ color: pnlColor(r), fontWeight: 600 }}>{r >= 0 ? '+' : ''}{r.toFixed(2)}%</td>
                                                             <td style={{ color: overallCAGR !== null ? pnlColor(overallCAGR) : '#8892a4', fontWeight: 700 }}>
                                                                 {overallCAGR !== null ? `${overallCAGR >= 0 ? '+' : ''}${overallCAGR.toFixed(2)}%` : '—'}
                                                             </td>
@@ -940,7 +905,15 @@ export default function YearReview() {
                                         <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: xirr !== null ? pnlColor(xirr) : '#8892a4' }}>
                                             {xirr !== null ? fmtPct(xirr * 100) : '—'}
                                         </div>
-                                        <div style={{ fontSize: '12px', color: '#8892a4', marginTop: '6px' }}>保守估（以成本）：{xirrCost !== null ? fmtPct(xirrCost * 100) : '—'}</div>
+                                        <div style={{ fontSize: '12px', color: '#8892a4', marginTop: '6px' }}>
+                                            保守估（以成本）：{xirrCost !== null ? fmtPct(xirrCost * 100) : '—'}
+                                        </div>
+                                        {/* ✅ XIRR 無法計算時說明原因，避免用戶誤以為功能故障 */}
+                                        {xirr === null && !xirrLoading && (
+                                            <div style={{ fontSize: '11px', color: '#f5a623', marginTop: '8px', lineHeight: 1.5 }}>
+                                                現金流方向不足（需同時有買入與賣出），或資料筆數不足，無法計算 XIRR。
+                                            </div>
+                                        )}
                                     </div>
                                     <div style={card}>
                                         <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>最大回撤（MDD）</div>

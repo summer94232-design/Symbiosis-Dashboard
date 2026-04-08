@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { collection, getDocs, orderBy, query, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { getMultipleQuotes } from '../../lib/fugle'
-import { calcPositions, calcAvailableCash, type TradeRecord } from '../../lib/calc'
+import { calcPositions, calcAvailableCash, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer } from 'recharts'
 import { useNavigate } from 'react-router-dom'
@@ -73,12 +73,16 @@ export default function Dashboard() {
     const loadData = async () => {
         setLoading(true)
         try {
-            const tradesSnap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc')))
+            const [tradesSnap, dividendsSnap, cashSnap] = await Promise.all([
+                getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
+                getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'asc'))),
+                getDocs(collection(investDB, 'cashflow')),
+            ])
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
-            const cashSnap = await getDocs(collection(investDB, 'cashflow'))
+            const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
             const cashRecords = cashSnap.docs.map(d => d.data() as CashRecord)
 
-            const { holdings: positions, realized } = calcPositions(trades)
+            const { holdings: positions, realized } = calcPositions(trades, dividends)
             setRealizedPnL(realized.reduce((s, r) => s + r.realized, 0))
 
             const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
