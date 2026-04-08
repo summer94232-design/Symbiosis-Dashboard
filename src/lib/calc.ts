@@ -79,7 +79,7 @@ interface Lot {
     unitCost: number  // 含手續費的每股成本
 }
 
-// ✅ 修正：calcPositions 接受可選的 dividends 參數
+// ✅ calcPositions 接受可選的 dividends 參數
 // 配股（stockDividend > 0）會在對應日期後加入持倉，成本為 0，並攤薄 avgCost
 export function calcPositions(trades: TradeRecord[], dividends: DividendRecord[] = []): CalcResult {
     const sorted = [...trades].sort((a, b) => a.date.localeCompare(b.date))
@@ -182,12 +182,14 @@ export function calcPositions(trades: TradeRecord[], dividends: DividendRecord[]
     return { holdings, realized }
 }
 
+// ✅ 修正：統一參數順序為 (trades, cashRecords)
+// 注意：AssetTrend.tsx 的呼叫也已同步修正為此順序
 export function calcAvailableCash(
-    cashflows: { type: string; amount: number }[],
-    trades: TradeRecord[]
+    trades: TradeRecord[],
+    cashRecords: { type: string; amount: number }[]
 ): number {
-    const cashIn = cashflows.filter(c => c.type === 'in').reduce((s, c) => s + c.amount, 0)
-    const cashOut = cashflows.filter(c => c.type === 'out').reduce((s, c) => s + c.amount, 0)
+    const cashIn = cashRecords.filter(c => c.type === 'in').reduce((s, c) => s + c.amount, 0)
+    const cashOut = cashRecords.filter(c => c.type === 'out').reduce((s, c) => s + c.amount, 0)
     const buyTotal = trades.filter(t => t.type === 'buy').reduce((s, t) => s + t.total, 0)
     const sellTotal = trades.filter(t => t.type === 'sell').reduce((s, t) => s + t.total, 0)
     return cashIn - cashOut - buyTotal + sellTotal

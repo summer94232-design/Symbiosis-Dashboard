@@ -49,7 +49,7 @@ export default function AssetTrend() {
     const [editingDate, setEditingDate] = useState<string | null>(null)
     const [form, setForm] = useState<SnapshotRecord>(emptySnap)
     const [formLoading, setFormLoading] = useState(false)
-    // ✅ 新增：記錄哪些持倉沒有現價，供警示使用
+    // ✅ 記錄哪些持倉沒有現價，供警示使用
     const [missingPriceCodes, setMissingPriceCodes] = useState<string[]>([])
 
     const loadSnapshots = async () => {
@@ -65,7 +65,7 @@ export default function AssetTrend() {
         init()
     }, [])
 
-    // ✅ 修正：計算市值時若有持倉無現價，記錄缺漏代號供警示
+    // 計算市值時若有持倉無現價，記錄缺漏代號供警示
     const calcMarketValue = (
         positions: Record<string, { code: string; shares: number; totalCost: number }>,
         savedPrices: Record<string, number>
@@ -104,7 +104,8 @@ export default function AssetTrend() {
             const { marketValue, missing } = calcMarketValue(positions, savedPrices)
             setMissingPriceCodes(missing)
 
-            const cash = calcAvailableCash(cashRecords, trades)
+            // ✅ 修正：統一參數順序為 (trades, cashRecords)
+            const cash = calcAvailableCash(trades, cashRecords)
             const totalAssets = marketValue + cash
 
             setForm(f => ({
@@ -135,7 +136,8 @@ export default function AssetTrend() {
             const { marketValue, missing } = calcMarketValue(positions, savedPrices)
             setMissingPriceCodes(missing)
 
-            const cash = calcAvailableCash(cashRecords, trades)
+            // ✅ 修正：統一參數順序為 (trades, cashRecords)
+            const cash = calcAvailableCash(trades, cashRecords)
             const totalAssets = marketValue + cash
             const today = new Date().toISOString().split('T')[0]
 
@@ -170,136 +172,58 @@ export default function AssetTrend() {
         if (range === 'ALL') return data
         const now = new Date()
         const months = range === '1M' ? 1 : range === '3M' ? 3 : range === '6M' ? 6 : 12
-        const from = new Date(now.setMonth(now.getMonth() - months)).toISOString().split('T')[0]
-        return data.filter(d => d.date >= from)
+        const cutoff = new Date(now.getFullYear(), now.getMonth() - months, now.getDate()).toISOString().split('T')[0]
+        return data.filter(d => d.date >= cutoff)
     }
 
-    const filtered = filterByRange([...snapshots])
+    const filtered = filterByRange(snapshots)
     const latest = snapshots[snapshots.length - 1]
-    const oldest = filtered[0]
-    const change = latest && oldest ? latest.totalAssets - oldest.totalAssets : 0
-    const changeRate = oldest?.totalAssets > 0 ? (change / oldest.totalAssets) * 100 : 0
-    const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
-    const rangeButtons: ('1M' | '3M' | '6M' | '1Y' | 'ALL')[] = ['1M', '3M', '6M', '1Y', 'ALL']
 
     return (
         <>
             <style>{`
-        .trend-stats { display: grid; gap: 16px; grid-template-columns: repeat(4, 1fr); margin-bottom: 20px; }
-        @media (max-width: 900px) { .trend-stats { grid-template-columns: repeat(2, 1fr); } }
-        @media (max-width: 480px) { .trend-stats { grid-template-columns: 1fr; } }
-        .snap-form-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); }
-        @media (max-width: 800px) { .snap-form-grid { grid-template-columns: repeat(2, 1fr); } }
-        @media (max-width: 480px) { .snap-form-grid { grid-template-columns: 1fr; } }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-      `}</style>
-
-            <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
-                    <div>
-                        <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>資產趨勢</h1>
-                        <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>共 {snapshots.length} 筆紀錄</p>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        <button onClick={() => { setForm(emptySnap); setEditingDate(null); setShowForm(true) }} style={btn('#21253a')}>
-                            <Plus size={14} />手動新增
+                @keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+                .snap-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+                @media (max-width: 600px) { .snap-form-grid { grid-template-columns: 1fr; } }
+            `}</style>
+            <div style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+                    <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>資產趨勢</h2>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={saveToday} disabled={saving} style={btn('#00c896')}>
+                            <Save size={15} style={{ animation: saving ? 'spin 1s linear infinite' : 'none' }} />
+                            {saving ? '儲存中...' : '儲存今日快照'}
                         </button>
-                        <button onClick={saveToday} disabled={saving} style={btn('#4f8ef7')}>
-                            <Save size={14} style={{ animation: saving ? 'spin 1s linear infinite' : 'none' }} />
-                            {saving ? '記錄中...' : '記錄今日資產'}
+                        <button onClick={() => { setShowForm(true); setEditingDate(null); setForm(emptySnap) }} style={btn('#4f8ef7')}>
+                            <Plus size={15} />手動新增
                         </button>
                     </div>
                 </div>
 
-                {/* ✅ 現價缺漏警示 */}
-                {missingPriceCodes.length > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', backgroundColor: 'rgba(245,166,35,0.1)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
-                        <AlertTriangle size={16} color="#f5a623" style={{ flexShrink: 0, marginTop: '1px' }} />
-                        <div style={{ fontSize: '13px', color: '#f5a623', lineHeight: 1.6 }}>
-                            <strong>現價資料不完整</strong>：以下股票無現價快取，市值已用成本價替代，總資產可能低估。<br />
-                            <span style={{ color: '#e2e8f0' }}>{missingPriceCodes.join('、')}</span>
-                            <br />
-                            <span style={{ color: '#8892a4', fontSize: '12px' }}>請至「持倉明細」或「自選股」更新現價後再記錄快照。</span>
-                        </div>
+                {/* 最新數字摘要 */}
+                {latest && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '24px' }}>
+                        {[
+                            { label: '總資產', value: latest.totalAssets, color: '#4f8ef7' },
+                            { label: '股票市值', value: latest.marketValue, color: '#00c896' },
+                            { label: '現金', value: latest.cash, color: '#f5a623' },
+                        ].map(item => (
+                            <div key={item.label} style={card}>
+                                <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '6px' }}>{item.label}</div>
+                                <div style={{ fontSize: '20px', fontWeight: 700, color: item.color }}>
+                                    ${item.value.toLocaleString()}
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 )}
 
-                {/* 統計卡片 */}
-                <div className="trend-stats">
-                    {[
-                        { label: '最新總資產', value: latest?.totalAssets || 0, color: '#4f8ef7' },
-                        { label: '股票市值', value: latest?.marketValue || 0, color: '#00c896' },
-                        { label: '可用現金', value: latest?.cash || 0, color: '#f5a623' },
-                        { label: `區間變化 (${range})`, value: change, color: pnlColor(change), extra: `${changeRate >= 0 ? '+' : ''}${changeRate.toFixed(2)}%` },
-                    ].map(({ label, value, color, extra }: { label: string; value: number; color: string; extra?: string }) => (
-                        <div key={label} style={card}>
-                            <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>{label}</div>
-                            <div style={{ fontSize: 'clamp(16px, 2vw, 20px)', fontWeight: 700, color }}>
-                                {value < 0 ? '-' : ''}${Math.abs(value).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
-                            </div>
-                            {extra && <div style={{ fontSize: '13px', color, marginTop: '4px' }}>{extra}</div>}
-                        </div>
-                    ))}
-                </div>
-
-                {/* 手動新增／編輯表單 */}
-                {showForm && (
-                    <div style={{ ...card, marginBottom: '20px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                            <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>
-                                {editingDate ? '✏️ 編輯紀錄' : '➕ 手動新增紀錄'}
-                            </span>
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                <button onClick={handleAutoFill} disabled={autoLoading} style={{ ...btn('#00c896'), fontSize: '13px', padding: '6px 12px' }}>
-                                    <Zap size={13} style={{ animation: autoLoading ? 'spin 1s linear infinite' : 'none' }} />
-                                    {autoLoading ? '計算中...' : '自動帶入'}
-                                </button>
-                                <button onClick={handleCancel} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
-                            </div>
-                        </div>
-                        <p style={{ fontSize: '12px', color: '#8892a4', margin: '0 0 16px' }}>點「自動帶入」會從 Firebase 計算目前持倉市值與現金</p>
-
-                        {/* 表單內也顯示警示 */}
-                        {missingPriceCodes.length > 0 && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'rgba(245,166,35,0.1)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#f5a623' }}>
-                                <AlertTriangle size={14} style={{ flexShrink: 0 }} />
-                                無現價：{missingPriceCodes.join('、')} — 市值以成本替代，數字可能低估
-                            </div>
-                        )}
-
-                        <div className="snap-form-grid">
-                            <div>
-                                <label style={lbl}>日期</label>
-                                <input type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
-                            </div>
-                            <div>
-                                <label style={lbl}>總資產</label>
-                                <input type="number" style={inp} placeholder="0" value={form.totalAssets || ''} onChange={e => setForm(f => ({ ...f, totalAssets: parseFloat(e.target.value) || 0 }))} />
-                            </div>
-                            <div>
-                                <label style={lbl}>股票市值</label>
-                                <input type="number" style={inp} placeholder="0" value={form.marketValue || ''} onChange={e => setForm(f => ({ ...f, marketValue: parseFloat(e.target.value) || 0 }))} />
-                            </div>
-                            <div>
-                                <label style={lbl}>現金</label>
-                                <input type="number" style={inp} placeholder="0" value={form.cash || ''} onChange={e => setForm(f => ({ ...f, cash: parseFloat(e.target.value) || 0 }))} />
-                            </div>
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
-                            <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消</button>
-                            <button style={btn('#4f8ef7')} onClick={handleSave} disabled={formLoading}>
-                                <Check size={14} />{formLoading ? '儲存中...' : editingDate ? '確認更新' : '確認新增'}
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* 折線圖 */}
-                <div style={{ ...card, marginBottom: '20px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '8px' }}>
-                        <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>資產走勢圖</div>
+                {/* 趨勢圖 */}
+                <div style={{ ...card, marginBottom: '24px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>資產走勢圖</span>
                         <div style={{ display: 'flex', gap: '6px' }}>
-                            {rangeButtons.map(r => (
+                            {(['1M', '3M', '6M', '1Y', 'ALL'] as const).map(r => (
                                 <button key={r} onClick={() => setRange(r)} style={{ backgroundColor: range === r ? '#4f8ef7' : '#21253a', border: '1px solid', borderColor: range === r ? '#4f8ef7' : '#2e3349', borderRadius: '6px', padding: '4px 12px', color: range === r ? '#fff' : '#8892a4', fontSize: '13px', cursor: 'pointer' }}>
                                     {r}
                                 </button>
@@ -328,28 +252,80 @@ export default function AssetTrend() {
                     )}
                 </div>
 
+                {/* 新增 / 編輯表單 */}
+                {showForm && (
+                    <div style={{ ...card, marginBottom: '24px', border: '1px solid #4f8ef7' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>
+                                {editingDate ? '✏️ 編輯紀錄' : '➕ 手動新增紀錄'}
+                            </span>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                <button onClick={handleAutoFill} disabled={autoLoading} style={{ ...btn('#00c896'), fontSize: '13px', padding: '6px 12px' }}>
+                                    <Zap size={13} style={{ animation: autoLoading ? 'spin 1s linear infinite' : 'none' }} />
+                                    {autoLoading ? '計算中...' : '自動帶入'}
+                                </button>
+                                <button onClick={handleCancel} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
+                            </div>
+                        </div>
+                        <p style={{ fontSize: '12px', color: '#8892a4', margin: '0 0 16px' }}>點「自動帶入」會從 Firebase 計算目前持倉市值與現金</p>
+
+                        {/* 無現價警示 */}
+                        {missingPriceCodes.length > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'rgba(245,166,35,0.1)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#f5a623' }}>
+                                <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+                                無現價：{missingPriceCodes.join('、')} — 市值以成本替代，數字可能低估
+                            </div>
+                        )}
+
+                        <div className="snap-form-grid">
+                            <div>
+                                <label style={lbl}>日期</label>
+                                <input type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
+                            </div>
+                            <div>
+                                <label style={lbl}>總資產</label>
+                                <input type="number" style={inp} placeholder="0" value={form.totalAssets || ''} onChange={e => setForm(f => ({ ...f, totalAssets: parseFloat(e.target.value) || 0 }))} />
+                            </div>
+                            <div>
+                                <label style={lbl}>股票市值</label>
+                                <input type="number" style={inp} placeholder="0" value={form.marketValue || ''} onChange={e => setForm(f => ({ ...f, marketValue: parseFloat(e.target.value) || 0 }))} />
+                            </div>
+                            <div>
+                                <label style={lbl}>現金</label>
+                                <input type="number" style={inp} placeholder="0" value={form.cash || ''} onChange={e => setForm(f => ({ ...f, cash: parseFloat(e.target.value) || 0 }))} />
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
+                            <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消</button>
+                            <button style={btn('#4f8ef7')} onClick={handleSave} disabled={formLoading}>
+                                <Check size={14} />{formLoading ? '儲存中...' : editingDate ? '更新' : '新增'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 {/* 歷史紀錄列表 */}
                 <div style={card}>
                     <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>歷史紀錄</div>
                     {snapshots.length === 0 ? (
-                        <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4', fontSize: '13px' }}>還沒有紀錄</div>
+                        <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4' }}>還沒有任何快照，點「儲存今日快照」開始記錄</div>
                     ) : (
                         <div style={{ overflowX: 'auto' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                                 <thead>
                                     <tr style={{ borderBottom: '1px solid #2e3349' }}>
-                                        {['日期', '總資產', '股票市值', '現金', ''].map(h => (
+                                        {['日期', '總資產', '股票市值', '現金', '操作'].map(h => (
                                             <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#8892a4', fontWeight: 500 }}>{h}</th>
                                         ))}
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {[...snapshots].reverse().map(s => (
-                                        <tr key={s.date} style={{ borderBottom: '1px solid #2e3349', backgroundColor: editingDate === s.date ? 'rgba(79,142,247,0.06)' : 'transparent' }}>
+                                    {[...snapshots].reverse().map((s) => (
+                                        <tr key={s.date} style={{ borderBottom: '1px solid #2e3349' }}>
                                             <td style={{ padding: '12px', color: '#8892a4' }}>{s.date}</td>
-                                            <td style={{ padding: '12px', color: '#4f8ef7', fontWeight: 600 }}>${s.totalAssets.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
-                                            <td style={{ padding: '12px', color: '#00c896' }}>${s.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
-                                            <td style={{ padding: '12px', color: '#f5a623' }}>${s.cash.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                                            <td style={{ padding: '12px', color: '#4f8ef7', fontWeight: 600 }}>${s.totalAssets.toLocaleString()}</td>
+                                            <td style={{ padding: '12px', color: '#00c896' }}>${s.marketValue.toLocaleString()}</td>
+                                            <td style={{ padding: '12px', color: '#f5a623' }}>${s.cash.toLocaleString()}</td>
                                             <td style={{ padding: '12px' }}>
                                                 <div style={{ display: 'flex', gap: '8px' }}>
                                                     <button onClick={() => handleEdit(s)} style={{ background: 'none', border: 'none', color: '#4f8ef7', cursor: 'pointer' }}><Pencil size={15} /></button>
