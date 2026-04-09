@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, doc, setDoc, deleteDoc, orderBy, query, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { calcPositions, calcAvailableCash, type TradeRecord } from '../../lib/calc'
+import { calcPositions, calcAvailableCash, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Save, Pencil, Trash2, Plus, X, Check, Zap, AlertTriangle } from 'lucide-react'
 
@@ -89,14 +89,16 @@ export default function AssetTrend() {
         setAutoLoading(true)
         setMissingPriceCodes([])
         try {
-            const [tradesSnap, cashSnap] = await Promise.all([
+            const [tradesSnap, cashSnap, dividendsSnap] = await Promise.all([
                 getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
                 getDocs(collection(investDB, 'cashflow')),
+                getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'asc'))),
             ])
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const cashRecords = cashSnap.docs.map(d => d.data() as { type: string; amount: number })
+            const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
 
-            const { holdings: positions } = calcPositions(trades)
+            const { holdings: positions } = calcPositions(trades, dividends)
 
             const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
             const savedPrices = (priceDoc.exists() ? priceDoc.data() : {}) as Record<string, number>
@@ -104,8 +106,8 @@ export default function AssetTrend() {
             const { marketValue, missing } = calcMarketValue(positions, savedPrices)
             setMissingPriceCodes(missing)
 
-            // ✅ 修正：統一參數順序為 (trades, cashRecords)
-            const cash = calcAvailableCash(trades, cashRecords)
+            // ✅ 新增 dividends：現金股息計入可用現金
+            const cash = calcAvailableCash(trades, cashRecords, dividends)
             const totalAssets = marketValue + cash
 
             setForm(f => ({
@@ -122,22 +124,24 @@ export default function AssetTrend() {
         setSaving(true)
         setMissingPriceCodes([])
         try {
-            const [tradesSnap, cashSnap] = await Promise.all([
+            const [tradesSnap, cashSnap, dividendsSnap] = await Promise.all([
                 getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
                 getDocs(collection(investDB, 'cashflow')),
+                getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'asc'))),
             ])
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const cashRecords = cashSnap.docs.map(d => d.data() as { type: string; amount: number })
+            const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
 
-            const { holdings: positions } = calcPositions(trades)
+            const { holdings: positions } = calcPositions(trades, dividends)
             const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
             const savedPrices = (priceDoc.exists() ? priceDoc.data() : {}) as Record<string, number>
 
             const { marketValue, missing } = calcMarketValue(positions, savedPrices)
             setMissingPriceCodes(missing)
 
-            // ✅ 修正：統一參數順序為 (trades, cashRecords)
-            const cash = calcAvailableCash(trades, cashRecords)
+            // ✅ 新增 dividends：現金股息計入可用現金
+            const cash = calcAvailableCash(trades, cashRecords, dividends)
             const totalAssets = marketValue + cash
             const today = new Date().toISOString().split('T')[0]
 

@@ -112,7 +112,7 @@ export default function Dashboard() {
             holdingList.sort((a, b) => b.marketValue - a.marketValue)
 
             setHoldings(holdingList)
-            setTotalCash(calcAvailableCash(trades, cashRecords))
+            setTotalCash(calcAvailableCash(trades, cashRecords, dividends))
             setHasPrice(priceAvailable)
             if (savedAt) setLastUpdated(savedAt)
         } catch (err) { console.error(err) }
