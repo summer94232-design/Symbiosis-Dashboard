@@ -82,14 +82,52 @@ interface Lot {
 // ✅ calcPositions 接受可選的 dividends 參數
 // 配股（stockDividend > 0）會在對應日期後加入持倉，成本為 0，並攤薄 avgCost
 export function calcPositions(trades: TradeRecord[], dividends: DividendRecord[] = []): CalcResult {
-    const sorted = [...trades].sort((a, b) => a.date.localeCompare(b.date))
+    // ✅ 將配股轉為虛擬 'dividend' 事件，與交易合併排序，確保按時間順序處理
+    // 同一天排序：買入 → 配股 → 賣出
+    // 原因：對沖操作為「先買入新批次，再賣出舊批次」；配股需在賣出前加入 lot
+    type Event =
+        | { kind: 'trade'; data: TradeRecord }
+        | { kind: 'dividend'; data: DividendRecord }
+
+    const events: Event[] = [
+        ...trades.map(t => ({ kind: 'trade' as const, data: t })),
+        ...dividends.filter(d => d.stockDividend > 0).map(d => ({ kind: 'dividend' as const, data: d })),
+    ]
+
+    const typeOrder = (e: Event) => {
+        if (e.kind === 'dividend') return 1
+        return e.data.type === 'buy' ? 0 : 2
+    }
+
+    events.sort((a, b) => {
+        const dateA = a.kind === 'trade' ? a.data.date : a.data.date
+        const dateB = b.kind === 'trade' ? b.data.date : b.data.date
+        const dateComp = dateA.localeCompare(dateB)
+        if (dateComp !== 0) return dateComp
+        return typeOrder(a) - typeOrder(b)
+    })
 
     // 每支股票維護一個 lots queue（先進先出）
     const lots: Record<string, Lot[]> = {}
     const holdings: Record<string, HoldingPosition> = {}
     const realized: RealizedRecord[] = []
 
-    for (const t of sorted) {
+    for (const event of events) {
+        if (event.kind === 'dividend') {
+            // 配股：加入持倉與 lot（成本為 0）
+            const d = event.data
+            if (!lots[d.code]) lots[d.code] = []
+            if (!holdings[d.code]) {
+                holdings[d.code] = { code: d.code, name: d.name, shares: 0, avgCost: 0, totalCost: 0 }
+            }
+            const pos = holdings[d.code]
+            pos.shares += d.stockDividend
+            pos.avgCost = pos.totalCost > 0 ? pos.totalCost / pos.shares : 0
+            lots[d.code].push({ date: d.date, shares: d.stockDividend, unitCost: 0 })
+            continue
+        }
+
+        const t = event.data
         const { code, name, type, price, shares, fee, tax } = t
 
         if (!lots[code]) lots[code] = []
@@ -160,18 +198,6 @@ export function calcPositions(trades: TradeRecord[], dividends: DividendRecord[]
                 pos.avgCost = remainingShares > 0 ? remainingCost / remainingShares : 0
             }
         }
-    }
-
-    // ✅ 套用配股：stockDividend > 0 時加入股數，成本為 0，攤薄 avgCost
-    // 依日期排序，確保配股按時間順序處理
-    const sortedDividends = [...dividends].sort((a, b) => a.date.localeCompare(b.date))
-    for (const d of sortedDividends) {
-        if (d.stockDividend <= 0) continue
-        if (!holdings[d.code]) continue  // 配股時已無持倉則略過
-        const pos = holdings[d.code]
-        pos.shares += d.stockDividend
-        // totalCost 不變（配股成本為 0），avgCost 攤薄重算
-        pos.avgCost = pos.totalCost / pos.shares
     }
 
     // 過濾掉空倉

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, orderBy, query, doc, getDoc, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { calcPositions, type TradeRecord } from '../../lib/calc'
+import { calcPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { getMultipleQuotes } from '../../lib/fugle'
 import { RefreshCw, TrendingUp, TrendingDown } from 'lucide-react'
 
@@ -26,21 +26,15 @@ export default function Holdings() {
     const load = async () => {
         setLoading(true)
         try {
-            const snap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc')))
+            const [snap, divSnap] = await Promise.all([
+                getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
+                getDocs(collection(investDB, 'dividends')),
+            ])
             const trades = snap.docs.map(d => d.data() as TradeRecord)
-            const { holdings: positions } = calcPositions(trades)
-
-            // ── 讀取股票股利（配股），加入對應持倉的股數 ──
-            const divSnap = await getDocs(collection(investDB, 'dividends'))
-            divSnap.docs.forEach(d => {
-                const div = d.data()
-                if (div.stockDividend > 0 && positions[div.code]) {
-                    positions[div.code].shares += div.stockDividend
-                    // totalCost 不變（配股成本為 0），avgCost 攤薄重算
-                    positions[div.code].avgCost =
-                        positions[div.code].totalCost / positions[div.code].shares
-                }
-            })
+            const dividends = divSnap.docs.map(d => d.data() as DividendRecord)
+            // ✅ 修正：將 dividends 傳入 calcPositions 統一處理配股
+            // 原本在此手動處理配股，但空倉時會跳過（導致全數出清後的配股股數消失）
+            const { holdings: positions } = calcPositions(trades, dividends)
 
             // 讀取 Firebase 儲存的現價（跟儀表板共用）
             const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
