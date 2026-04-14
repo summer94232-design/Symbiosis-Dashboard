@@ -270,16 +270,7 @@ export default function Holdings() {
                         </div>
                     ))}
                 </div>
-
-                {/* 族群說明提示 */}
-                {!loading && holdings.length > 0 && (
-                    <div style={{ marginBottom: '12px', padding: '10px 14px', backgroundColor: 'rgba(167,139,250,0.07)', border: '1px solid rgba(167,139,250,0.2)', borderRadius: '8px', fontSize: '12px', color: '#a78bfa', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Tag size={13} />
-                        <span>點擊「族群」欄位的標籤可編輯，輸入自訂族群名稱（例如：低軌衛星、ETF、被動元件），儲存後 Dashboard 族群圓餅圖會自動更新。</span>
-                    </div>
-                )}
-
-                <div style={card}>
+                        <div style={card}>
                     {loading ? (
                         <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div>
                     ) : holdings.length === 0 ? (
