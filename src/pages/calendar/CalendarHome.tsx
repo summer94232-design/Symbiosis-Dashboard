@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { collection, getDocs, addDoc, deleteDoc, doc, orderBy, query } from 'firebase/firestore'
+import { collection, getDocs, addDoc, deleteDoc, doc, orderBy, query, setDoc, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { calcPositions, type TradeRecord } from '../../lib/calc'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS, type CalendarEvent } from '../../lib/calendarData'
@@ -11,6 +11,10 @@ const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 
 const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
+
+// Firestore investorMeetings 文件格式
+// doc ID: `{stockCode}-{YYYY-MM}`  例如 `2330-2026-04`
+// 欄位: { stockCode, stockName, yearMonth, dates: string[], updatedAt }
 
 export default function CalendarHome() {
     const today = new Date()
@@ -25,6 +29,7 @@ export default function CalendarHome() {
     const [showForm, setShowForm] = useState(false)
     const [loadingInvestor, setLoadingInvestor] = useState(false)
     const [investorError, setInvestorError] = useState<string | null>(null)
+    const [investorInfo, setInvestorInfo] = useState<string | null>(null)
     const [watchList, setWatchList] = useState<string[]>([])
     const [filterTypes, setFilterTypes] = useState<Set<string>>(new Set(['fomc', 'futures', 'tech', 'investor', 'personal', 'dividend']))
     const [form, setForm] = useState({ title: '', date: '', description: '', url: '' })
@@ -70,9 +75,35 @@ export default function CalendarHome() {
         setTaskEvents(taskEvts)
     }
 
+    // 從 Firestore 讀取已儲存的法說會資料（進入頁面時呼叫）
+    const loadInvestorFromFirestore = async (y: number, m: number) => {
+        const yearMonth = `${y}-${String(m).padStart(2, '0')}`
+        const snap = await getDocs(collection(investDB, 'investorMeetings'))
+        const evts: CalendarEvent[] = []
+        snap.docs.forEach(d => {
+            const data = d.data()
+            // 只取當月資料
+            if (data.yearMonth !== yearMonth) return
+            const dates: string[] = Array.isArray(data.dates) ? data.dates : []
+            dates.forEach((isoDate: string) => {
+                evts.push({
+                    id: `investor-${data.stockCode}-${isoDate}`,
+                    date: isoDate,
+                    title: `${data.stockName || data.stockCode} 法說會`,
+                    type: 'investor',
+                    stockCode: data.stockCode,
+                    description: `${data.stockName || data.stockCode}（${data.stockCode}）法人說明會`
+                })
+            })
+        })
+        setInvestorEvents(evts)
+    }
+
+    // 手動更新法說會：打 API → 比對 Firestore → 有變動就寫入
     const loadInvestorMeetings = async () => {
         setLoadingInvestor(true)
         setInvestorError(null)
+        setInvestorInfo(null)
 
         try {
             // 取得持倉股票
@@ -93,9 +124,11 @@ export default function CalendarHome() {
                 return
             }
 
-            const newEvents: CalendarEvent[] = []
+            const yearMonth = `${year}-${String(month).padStart(2, '0')}`
             let successCount = 0
             let failCount = 0
+            let changedCount = 0  // 有變動的股票數
+            const newAllEvents: CalendarEvent[] = []
 
             for (const code of allCodes) {
                 try {
@@ -111,7 +144,6 @@ export default function CalendarHome() {
                         continue
                     }
 
-                    // ✅ 新版：直接解析 JSON（不再解析 HTML 文字）
                     let json: { source?: string; dates?: string[]; error?: string }
                     try {
                         json = await res.json()
@@ -127,19 +159,45 @@ export default function CalendarHome() {
                         continue
                     }
 
-                    const dates: string[] = Array.isArray(json.dates) ? json.dates : []
-                    console.log(`${code} 法說會日期（來源：${json.source}）:`, dates)
-
-                    dates.forEach((isoDate: string) => {
-                        // 驗證格式為 YYYY-MM-DD
-                        if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return
-
+                    // 過濾有效日期（當月）
+                    const rawDates: string[] = Array.isArray(json.dates) ? json.dates : []
+                    const newDates = rawDates.filter(isoDate => {
+                        if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return false
                         const [y, m] = isoDate.split('-')
-                        // 確認是當月資料（proxy 應已過濾，此處雙重保險）
-                        if (parseInt(y) !== year || parseInt(m) !== month) return
+                        return parseInt(y) === year && parseInt(m) === month
+                    })
 
-                        const stockName = holdings[code]?.name || code
-                        newEvents.push({
+                    console.log(`${code} 法說會日期（來源：${json.source}）:`, newDates)
+
+                    const stockName = holdings[code]?.name || code
+                    const docId = `${code}-${yearMonth}`
+                    const docRef = doc(investDB, 'investorMeetings', docId)
+
+                    // 讀取 Firestore 既有資料做比對
+                    const existing = await getDoc(docRef)
+                    const oldDates: string[] = existing.exists() ? (existing.data().dates || []) : []
+
+                    // 比對：排序後轉字串比較
+                    const oldSorted = [...oldDates].sort().join(',')
+                    const newSorted = [...newDates].sort().join(',')
+                    const hasChanged = oldSorted !== newSorted
+
+                    if (hasChanged) {
+                        // 寫入 Firestore（新增或更新）
+                        await setDoc(docRef, {
+                            stockCode: code,
+                            stockName,
+                            yearMonth,
+                            dates: newDates,
+                            updatedAt: new Date().toISOString()
+                        })
+                        changedCount++
+                        console.log(`${code} 法說會有變動：${JSON.stringify(oldDates)} → ${JSON.stringify(newDates)}`)
+                    }
+
+                    // 組成 CalendarEvent
+                    newDates.forEach((isoDate: string) => {
+                        newAllEvents.push({
                             id: `investor-${code}-${isoDate}`,
                             date: isoDate,
                             title: `${stockName} 法說會`,
@@ -156,13 +214,18 @@ export default function CalendarHome() {
                 }
             }
 
-            console.log(`法說會查詢完成：成功 ${successCount} / 失敗 ${failCount}，共 ${newEvents.length} 個事件`)
-            setInvestorEvents(newEvents)
+            console.log(`法說會查詢完成：成功 ${successCount} / 失敗 ${failCount}，變動 ${changedCount} 檔，共 ${newAllEvents.length} 個事件`)
+            setInvestorEvents(newAllEvents)
 
+            // 顯示結果訊息
             if (failCount > 0 && successCount === 0) {
                 setInvestorError(`查詢失敗（${failCount} 檔），請確認 mops-proxy 是否正常運作`)
             } else if (failCount > 0) {
                 setInvestorError(`部分查詢失敗（${failCount} 檔），其餘 ${successCount} 檔已更新`)
+            } else if (changedCount > 0) {
+                setInvestorInfo(`✅ 更新完成，偵測到 ${changedCount} 檔有變動並已同步`)
+            } else {
+                setInvestorInfo(`✅ 更新完成，本月資料無變動（${successCount} 檔）`)
             }
         } catch (err) {
             console.error('loadInvestorMeetings 錯誤：', err)
@@ -179,9 +242,10 @@ export default function CalendarHome() {
         loadTasks()
     }, [])
 
+    // 切換月份或初始進入時，從 Firestore 直接讀取（不打 API）
     useEffect(() => {
-        loadInvestorMeetings()
-    }, [year, month, watchList])
+        loadInvestorFromFirestore(year, month)
+    }, [year, month])
 
     // 合併所有事件
     useEffect(() => {
@@ -277,6 +341,27 @@ export default function CalendarHome() {
                     }}>
                         <span style={{ fontSize: '13px', color: '#f5c842' }}>⚠️ {investorError}</span>
                         <button onClick={() => setInvestorError(null)}
+                            style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', flexShrink: 0 }}>
+                            <X size={14} />
+                        </button>
+                    </div>
+                )}
+
+                {/* 法說會更新成功提示 */}
+                {investorInfo && (
+                    <div style={{
+                        backgroundColor: 'rgba(0,200,150,0.10)',
+                        border: '1px solid rgba(0,200,150,0.35)',
+                        borderRadius: '8px',
+                        padding: '10px 16px',
+                        marginBottom: '16px',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '12px'
+                    }}>
+                        <span style={{ fontSize: '13px', color: '#00c896' }}>{investorInfo}</span>
+                        <button onClick={() => setInvestorInfo(null)}
                             style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', flexShrink: 0 }}>
                             <X size={14} />
                         </button>

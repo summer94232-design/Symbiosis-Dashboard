@@ -8,8 +8,9 @@ import { RefreshCw, Calendar, CheckSquare, TrendingUp, Globe, Newspaper, AlertCi
 
 interface NewsItem {
     title: string
-    summary: string
     category: string
+    url: string
+    source: string
 }
 
 interface EventItem {
@@ -45,7 +46,6 @@ const CATEGORY_COLORS: Record<string, string> = {
 export default function DailyBrief() {
     const today = new Date()
     const todayStr = today.toISOString().split('T')[0]
-    const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0]
 
     const [news, setNews] = useState<NewsItem[]>([])
     const [newsLoading, setNewsLoading] = useState(false)
@@ -56,13 +56,11 @@ export default function DailyBrief() {
     const [overdueTasks, setOverdueTasks] = useState<TaskItem[]>([])
     const [holdings, setHoldings] = useState<HoldingItem[]>([])
     const [dataLoading, setDataLoading] = useState(true)
-    const [expandedNews, setExpandedNews] = useState<number | null>(null)
     const [lastNewsTime, setLastNewsTime] = useState('')
 
     const loadData = async () => {
         setDataLoading(true)
         try {
-            // ✅ 修正：加入 dividendsSnap，使持倉計算與 Holdings 頁面一致
             const [personalSnap, taskSnap, tradesSnap, dividendsSnap, settingsSnap] = await Promise.all([
                 getDocs(collection(investDB, 'calendarEvents')),
                 getDocs(query(collection(investDB, 'tasks'), orderBy('order', 'asc'))),
@@ -109,12 +107,10 @@ export default function DailyBrief() {
             setTodayTasks(tasks.filter(t => !t.done && t.dueDate === todayStr))
             setOverdueTasks(tasks.filter(t => !t.done && t.dueDate && t.dueDate < todayStr))
 
-            // ✅ 修正：使用 calcPositions + dividends，與 Holdings 邏輯完全一致
-            // 原本用手寫迴圈計算持倉，未套用配股（stockDividend）調整，導致股數與 Holdings 不一致
+            // 持倉
             const priceData: Record<string, number> = settingsSnap.docs.find(d => d.id === 'lastPrices')?.data() || {}
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
-
             const { holdings: positions } = calcPositions(trades, dividends)
 
             const holdingList: HoldingItem[] = Object.values(positions)
@@ -123,14 +119,7 @@ export default function DailyBrief() {
                     const returnRate = currentPrice !== null
                         ? ((currentPrice - pos.avgCost) / pos.avgCost) * 100
                         : null
-                    return {
-                        code: pos.code,
-                        name: pos.name,
-                        shares: pos.shares,
-                        currentPrice,
-                        avgCost: pos.avgCost,
-                        returnRate
-                    }
+                    return { code: pos.code, name: pos.name, shares: pos.shares, currentPrice, avgCost: pos.avgCost, returnRate }
                 })
                 .sort((a, b) => (b.returnRate ?? -999) - (a.returnRate ?? -999))
 
@@ -151,7 +140,6 @@ export default function DailyBrief() {
                 const todayDate = new Date().toISOString().split('T')[0]
                 setNews(result)
                 setLastNewsTime(time)
-                // 存入 sessionStorage，同一天內不重複搜尋
                 sessionStorage.setItem('newsDate', todayDate)
                 sessionStorage.setItem('newsData', JSON.stringify(result))
                 sessionStorage.setItem('newsTime', time)
@@ -163,19 +151,16 @@ export default function DailyBrief() {
     useEffect(() => {
         loadData()
 
-        // 檢查今天是否已經載入過新聞
         const todayDate = new Date().toISOString().split('T')[0]
         const cachedDate = sessionStorage.getItem('newsDate')
         const cachedNews = sessionStorage.getItem('newsData')
 
         if (cachedDate === todayDate && cachedNews) {
-            // 今天已載入過，直接用快取
             try {
                 setNews(JSON.parse(cachedNews))
                 setLastNewsTime(sessionStorage.getItem('newsTime') || '')
             } catch { loadNews() }
         } else {
-            // 今天第一次打開，重新搜尋
             loadNews()
         }
     }, [])
@@ -340,23 +325,40 @@ export default function DailyBrief() {
                     ) : (
                         <div style={{ display: 'grid', gap: '10px', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
                             {news.map((item, i) => (
-                                <div key={i}
-                                    onClick={() => setExpandedNews(expandedNews === i ? null : i)}
-                                    style={{ padding: '12px', backgroundColor: '#0f1117', borderRadius: '8px', cursor: 'pointer', border: '1px solid #2e3349' }}>
+                                <a
+                                    key={i}
+                                    href={item.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{
+                                        padding: '12px',
+                                        backgroundColor: '#0f1117',
+                                        borderRadius: '8px',
+                                        border: '1px solid #2e3349',
+                                        textDecoration: 'none',
+                                        display: 'block',
+                                        transition: 'border-color 0.15s',
+                                    }}
+                                    onMouseEnter={e => (e.currentTarget.style.borderColor = '#4f8ef7')}
+                                    onMouseLeave={e => (e.currentTarget.style.borderColor = '#2e3349')}
+                                >
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                                         <span style={{ fontSize: '11px', backgroundColor: `${CATEGORY_COLORS[item.category] || '#8892a4'}20`, color: CATEGORY_COLORS[item.category] || '#8892a4', padding: '2px 8px', borderRadius: '10px', whiteSpace: 'nowrap' }}>
                                             {item.category}
                                         </span>
+                                        {item.source && (
+                                            <span style={{ fontSize: '11px', color: '#8892a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                {item.source}
+                                            </span>
+                                        )}
                                     </div>
-                                    <div style={{ fontSize: '13px', color: '#e2e8f0', fontWeight: 500, lineHeight: 1.5, marginBottom: expandedNews === i ? '8px' : 0 }}>
+                                    <div style={{ fontSize: '13px', color: '#e2e8f0', fontWeight: 500, lineHeight: 1.5 }}>
                                         {item.title}
                                     </div>
-                                    {expandedNews === i && (
-                                        <div style={{ fontSize: '12px', color: '#8892a4', lineHeight: 1.7, borderTop: '1px solid #2e3349', paddingTop: '8px' }}>
-                                            {item.summary}
-                                        </div>
-                                    )}
-                                </div>
+                                    <div style={{ fontSize: '11px', color: '#4f8ef7', marginTop: '8px' }}>
+                                        閱讀原文 →
+                                    </div>
+                                </a>
                             ))}
                         </div>
                     )}
