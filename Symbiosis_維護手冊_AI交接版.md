@@ -1,6 +1,23 @@
-# 個人投資理財 & 知識管理系統 — 技術文件
+# Symbiosis — 個人投資理財 & 知識管理系統 維護手冊
 
-版本 1.0 · 2026 年 4 月
+> 版本 1.0 · 2026 年 4 月  
+> 本文件供 AI 助理快速了解系統架構、維護規則與擴充方式。
+
+---
+
+## 目錄
+
+1. [系統概覽](#1-系統概覽)
+2. [技術架構](#2-技術架構)
+3. [路由結構](#3-路由結構)
+4. [模組功能詳細說明](#4-模組功能詳細說明)
+5. [Firestore 資料庫結構](#5-firestore-資料庫結構)
+6. [共用函式庫 lib/](#6-共用函式庫-lib)
+7. [樣式設計規範](#7-樣式設計規範)
+8. [維護與擴充指南](#8-維護與擴充指南)
+9. [法說會 Proxy 架構（MOPS）](#9-法說會-proxy-架構mops)
+10. [給 AI 助理的溝通提示](#10-給-ai-助理的溝通提示)
+11. [附錄](#11-附錄)
 
 ---
 
@@ -10,9 +27,9 @@
 
 | 模組 | 子功能數 | 主要技術 | 說明 |
 |------|----------|----------|------|
-| 投資理財（Invest） | 9 個頁面 | Firebase / Fugle / Recharts | 股票持倉、交易、損益、現金流、行事曆 |
+| 投資理財（Invest） | 10 個頁面 | Firebase / Fugle / Recharts | 股票持倉、交易、損益、現金流、行事曆 |
 | 知識管理（KMS） | 5 個頁面 | Firebase / Gemini AI / mammoth | 筆記、標籤、知識圖譜、垃圾桶 |
-| 行事曆（Calendar） | 2 個頁面 | Firebase / MOPS Proxy | 財經事件、待辦任務 |
+| 行事曆（Calendar） | 3 個頁面 | Firebase / MOPS Proxy | 財經事件、待辦任務、每日簡報 |
 
 ---
 
@@ -21,10 +38,10 @@
 ### 2.1 前端框架
 
 - React 18 + TypeScript — 所有頁面皆為函式元件（Function Component），使用 Hooks 管理狀態
-- React Router v6 — SPA 路由，路徑規則見第 3 節
+- React Router v6 — SPA 路由
 - Recharts — 折線圖、圓餅圖（資產走勢、持倉比例）
 - lucide-react — 統一圖示庫
-- mammoth — 瀏覽器端 .docx 文字萃取（KMS 文件上傳）
+- mammoth — 瀏覽器端 `.docx` 文字萃取（KMS 文件上傳）
 
 ### 2.2 後端服務（Firebase）
 
@@ -32,17 +49,48 @@
 
 | 實例變數 | 用途 | 包含服務 |
 |----------|------|----------|
-| investDB | 投資模組資料庫 | Firestore（trades, dividends, cashflow, settings, calendarEvents, tasks, calendarWatchList, assetSnapshots） |
-| kmsDB | KMS 模組資料庫 | Firestore（notes） |
-| kmsStorage | KMS 檔案儲存 | Firebase Storage（images/, files/ 目錄） |
+| `investDB` | 投資模組資料庫 | Firestore（trades, dividends, cashflow, settings, calendarEvents, tasks, calendarWatchList, assetSnapshots） |
+| `kmsDB` | KMS 模組資料庫 | Firestore（notes, trash） |
+| `kmsStorage` | KMS 檔案儲存 | Firebase Storage（images/, files/ 目錄） |
 
 ### 2.3 外部 API
 
 | API | 用途 | 呼叫位置 |
 |-----|------|----------|
-| Fugle 行情 API | 取得台股即時報價（getMultipleQuotes） | Holdings.tsx, Dashboard.tsx, Watchlist.tsx |
-| Google Gemini AI | AI 自動標籤（generateHashtags）+ AI 找相關筆記（findRelatedNotes） | KMSHome.tsx |
-| MOPS Proxy（Netlify Function） | 查詢法人說明會日期，路徑：/.netlify/functions/mops-proxy | CalendarHome.tsx |
+| Fugle 行情 API | 取得台股即時報價（`getMultipleQuotes`） | Holdings.tsx, Dashboard.tsx, Watchlist.tsx |
+| Google Gemini AI | AI 自動標籤（`generateHashtags`）+ AI 找相關筆記（`findRelatedNotes`） | KMSHome.tsx |
+| MOPS Proxy（Netlify Function） | 查詢法人說明會日期，路徑：`/.netlify/functions/mops-proxy` | CalendarHome.tsx |
+
+### 2.4 環境變數（.env）
+
+```
+# 投資管理系統 Firebase
+VITE_INVEST_API_KEY=...
+VITE_INVEST_AUTH_DOMAIN=stocksserver-45482.firebaseapp.com
+VITE_INVEST_PROJECT_ID=stocksserver-45482
+VITE_INVEST_STORAGE_BUCKET=stocksserver-45482.firebasestorage.app
+VITE_INVEST_MESSAGING_SENDER_ID=...
+VITE_INVEST_APP_ID=...
+
+# 知識管理系統 Firebase
+VITE_KMS_API_KEY=...
+VITE_KMS_AUTH_DOMAIN=tw-kms-jiawei.firebaseapp.com
+VITE_KMS_PROJECT_ID=tw-kms-jiawei
+VITE_KMS_STORAGE_BUCKET=tw-kms-jiawei.firebasestorage.app
+VITE_KMS_MESSAGING_SENDER_ID=...
+VITE_KMS_APP_ID=...
+
+# 富果 Fugle API Key
+VITE_FUGLE_API_KEY=...
+
+# Google Gemini API Key
+VITE_GEMINI_API_KEY=...
+
+# News API Key
+VITE_NEWS_API_KEY=...
+```
+
+> **注意：** `.env` 必須列入 `.gitignore`，不可提交至版本控制。
 
 ---
 
@@ -50,24 +98,24 @@
 
 | 路徑 | 元件檔案 | 說明 |
 |------|----------|------|
-| /dashboard | Dashboard.tsx | 投資總覽儀表板（首頁） |
-| /invest/holdings | Holdings.tsx | 股票持倉明細 |
-| /invest/trades | Trades.tsx | 買賣交易紀錄 |
-| /invest/dividends | Dividend.tsx | 股息 / 配股紀錄 |
-| /invest/cashflow | CashFlow.tsx | 現金流入出紀錄 |
-| /invest/asset-trend | AssetTrend.tsx | 資產走勢快照 |
-| /invest/history-pnl | HistoryPnL.tsx | 歷史損益查詢 |
-| /invest/watchlist | Watchlist.tsx | 觀察名單 |
-| /invest/settings | InvestSettings.tsx | 投資模組設定 |
-| /invest/year-review | YearReview.tsx | 年度投資回顧 |
-| /calendar | CalendarHome.tsx | 財經行事曆 |
-| /calendar/tasks | TaskManager.tsx | 待辦任務管理 |
-| /calendar/daily-brief | DailyBrief.tsx | 每日簡報 |
-| /kms | KMSHome.tsx | KMS 筆記主頁 |
-| /kms/graph | KMSGraph.tsx | 知識圖譜視覺化 |
-| /kms/tags | KMSTags.tsx | 標籤管理 |
-| /kms/export | KMSExport.tsx | 匯出筆記 |
-| /kms/trash | KMSTrash.tsx | 筆記回收桶 |
+| `/dashboard` | Dashboard.tsx | 投資總覽儀表板（首頁） |
+| `/invest/holdings` | Holdings.tsx | 股票持倉明細 |
+| `/invest/trades` | Trades.tsx | 買賣交易紀錄 |
+| `/invest/dividends` | Dividend.tsx | 股息 / 配股紀錄 |
+| `/invest/cashflow` | CashFlow.tsx | 現金流入出紀錄 |
+| `/invest/asset-trend` | AssetTrend.tsx | 資產走勢快照 |
+| `/invest/history-pnl` | HistoryPnL.tsx | 歷史損益查詢 |
+| `/invest/watchlist` | Watchlist.tsx | 觀察名單 |
+| `/invest/settings` | InvestSettings.tsx | 投資模組設定 |
+| `/invest/year-review` | YearReview.tsx | 年度投資回顧 |
+| `/calendar` | CalendarHome.tsx | 財經行事曆 |
+| `/calendar/tasks` | TaskManager.tsx | 待辦任務管理 |
+| `/calendar/daily-brief` | DailyBrief.tsx | 每日簡報 |
+| `/kms` | KMSHome.tsx | KMS 筆記主頁 |
+| `/kms/graph` | KMSGraph.tsx | 知識圖譜視覺化 |
+| `/kms/tags` | KMSTags.tsx | 標籤管理 |
+| `/kms/export` | KMSExport.tsx | 匯出筆記 |
+| `/kms/trash` | KMSTrash.tsx | 筆記回收桶 |
 
 ---
 
@@ -75,9 +123,7 @@
 
 ### 4.1 Dashboard — 投資總覽儀表板
 
-檔案：`Dashboard.tsx` 路由：`/dashboard`
-
-**功能說明**
+**檔案：** `Dashboard.tsx` **路由：** `/dashboard`
 
 - 從 Firestore 讀取 trades、dividends、cashflow 三個 collection，計算持倉與可用現金
 - 從 `settings/lastPrices` 讀取快取股價，計算各股未實現損益與市值佔比
@@ -86,18 +132,18 @@
 - 下方卡片顯示「近 14 天行程」（來源：calendarEvents collection）
 - 下方卡片顯示「待辦任務」（來源：tasks collection），依逾期 / 今日 / 未來分群，可直接勾選完成
 
-**Firestore Collections 使用**
+**Firestore Collections 使用：**
 
 | Collection | 操作 | 說明 |
 |------------|------|------|
 | trades | 讀取（orderBy date） | 計算持倉成本與股數 |
 | dividends | 讀取（orderBy date） | 計算已實現損益（含股利） |
 | cashflow | 讀取 | 計算可用現金 |
-| settings/lastPrices | 讀取 + 寫入 | 快取股票現價，鍵值 = 股票代號，_updatedAt = 更新時間 |
+| settings/lastPrices | 讀取 + 寫入 | 快取股票現價，鍵值 = 股票代號，`_updatedAt` = 更新時間 |
 | calendarEvents | 讀取 | 個人行程（篩選今日 +14 天） |
 | tasks | 讀取 + 更新 done 欄位 | 待辦任務 |
 
-**資料計算邏輯**
+**資料計算邏輯：**
 
 - 持倉計算：`calcPositions(trades, dividends)` — 來自 `lib/calc.ts`
 - 可用現金：`calcAvailableCash(trades, cashflow)` — 賣出所得 + 現金流入 - 買入支出 - 現金流出
@@ -108,22 +154,22 @@
 
 ### 4.2 Holdings — 股票持倉明細
 
-檔案：`Holdings.tsx` 路由：`/invest/holdings`
+**檔案：** `Holdings.tsx` **路由：** `/invest/holdings`
 
 - 顯示所有未賣出股票的持倉明細，欄位：代號、名稱、股數、均價（含手續費）、現價、成本、市值、未實現損益、報酬率
 - 股票股利（配股）會增加股數並攤薄均價，成本保持不變
 - 頂部四格統計卡：總市值、總成本、未實現損益、整體報酬率
-- 「更新現價」按鈕：呼叫 getMultipleQuotes，寫入 `settings/lastPrices`，與 Dashboard 共享快取
-- 現價顏色：高於均價顯示綠色（#00c896），低於均價顯示紅色（#ff5757）
+- 「更新現價」按鈕：呼叫 `getMultipleQuotes`，寫入 `settings/lastPrices`，與 Dashboard 共享快取
+- 現價顏色：高於均價顯示綠色（`#00c896`），低於均價顯示紅色（`#ff5757`）
 - 持倉按市值降冪排序
 
 ---
 
 ### 4.3 Trades — 買賣交易紀錄
 
-檔案：`Trades.tsx` 路由：`/invest/trades`
+**檔案：** `Trades.tsx` **路由：** `/invest/trades`
 
-**資料結構（Trade）**
+**資料結構（Trade）：**
 
 | 欄位 | 型別 | 說明 |
 |------|------|------|
@@ -132,23 +178,21 @@
 | code | string | 股票代號 |
 | name | string | 股票名稱 |
 | price | number | 成交均價 |
-| shares | number | 股數（零股支援，< 1000 視為零股） |
+| shares | number | 股數（< 1000 視為零股） |
 | fee | number | 手續費（自動計算，零股時不打折） |
 | tax | number | 證交稅（賣出才有，ETF 稅率 0.1%） |
 | total | number | 實際支出 / 入帳金額 |
 | note | string | 備註 |
 
-**主要功能**
+**主要功能：**
 
 - 新增 / 編輯 / 刪除交易紀錄，手續費與稅金自動計算
 - CSV 批次匯入：支援引號包裹欄位、欄位內含逗號（如 "1,000"），解析後自動帶入表單確認
 - 搜尋：支援代號 / 名稱 / 備註關鍵字篩選
-- 收合 / 展開個別股票的交易明細（AccordionRow 元件）
 - 費用計算：`calcFee()`、`calcTax()`、`isETF()` — 來自 `lib/calc.ts`
 
-**CSV 匯入格式**
+**CSV 匯入格式（第一行為標題行，自動略過）：**
 
-標準欄位順序（逗號分隔，第一行為標題行，會自動略過）：
 ```
 日期, 類型(buy/sell), 代號, 名稱, 價格, 股數, 手續費, 稅金, 合計, 備註
 ```
@@ -157,7 +201,7 @@
 
 ### 4.4 Dividend — 股息 / 配股紀錄
 
-檔案：`Dividend.tsx` 路由：`/invest/dividends`
+**檔案：** `Dividend.tsx` **路由：** `/invest/dividends`
 
 | 欄位 | 型別 | 說明 |
 |------|------|------|
@@ -170,13 +214,13 @@
 
 - `stockDividend > 0` 時，Holdings 頁面會自動加入股數並攤薄均價
 - `cashDividend` 計入 `calcPositions` 的已實現損益
-- 股票名稱字典從 trades collection 自動建立，新增時自動填入名稱
+- 股票名稱字典從 trades collection 自動建立
 
 ---
 
 ### 4.5 CashFlow — 現金流紀錄
 
-檔案：`CashFlow.tsx` 路由：`/invest/cashflow`
+**檔案：** `CashFlow.tsx` **路由：** `/invest/cashflow`
 
 - 紀錄現金流入（入金）/ 流出（出金），例如：薪資轉入帳戶、提領現金
 - type 欄位：`in`（流入）/ `out`（流出）
@@ -187,9 +231,9 @@
 
 ### 4.6 AssetTrend — 資產走勢
 
-檔案：`AssetTrend.tsx` 路由：`/invest/asset-trend`
+**檔案：** `AssetTrend.tsx` **路由：** `/invest/asset-trend`
 
-**快照（Snapshot）機制**
+**快照（Snapshot）機制：**
 
 - 使用者手動或自動儲存某一日的資產快照（totalAssets、marketValue、cash）
 - 快照存入 Firestore `assetSnapshots` collection，以 date 為文件 ID
@@ -197,7 +241,7 @@
 - 「一鍵快照」功能：自動從當前持倉計算 marketValue + cash，填入表單
 - 可手動新增、編輯（Pencil 圖示）、刪除快照資料點
 
-**Firestore Collection：assetSnapshots**
+**Firestore Collection assetSnapshots 欄位：**
 
 | 欄位 | 型別 | 說明 |
 |------|------|------|
@@ -210,7 +254,7 @@
 
 ### 4.7 HistoryPnL — 歷史損益
 
-檔案：`HistoryPnL.tsx` 路由：`/invest/history-pnl`
+**檔案：** `HistoryPnL.tsx` **路由：** `/invest/history-pnl`
 
 - 顯示所有已實現損益紀錄（完整賣出後結算）
 - 來源：`calcPositions()` 回傳的 realized 陣列，每筆包含：股票代號、名稱、實現損益金額
@@ -220,7 +264,7 @@
 
 ### 4.8 Watchlist — 觀察名單
 
-檔案：`Watchlist.tsx` 路由：`/invest/watchlist`
+**檔案：** `Watchlist.tsx` **路由：** `/invest/watchlist`
 
 - 管理「尚未持有但有興趣追蹤」的股票
 - Firestore collection：`calendarWatchList`，欄位 `code`（股票代號）
@@ -231,16 +275,18 @@
 
 ### 4.9 InvestSettings — 投資設定
 
-檔案：`InvestSettings.tsx` 路由：`/invest/settings`
+**檔案：** `InvestSettings.tsx` **路由：** `/invest/settings`
 
 - 設定 Fugle API Key 等個人化參數，儲存於 Firestore `settings` collection
 - 可清除快取股價（刪除 `settings/lastPrices`）
+- 一鍵匯出全部資料（trades、cashflow、dividends、股票字典）為 Excel 多工作表檔案（`.xlsx`）
+- 支援從 xlsx/xls 匯入股票字典（需包含「股票代號」、「股票名稱」欄位）
 
 ---
 
 ### 4.10 YearReview — 年度回顧
 
-檔案：`YearReview.tsx` 路由：`/invest/year-review`
+**檔案：** `YearReview.tsx` **路由：** `/invest/year-review`
 
 - 彙整指定年度的所有投資數據：已實現損益、現金股利、股票股利
 - 計算年度總報酬、交易次數、股息收入等摘要統計
@@ -249,20 +295,20 @@
 
 ### 4.11 CalendarHome — 財經行事曆
 
-檔案：`CalendarHome.tsx` 路由：`/calendar`
+**檔案：** `CalendarHome.tsx` **路由：** `/calendar`
 
-**事件類型（type）**
+**事件類型（type）：**
 
 | 類型 | 顏色 | 來源 |
 |------|------|------|
 | fomc | 紅色 #ff5757 | 硬編碼常數 FOMC_DATES（lib/calendarData.ts） |
-| futures | 橘色 #f5a623 | getFuturesSettlementDates()，每月第三週三計算 |
+| futures | 橘色 #f5a623 | `getFuturesSettlementDates()`，每月第三週三計算 |
 | tech | 藍色 #4f8ef7 | 硬編碼常數 TECH_EVENTS（蘋果、Google、Meta 等財報日） |
 | investor | 綠色 #00c896 | MOPS Proxy API 即時查詢，依持倉 + 觀察名單 |
 | personal | 紫色 #a78bfa | 使用者自行新增，存入 calendarEvents collection |
 | dividend | 黃色 #f5a623 | 從 dividends collection 轉換，自動顯示除權息日 |
 
-**功能**
+**功能：**
 
 - 月曆格 — 每格最多顯示 3 個事件，多餘顯示「+N 更多」
 - 點擊日期 — 右側滑出事件詳情面板，個人行程可刪除
@@ -274,9 +320,9 @@
 
 ### 4.12 TaskManager — 待辦任務
 
-檔案：`TaskManager.tsx` 路由：`/calendar/tasks`
+**檔案：** `TaskManager.tsx` **路由：** `/calendar/tasks`
 
-**資料結構（Task）**
+**資料結構（Task）：**
 
 | 欄位 | 型別 | 說明 |
 |------|------|------|
@@ -284,11 +330,11 @@
 | title | string | 任務標題 |
 | done | boolean | 是否完成 |
 | dueDate | string (optional) | 截止日（YYYY-MM-DD） |
-| priority | 'high' \| 'medium' \| 'low' | 優先級（高 / 中 / 低） |
+| priority | 'high' \| 'medium' \| 'low' | 優先級 |
 | order | number | 自訂排序序號 |
 
 - 支援拖曳排序（order 欄位），或手動上下移動
-- 優先級色碼：高 = 紅色（#ff5757），中 = 橘色（#f5a623），低 = 綠色（#00c896）
+- 優先級色碼：高 = 紅色（`#ff5757`），中 = 橘色（`#f5a623`），低 = 綠色（`#00c896`）
 - Dashboard 與 CalendarHome 共同讀取此 collection
 - 完成的任務可在 TaskManager 中恢復或永久刪除
 
@@ -296,7 +342,7 @@
 
 ### 4.13 DailyBrief — 每日簡報
 
-檔案：`DailyBrief.tsx` 路由：`/calendar/daily-brief`
+**檔案：** `DailyBrief.tsx` **路由：** `/calendar/daily-brief`
 
 - 整合今日行事曆事件 + 今日到期任務 + 持倉損益摘要，生成每日一頁簡報視圖
 - 適合每日開盤前快速瀏覽當日重點
@@ -305,9 +351,9 @@
 
 ### 4.14 KMSHome — 知識管理筆記主頁
 
-檔案：`KMSHome.tsx` 路由：`/kms`
+**檔案：** `KMSHome.tsx` **路由：** `/kms`
 
-**筆記資料結構（Note）**
+**筆記資料結構（Note）：**
 
 | 欄位 | 型別 | 說明 |
 |------|------|------|
@@ -324,28 +370,34 @@
 | createdAt | string (ISO) | 建立時間 |
 | updatedAt | string (ISO) | 最後更新時間 |
 
-**主要功能**
+**主要功能：**
 
-- 四種筆記類型：文字筆記、URL 收藏、圖片、文件（支援 .docx 自動解析文字）
-- AI 自動標籤（generateHashtags）：呼叫 Google Gemini，根據內容建議 hashtag，並參考既有標籤保持一致性
-- AI 自動找相關筆記（findRelatedNotes）：Gemini 分析所有筆記，找出語意相關的筆記 ID
-- 雙向連結（Bidirectional Links）：A → B 時，B 也會儲存反向連結至 A，保持一致性
+- 四種筆記類型：文字筆記、URL 收藏、圖片、文件（支援 `.docx` 自動解析文字）
+- AI 自動標籤（`generateHashtags`）：呼叫 Google Gemini，根據內容建議 hashtag，並參考既有標籤保持一致性
+- AI 自動找相關筆記（`findRelatedNotes`）：Gemini 分析所有筆記，找出語意相關的筆記 ID
+- 雙向連結（Bidirectional Links）：A → B 時，B 也會儲存反向連結至 A
 - 搜尋：標題 + 內容 + hashtag 全文模糊搜尋
 - 排序：建立時間 / 更新時間 / 標題，支援升降冪切換
-- 內容展開 / 收合：超過 150 字元自動截斷，點選「展開全文」顯示完整
+- 內容展開 / 收合：超過 150 字元自動截斷
 - URL 導向參數（`?note=ID`）：支援從其他頁面直接跳轉並自動捲動至指定筆記
 
-**圖片 / 文件上傳流程**
+**圖片 / 文件上傳流程：**
 
 - 上傳至 Firebase Storage：`images/{timestamp}_{filename}` 或 `files/{timestamp}_{filename}`
 - 取得 Download URL 後存入 imageUrl / fileUrl 欄位
-- .docx 文件：使用 `mammoth.extractRawText()` 在瀏覽器端解析文字，存入 content 欄位
+- `.docx` 文件：使用 `mammoth.extractRawText()` 在瀏覽器端解析文字，存入 content 欄位
+
+**雙向連結維護邏輯（集中在 `handleSave()` 與 `handleDelete()`）：**
+
+- 新增筆記時：對每個被連結的筆記，更新其 links 陣列加入新筆記 ID
+- 編輯筆記時：計算 `addedLinks` / `removedLinks` 差異，分別更新被影響筆記
+- 刪除筆記時：遍歷所有連結，從對方的 links 陣列中移除此筆記 ID，並將筆記搬移至 `trash` collection（軟刪除）
 
 ---
 
 ### 4.15 KMSGraph — 知識圖譜
 
-檔案：`KMSGraph.tsx` 路由：`/kms/graph`
+**檔案：** `KMSGraph.tsx` **路由：** `/kms/graph`
 
 - 以 Canvas 繪製 Force-directed Graph，節點為筆記（藍色）與標籤（綠色/橘色）
 - 邊（Edge）代表：筆記 ↔ 標籤（hashtag 關聯）、筆記 ↔ 筆記（雙向連結）
@@ -357,10 +409,9 @@
 
 ### 4.16 KMSTags — 標籤管理
 
-檔案：`KMSTags.tsx` 路由：`/kms/tags`
+**檔案：** `KMSTags.tsx` **路由：** `/kms/tags`
 
 - 顯示所有 hashtag 及其使用次數
-- 點擊標籤可篩選 KMSHome 的筆記列表（透過 selectedTag Props 傳遞）
 - 可重新命名標籤（批次更新所有含該標籤的筆記）
 - 可刪除標籤（從所有筆記中移除）
 
@@ -368,9 +419,9 @@
 
 ### 4.17 KMSExport — 匯出
 
-檔案：`KMSExport.tsx` 路由：`/kms/export`
+**檔案：** `KMSExport.tsx` **路由：** `/kms/export`
 
-- 匯出格式：Markdown（.md）或 JSON
+- 匯出格式：Markdown（`.md`）或 JSON
 - 可選擇匯出全部筆記或依標籤篩選
 - Markdown 格式包含標題、內容、hashtag、連結、時間戳記
 
@@ -378,9 +429,9 @@
 
 ### 4.18 KMSTrash — 回收桶
 
-檔案：`KMSTrash.tsx` 路由：`/kms/trash`
+**檔案：** `KMSTrash.tsx` **路由：** `/kms/trash`
 
-- 軟刪除機制：刪除的筆記標記 `deleted: true`，移入回收桶 collection 或以 deleted 欄位篩選
+- 軟刪除機制：刪除的筆記搬移至 `trash` collection，標記 `deletedAt`
 - 可還原筆記（restore）或永久刪除（permanent delete）
 - 雙向連結在還原後自動重建
 
@@ -392,50 +443,55 @@
 
 | Collection | 文件 ID 規則 | 主要欄位 | 說明 |
 |------------|-------------|----------|------|
-| trades | Firestore auto-ID | date, type, code, name, price, shares, fee, tax, total, note | 所有買賣交易紀錄 |
-| dividends | Firestore auto-ID | date, code, name, cashDividend, stockDividend, note | 股息配股紀錄 |
-| cashflow | Firestore auto-ID | type(in/out), amount, date, note | 現金流入出紀錄 |
-| calendarEvents | Firestore auto-ID | title, date, type, description, url | 個人行程 |
-| tasks | Firestore auto-ID | title, done, dueDate, priority, order, createdAt | 待辦任務 |
-| calendarWatchList | Firestore auto-ID | code | 觀察名單股票代號 |
+| trades | auto-ID | date, type, code, name, price, shares, fee, tax, total, note | 所有買賣交易紀錄 |
+| dividends | auto-ID | date, code, name, cashDividend, stockDividend, note | 股息配股紀錄 |
+| cashflow | auto-ID | type(in/out), amount, date, note | 現金流入出紀錄 |
+| calendarEvents | auto-ID | title, date, type, description, url | 個人行程 |
+| tasks | auto-ID | title, done, dueDate, priority, order, createdAt | 待辦任務 |
+| calendarWatchList | auto-ID | code | 觀察名單股票代號 |
 | assetSnapshots | date (YYYY-MM-DD) | date, totalAssets, marketValue, cash | 資產快照 |
-| settings/lastPrices | 固定文件 ID: lastPrices | {股票代號: 現價, _updatedAt: 時間} | 快取股票現價 |
+| settings/lastPrices | 固定 ID: `lastPrices` | {股票代號: 現價, `_updatedAt`: 時間} | 快取股票現價 |
 
 ### 5.2 kmsDB — KMS 資料庫
 
 | Collection | 文件 ID 規則 | 主要欄位 | 說明 |
 |------------|-------------|----------|------|
-| notes | Firestore auto-ID | title, content, type, url, imageUrl, fileUrl, fileName, hashtags, links, createdAt, updatedAt | 所有筆記 |
+| notes | auto-ID | title, content, type, url, imageUrl, fileUrl, fileName, hashtags, links, createdAt, updatedAt | 所有筆記 |
+| trash | 原筆記 ID | 同 notes + deletedAt | 軟刪除的筆記 |
 
 ---
 
-## 6. 共用函式庫（lib/）
+## 6. 共用函式庫 lib/
 
 ### 6.1 lib/calc.ts — 計算核心
 
 | 函式 / 型別 | 說明 |
 |-------------|------|
-| TradeRecord | 交易紀錄 interface（date, type, code, name, price, shares, fee, tax, total, note） |
-| DividendRecord | 股息紀錄 interface（date, code, name, cashDividend, stockDividend） |
-| calcPositions(trades, dividends?) | 計算持倉 Map 與已實現損益陣列；FIFO 成本法 |
-| calcAvailableCash(trades, cashflow) | 計算可用現金 = 流入 - 流出 + 賣出 - 買入 |
-| calcFee(price, shares, isOdd) | 計算手續費（0.1425%，最低 1 元，整股打折） |
-| calcTax(price, shares, isETF) | 計算證交稅（賣出，ETF 0.1%，一般 0.3%） |
-| isETF(code) | 判斷股票代號是否為 ETF（依命名規則） |
+| `TradeRecord` | 交易紀錄 interface（date, type, code, name, price, shares, fee, tax, total, note） |
+| `DividendRecord` | 股息紀錄 interface（date, code, name, cashDividend, stockDividend） |
+| `calcPositions(trades, dividends?)` | 計算持倉 Map 與已實現損益陣列；**FIFO 成本法** |
+| `calcAvailableCash(trades, cashflow)` | 計算可用現金 = 流入 - 流出 + 賣出 - 買入 |
+| `calcFee(price, shares, isOdd)` | 計算手續費（0.1425%，最低 1 元，整股打折） |
+| `calcTax(price, shares, isETF)` | 計算證交稅（賣出，ETF 0.1%，一般 0.3%） |
+| `isETF(code)` | 判斷股票代號是否為 ETF（依命名規則） |
+
+**FIFO 成本法說明：**
+
+買進時，每股成本 = (成交金額 + 手續費) / 股數。賣出時，依先進先出消耗最早的批次，計算已實現損益。
 
 ### 6.2 lib/firebase.ts — Firebase 初始化
 
-- 初始化 investDB（投資 Firestore）、kmsDB（KMS Firestore）、kmsStorage（Storage）
+- 初始化 `investDB`（投資 Firestore）、`kmsDB`（KMS Firestore）、`kmsStorage`（Storage）
 - 分兩組 Firebase App 實例，各自獨立設定
 
 ### 6.3 lib/fugle.ts — 股票行情
 
 - `getMultipleQuotes(symbols: string[])` — 批次查詢 Fugle API，回傳 `Record<string, number | null>`
-- API Key 從 Firestore settings 讀取（或環境變數）
+- API Key 從 Firestore `settings` 讀取（或環境變數 `VITE_FUGLE_API_KEY`）
 
 ### 6.4 lib/gemini.ts — AI 功能
 
-- `generateHashtags(content, title, existingTags)` — 呼叫 Gemini，回傳建議 hashtag 陣列（參考既有標籤）
+- `generateHashtags(content, title, existingTags)` — 呼叫 Gemini，回傳建議 hashtag 陣列（參考既有標籤保持一致性）
 - `findRelatedNotes(title, content, otherNotes)` — 呼叫 Gemini，回傳相關筆記 ID 陣列
 
 ### 6.5 lib/calendarData.ts — 財經日曆資料
@@ -455,16 +511,16 @@
 
 | 用途 | 顏色代碼 | 說明 |
 |------|----------|------|
-| 主色（藍） | #4f8ef7 | 按鈕、連結、股票代號、圖示 |
-| 獲利（綠） | #00c896 | 正損益、低優先級、KMS URL 類型 |
-| 警告（橘） | #f5a623 | 中優先級、今日行程、期貨結算日 |
-| 虧損（紅） | #ff5757 | 負損益、高優先級、FOMC |
-| 強調（紫） | #a78bfa | KMS 文件類型、個人行程 |
-| 卡片背景 | #1a1d27 | 所有卡片元件背景 |
-| 頁面背景 | #0f1117 | 整體頁面深色背景 |
-| 邊框 | #2e3349 | 卡片、輸入框邊框 |
-| 文字主色 | #e2e8f0 | 主要文字 |
-| 文字次色 | #8892a4 | 說明文字、標籤 |
+| 主色（藍） | `#4f8ef7` | 按鈕、連結、股票代號、圖示 |
+| 獲利（綠） | `#00c896` | 正損益、低優先級、KMS URL 類型 |
+| 警告（橘） | `#f5a623` | 中優先級、今日行程、期貨結算日 |
+| 虧損（紅） | `#ff5757` | 負損益、高優先級、FOMC |
+| 強調（紫） | `#a78bfa` | KMS 文件類型、個人行程 |
+| 卡片背景 | `#1a1d27` | 所有卡片元件背景 |
+| 頁面背景 | `#0f1117` | 整體頁面深色背景 |
+| 邊框 | `#2e3349` | 卡片、輸入框邊框 |
+| 文字主色 | `#e2e8f0` | 主要文字 |
+| 文字次色 | `#8892a4` | 說明文字、標籤 |
 
 ### 7.2 通用 CSS 樣式物件（各元件複製使用）
 
@@ -511,7 +567,7 @@ const btn = (color: string): React.CSSProperties => ({
 
 ### 7.3 響應式設計
 
-- 使用 CSS Grid + @media query 實現響應式佈局
+- 使用 CSS Grid + `@media` query 實現響應式佈局
 - 統計卡片：4 欄 → 2 欄（< 900px）→ 1 欄（< 480px）
 - 字體大小使用 `clamp(min, vw, max)` 流體排版
 - Padding 使用 `clamp(16px, 3vw, 32px)` 適應不同螢幕
@@ -523,7 +579,7 @@ const btn = (color: string): React.CSSProperties => ({
 ### 8.1 新增頁面標準流程
 
 1. 在對應模組目錄建立 `ComponentName.tsx`，匯出 `default function`
-2. 在 `App.tsx`（或路由設定檔）新增 `<Route path="..." element={<ComponentName />} />`
+2. 在 `App.tsx` 新增 `<Route path="..." element={<ComponentName />} />`
 3. 若需要 Firebase 讀取，從 `lib/firebase.ts` 匯入 `investDB` 或 `kmsDB`
 4. 遵循 `card / inp / lbl / btn` 樣式規範，保持介面一致性
 5. 統計型頁面先呼叫 `calcPositions()` 取得持倉，再組合其他資料
@@ -533,7 +589,7 @@ const btn = (color: string): React.CSSProperties => ({
 - 直接在 Firebase Console 建立，或在元件中使用 `addDoc` / `setDoc` 自動建立
 - 若為投資相關，使用 `investDB`；KMS 相關使用 `kmsDB`
 - Collection 命名採 camelCase（如 `assetSnapshots`）
-- 若有排序需求，記得在 Firebase Console 建立複合索引（orderBy 多欄位時需要）
+- 若有排序需求，記得在 Firebase Console 建立複合索引（`orderBy` 多欄位時需要）
 
 ### 8.3 更新行事曆財經事件
 
@@ -560,38 +616,108 @@ const btn = (color: string): React.CSSProperties => ({
 | 問題 | 可能原因 | 解法 |
 |------|----------|------|
 | 現價顯示「—」 | settings/lastPrices 無此股票或未更新 | 點「更新現價」按鈕 |
-| 法說會不更新 | MOPS Proxy Netlify Function 未部署 | 確認 .netlify/functions/mops-proxy 存在 |
-| AI 標籤功能失敗 | Gemini API Key 未設定 | 確認 lib/gemini.ts 中的 API Key |
+| 法說會不更新 | MOPS Proxy Netlify Function 未部署 | 確認 `.netlify/functions/mops-proxy` 存在 |
+| AI 標籤功能失敗 | Gemini API Key 未設定 | 確認 `lib/gemini.ts` 中的 API Key |
 | Firebase 寫入失敗 | Firestore 安全規則拒絕 | 確認 Firebase Console 中的 Rules |
 | 圖片上傳失敗 | Storage CORS 或權限問題 | 確認 Firebase Storage Rules 與 CORS 設定 |
 | CSV 匯入解析錯誤 | 欄位順序不符或編碼問題 | 確認檔案為 UTF-8，欄位順序符合第 4.3 節規格 |
+| KMS 圖譜節點不顯示 | links[] 或 hashtags[] 為空 | Canvas 渲染依賴邊的存在，確認欄位有資料 |
+| 法說會 Proxy 回傳 source: "none" | money-link 與 agdstock 兩個來源皆失敗 | 確認是否網站改版，需更新 `parseMoneyLink()` 解析邏輯 |
 
 ---
 
-## 9. 給 AI 助理的溝通提示（快速導引）
+## 9. 法說會 Proxy 架構（MOPS）
 
-### 9.1 每次對話建議附上的系統說明
+### 9.1 相關檔案
+
+| 檔案 | 路徑 | 說明 |
+|------|------|------|
+| CalendarHome.tsx | `src/pages/CalendarHome.tsx` | 行事曆主頁，含法說會更新邏輯 |
+| CalendarSettings.tsx | `src/pages/CalendarSettings.tsx` | 法說會關注清單管理頁 |
+| mops-proxy.js | `netlify/functions/mops-proxy.js` | Netlify Function，代理查詢法說會資料 |
+
+### 9.2 資料來源策略：雙重備援
 
 ```
-我有一套 React + TypeScript + Firebase 的個人投資理財與知識管理系統。
+前端 CalendarHome.tsx
+  → /.netlify/functions/mops-proxy?stockNo=2330&year=2026&month=4
+      → 主要：money-link.com.tw（元大證券法說會列表，靜態 HTML）
+          成功 → 回傳 { source: "money-link", dates: [...] }
+          失敗 ↓
+      → 備援：agdstock.club（第三方整合站）
+          成功 → 回傳 { source: "agdstock", dates: [...] }
+          失敗 → 回傳 { source: "none", dates: [] }（前端不 crash，僅無事件）
+```
+
+**為何選 money-link.com.tw：**
+
+- 元大證券整合自 MOPS，資料來源可靠
+- 靜態 HTML，不需 session cookie、不需 JS 動態渲染
+- 全市場法說會列表一頁顯示，解析效率高
+
+> **注意：** 若元大調整頁面結構，`parseMoneyLink()` 的 `<tr>` 解析邏輯需更新。
+
+### 9.3 回傳格式
+
+```json
+{
+  "source": "money-link",
+  "dates": ["2026-04-16"]
+}
+```
+
+### 9.4 測試方式
+
+在瀏覽器 Console 執行：
+
+```javascript
+const res = await fetch('/.netlify/functions/mops-proxy?stockNo=2330&year=2026&month=4')
+const data = await res.json()
+console.log('來源：', data.source)
+console.log('日期：', data.dates)
+```
+
+| 結果 | 代表意義 |
+|---|---|
+| `source: "money-link"`, `dates: [...]` | 主要來源正常 |
+| `source: "agdstock"`, `dates: [...]` | 備援運作中，money-link 可能暫時異常 |
+| `source: "none"`, `dates: []` | 兩個來源都失敗，需排查 |
+
+Netlify Function log 路徑：**Netlify Dashboard → Functions → mops-proxy → Logs**
+
+### 9.5 已解決的歷史問題（供參考）
+
+- watchList 不可迭代 → 加上 `Array.isArray(watchList)` 防呆
+- 前端改用 `res.json()` 解析，proxy 負責回傳結構化 JSON
+- ESM / CommonJS 衝突 → 改用 ESM（`export const handler`）
+- MOPS 反爬蟲封鎖 → 改爬 money-link.com.tw（靜態 HTML，無需 session）
+
+---
+
+## 10. 給 AI 助理的溝通提示
+
+### 10.1 每次對話建議附上的系統說明
+
+```
+我有一套 React + TypeScript + Firebase 的個人投資理財與知識管理系統（Symbiosis）。
 前端使用 Recharts 圖表、lucide-react 圖示。
 後端為兩組 Firebase 實例（investDB 投資資料、kmsDB 筆記資料）。
-路由以 React Router v6 管理。
+路由以 React Router v6 管理。樣式為深色主題，使用 inline CSSProperties。
 以下是我要請你協助的任務：
 ```
 
-### 9.2 修改既有功能
+### 10.2 修改既有功能的提示範例
 
 - 「請修改 `Trades.tsx`，在 CSV 匯入時額外支援第 N 欄為手續費備註」
 - 「請幫 `Holdings.tsx` 新增一個「市值 / 資產比」欄位，計算方式是 marketValue / totalAssets」
 - 「`CalendarHome.tsx` 的法說會事件顏色改為紫色」
 
-### 9.3 新增功能
+### 10.3 新增功能的提示範例
 
 - 「請在 `/invest/` 新增一個 `Rebalance.tsx` 頁面，根據各股目標比例計算需買賣數量」
 - 「`KMSHome` 新增「釘選」功能，釘選筆記永遠顯示在列表頂部，Firestore 新增 `pinned` 欄位」
 
-### 9.4 資料查詢
+### 10.4 資料查詢的提示範例
 
 - 「Dashboard 是從哪些 Firestore collection 讀取資料的？」→ 參考第 4.1 節
 - 「`settings/lastPrices` 的資料格式是什麼？」→ 參考第 5.1 節
@@ -599,9 +725,9 @@ const btn = (color: string): React.CSSProperties => ({
 
 ---
 
-## 10. 附錄
+## 11. 附錄
 
-### 10.1 元件快速索引（含 Firestore 操作）
+### 11.1 元件快速索引（含 Firestore 操作）
 
 R = 讀取，W = 寫入，D = 刪除
 
@@ -615,18 +741,18 @@ R = 讀取，W = 寫入，D = 刪除
 | AssetTrend | AssetTrend.tsx | 投資 | assetSnapshots(R/W/D), trades(R), cashflow(R), settings/lastPrices(R) |
 | HistoryPnL | HistoryPnL.tsx | 投資 | trades(R), dividends(R) |
 | Watchlist | Watchlist.tsx | 投資 | calendarWatchList(R/W/D) |
-| InvestSettings | InvestSettings.tsx | 投資 | settings(R/W/D) |
+| InvestSettings | InvestSettings.tsx | 投資 | settings(R/W/D), trades(R), cashflow(R), dividends(R) |
 | YearReview | YearReview.tsx | 投資 | trades(R), dividends(R) |
 | CalendarHome | CalendarHome.tsx | 行事曆 | calendarEvents(R/W/D), dividends(R), tasks(R), trades(R), calendarWatchList(R) |
 | TaskManager | TaskManager.tsx | 行事曆 | tasks(R/W/D) |
 | DailyBrief | DailyBrief.tsx | 行事曆 | calendarEvents(R), tasks(R), trades(R) |
-| KMSHome | KMSHome.tsx | KMS | notes(R/W/D), Storage(W) |
+| KMSHome | KMSHome.tsx | KMS | notes(R/W/D), trash(W), Storage(W) |
 | KMSGraph | KMSGraph.tsx | KMS | notes(R) |
 | KMSTags | KMSTags.tsx | KMS | notes(R/W/D) |
 | KMSExport | KMSExport.tsx | KMS | notes(R) |
-| KMSTrash | KMSTrash.tsx | KMS | notes(R/W/D) |
+| KMSTrash | KMSTrash.tsx | KMS | trash(R/W/D), notes(W) |
 
-### 10.2 依賴套件清單
+### 11.2 依賴套件清單
 
 | 套件 | 用途 |
 |------|------|
@@ -637,7 +763,8 @@ R = 讀取，W = 寫入，D = 刪除
 | lucide-react | 圖示庫 |
 | mammoth ^1 | .docx 文字萃取 |
 | @google/generative-ai | Gemini AI（lib/gemini.ts） |
+| xlsx | Excel 匯出（InvestSettings.tsx） |
 
 ---
 
-*文件結束 · 如需更新請重新生成*
+*文件結束 · 如需更新請重新生成 · Symbiosis v1.0 · 2026-04*

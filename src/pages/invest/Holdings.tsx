@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { collection, getDocs, orderBy, query, doc, getDoc, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { calcPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { getMultipleQuotes } from '../../lib/fugle'
-import { RefreshCw, TrendingUp, TrendingDown } from 'lucide-react'
+import { RefreshCw, TrendingUp, TrendingDown, Tag, Check, X } from 'lucide-react'
 
 interface DisplayHolding {
     code: string
@@ -17,11 +17,112 @@ interface DisplayHolding {
     returnRate: number
 }
 
+// 族群編輯 cell
+function GroupCell({
+    code,
+    group,
+    allGroups,
+    onSave,
+}: {
+    code: string
+    group: string
+    allGroups: string[]
+    onSave: (code: string, group: string) => void
+}) {
+    const [editing, setEditing] = useState(false)
+    const [value, setValue] = useState(group)
+    const inputRef = useRef<HTMLInputElement>(null)
+
+    // 已使用的族群名稱（含用者自訂）
+    const suggestions = Array.from(new Set([...allGroups, value].filter(Boolean)))
+
+    useEffect(() => {
+        if (editing) {
+            setValue(group)
+            setTimeout(() => inputRef.current?.focus(), 50)
+        }
+    }, [editing, group])
+
+    const handleSave = () => {
+        onSave(code, value.trim())
+        setEditing(false)
+    }
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') handleSave()
+        if (e.key === 'Escape') setEditing(false)
+    }
+
+    if (!editing) {
+        return (
+            <div
+                onClick={() => setEditing(true)}
+                title="點擊編輯族群"
+                style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '5px',
+                    cursor: 'pointer', padding: '3px 8px', borderRadius: '20px',
+                    backgroundColor: group ? 'rgba(167,139,250,0.15)' : 'rgba(79,142,247,0.07)',
+                    border: `1px solid ${group ? 'rgba(167,139,250,0.35)' : 'rgba(79,142,247,0.2)'}`,
+                    color: group ? '#a78bfa' : '#8892a4',
+                    fontSize: '12px', fontWeight: group ? 600 : 400,
+                    transition: 'all 0.15s',
+                    whiteSpace: 'nowrap',
+                    minWidth: '60px',
+                    justifyContent: 'center',
+                }}
+            >
+                <Tag size={10} />
+                {group || '未設定'}
+            </div>
+        )
+    }
+
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: '150px' }}>
+            <div style={{ position: 'relative', flex: 1 }}>
+                <input
+                    ref={inputRef}
+                    value={value}
+                    onChange={e => setValue(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    list={`group-list-${code}`}
+                    placeholder="輸入或選擇族群"
+                    style={{
+                        backgroundColor: '#0f1117', border: '1px solid #4f8ef7',
+                        borderRadius: '6px', padding: '4px 8px', color: '#e2e8f0',
+                        fontSize: '12px', width: '100%', outline: 'none',
+                    }}
+                />
+                <datalist id={`group-list-${code}`}>
+                    {suggestions.map(s => <option key={s} value={s} />)}
+                </datalist>
+            </div>
+            <button
+                onClick={handleSave}
+                style={{ background: '#00c896', border: 'none', borderRadius: '4px', padding: '4px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                title="儲存"
+            >
+                <Check size={12} color="#fff" />
+            </button>
+            <button
+                onClick={() => setEditing(false)}
+                style={{ background: '#2e3349', border: 'none', borderRadius: '4px', padding: '4px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                title="取消"
+            >
+                <X size={12} color="#8892a4" />
+            </button>
+        </div>
+    )
+}
+
 export default function Holdings() {
     const [holdings, setHoldings] = useState<DisplayHolding[]>([])
     const [loading, setLoading] = useState(true)
     const [priceLoading, setPriceLoading] = useState(false)
     const [lastUpdated, setLastUpdated] = useState('')
+    // 族群 map: code -> groupName
+    const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
+    const [groupSaving, setGroupSaving] = useState(false)
 
     const load = async () => {
         setLoading(true)
@@ -32,15 +133,18 @@ export default function Holdings() {
             ])
             const trades = snap.docs.map(d => d.data() as TradeRecord)
             const dividends = divSnap.docs.map(d => d.data() as DividendRecord)
-            // ✅ 修正：將 dividends 傳入 calcPositions 統一處理配股
-            // 原本在此手動處理配股，但空倉時會跳過（導致全數出清後的配股股數消失）
             const { holdings: positions } = calcPositions(trades, dividends)
 
-            // 讀取 Firebase 儲存的現價（跟儀表板共用）
+            // 讀取現價
             const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
             const savedPrices: Record<string, any> = priceDoc.exists() ? priceDoc.data() : {}
             const savedAt = savedPrices._updatedAt || ''
             if (savedAt) setLastUpdated(savedAt)
+
+            // 讀取族群
+            const groupDoc = await getDoc(doc(investDB, 'settings', 'stockGroups'))
+            const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
+            setStockGroups(groups)
 
             const list: DisplayHolding[] = Object.values(positions).map(pos => {
                 const currentPrice = savedPrices[pos.code] ?? null
@@ -88,6 +192,19 @@ export default function Holdings() {
         setPriceLoading(false)
     }
 
+    // 儲存族群標籤到 Firestore
+    const handleSaveGroup = async (code: string, group: string) => {
+        const updated = { ...stockGroups, [code]: group }
+        // 若空字串則移除
+        if (!group) delete updated[code]
+        setStockGroups(updated)
+        setGroupSaving(true)
+        try {
+            await setDoc(doc(investDB, 'settings', 'stockGroups'), updated)
+        } catch (err) { console.error(err) }
+        setGroupSaving(false)
+    }
+
     useEffect(() => { load() }, [])
 
     const totalMarketValue = holdings.reduce((s, h) => s + h.marketValue, 0)
@@ -97,6 +214,9 @@ export default function Holdings() {
     const hasPrice = holdings.some(h => h.currentPrice !== null)
     const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
     const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
+
+    // 所有已使用的族群名稱（autocomplete 用）
+    const allGroups = Array.from(new Set(Object.values(stockGroups).filter(Boolean)))
 
     return (
         <>
@@ -119,6 +239,7 @@ export default function Holdings() {
                         <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>股票持倉</h1>
                         <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>
                             {lastUpdated ? `現價更新：${lastUpdated}` : '尚未更新現價，請點「更新現價」'}
+                            {groupSaving && <span style={{ marginLeft: '8px', color: '#a78bfa' }}>· 族群儲存中...</span>}
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -150,6 +271,14 @@ export default function Holdings() {
                     ))}
                 </div>
 
+                {/* 族群說明提示 */}
+                {!loading && holdings.length > 0 && (
+                    <div style={{ marginBottom: '12px', padding: '10px 14px', backgroundColor: 'rgba(167,139,250,0.07)', border: '1px solid rgba(167,139,250,0.2)', borderRadius: '8px', fontSize: '12px', color: '#a78bfa', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Tag size={13} />
+                        <span>點擊「族群」欄位的標籤可編輯，輸入自訂族群名稱（例如：低軌衛星、ETF、被動元件），儲存後 Dashboard 族群圓餅圖會自動更新。</span>
+                    </div>
+                )}
+
                 <div style={card}>
                     {loading ? (
                         <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div>
@@ -163,8 +292,8 @@ export default function Holdings() {
                             <table className="holdings-table">
                                 <thead>
                                     <tr>
-                                        {['代號', '名稱', '股數', '均價（含手續費）', '現價', '成本', '市值', '未實現損益', '報酬率'].map(h => (
-                                            <th key={h}>{h}</th>
+                                        {['代號', '名稱', '股數', '均價（含手續費）', '現價', '成本', '市值', '未實現損益', '報酬率', '族群'].map(h => (
+                                            <th key={h} style={h === '族群' ? { color: '#a78bfa' } : {}}>{h}</th>
                                         ))}
                                     </tr>
                                 </thead>
@@ -193,6 +322,14 @@ export default function Holdings() {
                                                         {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
                                                     </span>
                                                 )}
+                                            </td>
+                                            <td>
+                                                <GroupCell
+                                                    code={h.code}
+                                                    group={stockGroups[h.code] || ''}
+                                                    allGroups={allGroups}
+                                                    onSave={handleSaveGroup}
+                                                />
                                             </td>
                                         </tr>
                                     ))}

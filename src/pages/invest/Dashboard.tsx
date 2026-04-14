@@ -3,11 +3,11 @@ import { collection, getDocs, orderBy, query, doc, setDoc, getDoc, updateDoc } f
 import { investDB } from '../../lib/firebase'
 import { getMultipleQuotes } from '../../lib/fugle'
 import { calcPositions, calcAvailableCash, type TradeRecord, type DividendRecord } from '../../lib/calc'
-import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink } from 'lucide-react'
-import { PieChart, Pie, Tooltip, ResponsiveContainer } from 'recharts'
+import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag } from 'lucide-react'
+import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 
-const COLORS = ['#4f8ef7', '#00c896', '#f5a623', '#ff5757', '#a78bfa', '#34d399', '#fb923c', '#60a5fa']
+const COLORS = ['#4f8ef7', '#00c896', '#f5a623', '#ff5757', '#a78bfa', '#34d399', '#fb923c', '#60a5fa', '#f472b6', '#facc15', '#38bdf8', '#4ade80']
 const CASH_COLOR = '#8892a4'
 const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
 const card: React.CSSProperties = {
@@ -57,6 +57,20 @@ interface Task {
 const PRIORITY_COLORS = { high: '#ff5757', medium: '#f5a623', low: '#00c896' }
 const PRIORITY_LABELS = { high: '高', medium: '中', low: '低' }
 
+// 族群圓餅圖 active label
+function renderCustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) {
+    if (percent < 0.05) return null
+    const RADIAN = Math.PI / 180
+    const radius = innerRadius + (outerRadius - innerRadius) * 0.5
+    const x = cx + radius * Math.cos(-midAngle * RADIAN)
+    const y = cy + radius * Math.sin(-midAngle * RADIAN)
+    return (
+        <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={600}>
+            {`${(percent * 100).toFixed(0)}%`}
+        </text>
+    )
+}
+
 export default function Dashboard() {
     const navigate = useNavigate()
     const [holdings, setHoldings] = useState<HoldingItem[]>([])
@@ -66,6 +80,7 @@ export default function Dashboard() {
     const [priceLoading, setPriceLoading] = useState(false)
     const [lastUpdated, setLastUpdated] = useState('')
     const [hasPrice, setHasPrice] = useState(false)
+    const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
 
     const [upcomingEvents, setUpcomingEvents] = useState<CalendarEvent[]>([])
     const [tasks, setTasks] = useState<Task[]>([])
@@ -88,6 +103,11 @@ export default function Dashboard() {
             const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
             const savedPrices: Record<string, number | string> = priceDoc.exists() ? priceDoc.data() : {}
             const savedAt = typeof savedPrices._updatedAt === 'string' ? savedPrices._updatedAt : ''
+
+            // 讀取族群標籤
+            const groupDoc = await getDoc(doc(investDB, 'settings', 'stockGroups'))
+            const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
+            setStockGroups(groups)
 
             let totalMarketValue = 0
             let priceAvailable = false
@@ -119,7 +139,6 @@ export default function Dashboard() {
         finally { setLoading(false) }
     }
 
-    // 近 14 天行事曆事件（從 calendarEvents collection）
     const loadCalendarEvents = async () => {
         try {
             const snap = await getDocs(collection(investDB, 'calendarEvents'))
@@ -135,7 +154,6 @@ export default function Dashboard() {
         } catch (err) { console.error(err) }
     }
 
-    // 待辦任務（從 tasks collection，與 TaskManager 共用）
     const loadTasks = async () => {
         try {
             const snap = await getDocs(query(collection(investDB, 'tasks'), orderBy('order', 'asc')))
@@ -144,7 +162,6 @@ export default function Dashboard() {
         } catch (err) { console.error(err) }
     }
 
-    // 勾選任務（標記完成，從列表移除）
     const toggleTask = async (id: string, done: boolean) => {
         try {
             await updateDoc(doc(investDB, 'tasks', id), { done: !done })
@@ -213,6 +230,7 @@ export default function Dashboard() {
     const holdingsWithoutPrice = holdings.filter(h => h.currentPrice === null)
     const totalUnrealized = holdingsWithPrice.reduce((s, h) => s + h.unrealizedPnL, 0)
 
+    // 個股圓餅圖
     const pieData: PieEntry[] = [
         ...holdings.map((h, i) => ({
             name: `${h.code} ${h.name}`,
@@ -221,6 +239,30 @@ export default function Dashboard() {
         })),
         ...(totalCash > 0 ? [{ name: '現金', value: totalCash, fill: CASH_COLOR }] : [])
     ]
+
+    // 族群圓餅圖 — 依 stockGroups 彙總市值
+    const groupMap: Record<string, number> = {}
+    let ungroupedValue = 0
+    holdings.forEach(h => {
+        const g = stockGroups[h.code]
+        if (g) {
+            groupMap[g] = (groupMap[g] || 0) + h.marketValue
+        } else {
+            ungroupedValue += h.marketValue
+        }
+    })
+    if (totalCash > 0) groupMap['現金'] = (groupMap['現金'] || 0) + totalCash
+    if (ungroupedValue > 0) groupMap['未分類'] = (groupMap['未分類'] || 0) + ungroupedValue
+
+    const groupPieData: PieEntry[] = Object.entries(groupMap)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, value], i) => ({
+            name,
+            value,
+            fill: name === '現金' ? CASH_COLOR : name === '未分類' ? '#3d4460' : COLORS[i % COLORS.length]
+        }))
+
+    const hasAnyGroup = Object.keys(stockGroups).length > 0
 
     const unrealizedLabel = hasPrice && holdingsWithoutPrice.length > 0
         ? `未實現損益（${holdingsWithPrice.length}/${holdings.length} 檔）`
@@ -254,6 +296,8 @@ export default function Dashboard() {
         @media (max-width: 480px) { .dash-stats { grid-template-columns: 1fr; } }
         .dash-bottom { display: grid; gap: 16px; grid-template-columns: 300px 1fr; }
         @media (max-width: 900px) { .dash-bottom { grid-template-columns: 1fr; } }
+        .dash-pies { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; margin-bottom: 16px; }
+        @media (max-width: 800px) { .dash-pies { grid-template-columns: 1fr; } }
         .dash-extra { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; margin-top: 16px; }
         @media (max-width: 700px) { .dash-extra { grid-template-columns: 1fr; } }
         .h-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -261,6 +305,10 @@ export default function Dashboard() {
         .h-table td { padding: 10px; border-bottom: 1px solid #2e3349; color: #e2e8f0; white-space: nowrap; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .task-row:hover { background-color: rgba(79,142,247,0.06) !important; }
+        .pie-legend { max-height: 160px; overflow-y: auto; }
+        .pie-legend::-webkit-scrollbar { width: 4px; }
+        .pie-legend::-webkit-scrollbar-track { background: transparent; }
+        .pie-legend::-webkit-scrollbar-thumb { background: #2e3349; border-radius: 2px; }
       `}</style>
 
             <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
@@ -342,20 +390,26 @@ export default function Dashboard() {
                             </div>
                         )}
 
-                        <div className="dash-bottom">
+                        {/* ── 兩個圓餅圖並排 ── */}
+                        <div className="dash-pies">
+                            {/* 個股分布 */}
                             <div style={card}>
-                                <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>資產分布</div>
+                                <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>資產分布（個股）</div>
                                 {pieData.length === 0 ? (
                                     <div style={{ textAlign: 'center', padding: '40px', color: '#8892a4', fontSize: '13px' }}>尚無持倉</div>
                                 ) : (
                                     <>
                                         <ResponsiveContainer width="100%" height={180}>
                                             <PieChart>
-                                                <Pie data={pieData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={2} dataKey="value" />
+                                                <Pie data={pieData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={2} dataKey="value">
+                                                    {pieData.map((entry, i) => (
+                                                        <Cell key={i} fill={entry.fill} />
+                                                    ))}
+                                                </Pie>
                                                 <Tooltip formatter={tooltipFormatter} contentStyle={{ backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '8px', color: '#e2e8f0' }} />
                                             </PieChart>
                                         </ResponsiveContainer>
-                                        <div style={{ marginTop: '8px' }}>
+                                        <div className="pie-legend" style={{ marginTop: '8px' }}>
                                             {pieData.map(item => (
                                                 <div key={item.name} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -370,45 +424,120 @@ export default function Dashboard() {
                                 )}
                             </div>
 
+                            {/* 族群分布 */}
                             <div style={card}>
-                                <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>目前持倉</div>
-                                {holdings.length === 0 ? (
-                                    <div style={{ textAlign: 'center', padding: '40px', color: '#8892a4', fontSize: '13px' }}>尚無持倉資料</div>
-                                ) : (
-                                    <div style={{ overflowX: 'auto' }}>
-                                        <table className="h-table">
-                                            <thead>
-                                                <tr>{['代號', '名稱', '股數', '均價', '現價', '未實現損益', '報酬率', '佔比'].map(h => <th key={h}>{h}</th>)}</tr>
-                                            </thead>
-                                            <tbody>
-                                                {holdings.map(h => (
-                                                    <tr key={h.code}>
-                                                        <td style={{ color: '#4f8ef7', fontWeight: 700 }}>{h.code}</td>
-                                                        <td>{h.name}</td>
-                                                        <td>{h.shares.toLocaleString()}</td>
-                                                        <td>{h.avgCost.toFixed(2)}</td>
-                                                        <td style={{ color: h.currentPrice === null ? '#8892a4' : h.currentPrice > h.avgCost ? '#00c896' : '#ff5757', fontWeight: 600 }}>
-                                                            {h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)}
-                                                        </td>
-                                                        <td style={{ color: h.currentPrice === null ? '#8892a4' : pnlColor(h.unrealizedPnL), fontWeight: 600 }}>
-                                                            {h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`}
-                                                        </td>
-                                                        <td>
-                                                            {h.currentPrice === null
-                                                                ? <span style={{ color: '#8892a4', fontSize: '12px' }}>點「更新現價」</span>
-                                                                : <span style={{ backgroundColor: h.returnRate >= 0 ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)', color: pnlColor(h.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>
-                                                                    {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
-                                                                </span>
-                                                            }
-                                                        </td>
-                                                        <td style={{ color: '#8892a4' }}>{h.ratio.toFixed(1)}%</td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>族群佔比</div>
+                                    <span style={{ fontSize: '11px', backgroundColor: 'rgba(167,139,250,0.15)', color: '#a78bfa', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
+                                        自訂分類
+                                    </span>
+                                </div>
+                                {!hasAnyGroup ? (
+                                    <div style={{ textAlign: 'center', padding: '40px 20px', color: '#8892a4', fontSize: '13px' }}>
+                                        <Tag size={28} color="#2e3349" style={{ marginBottom: '12px' }} />
+                                        <p style={{ margin: '0 0 6px' }}>尚未設定族群標籤</p>
+                                        <p style={{ margin: 0, fontSize: '12px' }}>
+                                            前往
+                                            <button onClick={() => navigate('/invest/holdings')}
+                                                style={{ background: 'none', border: 'none', color: '#a78bfa', cursor: 'pointer', fontSize: '12px', padding: '0 4px', textDecoration: 'underline' }}>
+                                                持倉明細
+                                            </button>
+                                            設定每檔股票的族群
+                                        </p>
                                     </div>
+                                ) : (
+                                    <>
+                                        <ResponsiveContainer width="100%" height={180}>
+                                            <PieChart>
+                                                <Pie
+                                                    data={groupPieData}
+                                                    cx="50%" cy="50%"
+                                                    innerRadius={45} outerRadius={75}
+                                                    paddingAngle={2}
+                                                    dataKey="value"
+                                                    labelLine={false}
+                                                    label={renderCustomLabel}
+                                                >
+                                                    {groupPieData.map((entry, i) => (
+                                                        <Cell key={i} fill={entry.fill} />
+                                                    ))}
+                                                </Pie>
+                                                <Tooltip formatter={tooltipFormatter} contentStyle={{ backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '8px', color: '#e2e8f0' }} />
+                                            </PieChart>
+                                        </ResponsiveContainer>
+                                        <div className="pie-legend" style={{ marginTop: '8px' }}>
+                                            {groupPieData.map(item => (
+                                                <div key={item.name} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: item.fill, flexShrink: 0 }} />
+                                                        <span style={{ color: item.name === '未分類' ? '#8892a4' : '#e2e8f0' }}>{item.name}</span>
+                                                    </div>
+                                                    <span style={{ color: '#8892a4' }}>
+                                                        {totalAssets > 0 ? ((item.value / totalAssets) * 100).toFixed(1) : 0}%
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {ungroupedValue > 0 && (
+                                            <div style={{ marginTop: '10px', padding: '6px 10px', backgroundColor: 'rgba(167,139,250,0.07)', borderRadius: '6px', fontSize: '11px', color: '#8892a4', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <Tag size={11} color="#a78bfa" />
+                                                有 {holdings.filter(h => !stockGroups[h.code]).length} 檔尚未設定族群，已歸入「未分類」
+                                            </div>
+                                        )}
+                                    </>
                                 )}
                             </div>
+                        </div>
+
+                        {/* 目前持倉表格 */}
+                        <div style={{ ...card, marginBottom: '0' }}>
+                            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>目前持倉</div>
+                            {holdings.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '40px', color: '#8892a4', fontSize: '13px' }}>尚無持倉資料</div>
+                            ) : (
+                                <div style={{ overflowX: 'auto' }}>
+                                    <table className="h-table">
+                                        <thead>
+                                            <tr>{['代號', '名稱', '股數', '均價', '現價', '未實現損益', '報酬率', '佔比', '族群'].map(h => <th key={h}>{h}</th>)}</tr>
+                                        </thead>
+                                        <tbody>
+                                            {holdings.map(h => (
+                                                <tr key={h.code}>
+                                                    <td style={{ color: '#4f8ef7', fontWeight: 700 }}>{h.code}</td>
+                                                    <td>{h.name}</td>
+                                                    <td>{h.shares.toLocaleString()}</td>
+                                                    <td>{h.avgCost.toFixed(2)}</td>
+                                                    <td style={{ color: h.currentPrice === null ? '#8892a4' : h.currentPrice > h.avgCost ? '#00c896' : '#ff5757', fontWeight: 600 }}>
+                                                        {h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)}
+                                                    </td>
+                                                    <td style={{ color: h.currentPrice === null ? '#8892a4' : pnlColor(h.unrealizedPnL), fontWeight: 600 }}>
+                                                        {h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`}
+                                                    </td>
+                                                    <td>
+                                                        {h.currentPrice === null
+                                                            ? <span style={{ color: '#8892a4', fontSize: '12px' }}>點「更新現價」</span>
+                                                            : <span style={{ backgroundColor: h.returnRate >= 0 ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)', color: pnlColor(h.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>
+                                                                {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
+                                                            </span>
+                                                        }
+                                                    </td>
+                                                    <td style={{ color: '#8892a4' }}>{h.ratio.toFixed(1)}%</td>
+                                                    <td>
+                                                        {stockGroups[h.code] ? (
+                                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.12)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
+                                                                <Tag size={10} />
+                                                                {stockGroups[h.code]}
+                                                            </span>
+                                                        ) : (
+                                                            <span style={{ fontSize: '12px', color: '#3d4460' }}>—</span>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
                         </div>
 
                         {/* ── 兩欄：近14天行程 / 待辦任務 ── */}
