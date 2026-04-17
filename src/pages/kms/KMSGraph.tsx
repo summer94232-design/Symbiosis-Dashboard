@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { collection, getDocs, orderBy, query } from 'firebase/firestore'
 import { useNavigate } from 'react-router-dom'
 import { kmsDB } from '../../lib/firebase'
-import { userCol } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { ExternalLink } from 'lucide-react'
 
 interface Note {

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, orderBy, query } from 'firebase/firestore'
 import { kmsDB } from '../../lib/firebase'
-import { userCol } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { Download, FileText, Tag, Filter, Check } from 'lucide-react'
 
 interface Note {

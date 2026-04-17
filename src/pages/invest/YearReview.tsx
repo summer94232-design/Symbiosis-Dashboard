@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { collection, getDocs, orderBy, query, doc, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDocNested } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { type TradeRecord } from '../../lib/calc'
 

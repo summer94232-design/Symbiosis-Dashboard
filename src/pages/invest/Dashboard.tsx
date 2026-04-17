@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { collection, getDocs, orderBy, query, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDocNested, userDoc } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { getMultipleQuotes } from '../../lib/fugle'
 import { calcPositions, calcAvailableCash, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag } from 'lucide-react'

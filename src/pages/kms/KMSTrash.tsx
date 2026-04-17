@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, updateDoc, deleteDoc, doc, query, orderBy } from 'firebase/firestore'
 import { kmsDB } from '../../lib/firebase'
-import { userCol } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { Trash2, RotateCcw, FileText, Link, Image } from 'lucide-react'
 
 interface Note {

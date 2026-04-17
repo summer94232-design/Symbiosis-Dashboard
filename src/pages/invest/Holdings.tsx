@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { collection, getDocs, orderBy, query, doc, getDoc, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDocNested } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { calcPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { getMultipleQuotes } from '../../lib/fugle'
 import { RefreshCw, TrendingUp, TrendingDown, Tag, Check, X } from 'lucide-react'

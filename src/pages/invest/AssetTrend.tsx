@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, doc, setDoc, deleteDoc, orderBy, query, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDocNested, userDoc } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { calcPositions, calcAvailableCash, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Save, Pencil, Trash2, Plus, X, Check, Zap, AlertTriangle } from 'lucide-react'

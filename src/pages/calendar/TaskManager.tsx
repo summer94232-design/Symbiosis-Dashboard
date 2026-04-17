@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query, where, writeBatch } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import type { DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'

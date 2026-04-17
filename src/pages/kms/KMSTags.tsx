@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, updateDoc, doc, query } from 'firebase/firestore'
 import { kmsDB } from '../../lib/firebase'
-import { userCol } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { Pencil, Check, X, Tag, FolderOpen, ChevronRight } from 'lucide-react'
 
 interface TagInfo {

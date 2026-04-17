@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, setDoc, deleteDoc, doc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { Plus, Trash2, Search } from 'lucide-react'
 
 const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { collection, getDocs, doc, setDoc, orderBy, query, addDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { calcFee, calcTax } from '../../lib/calc'
 import { Download, Upload, FileSpreadsheet, Database, FileDown } from 'lucide-react'
 import * as XLSX from 'xlsx'

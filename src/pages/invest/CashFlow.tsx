@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { Pencil, Trash2, X, Check } from 'lucide-react'
 
 interface CashRecord {

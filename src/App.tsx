@@ -3,7 +3,6 @@ import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
 import { LayoutDashboard, ArrowLeftRight, TrendingUp, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper } from 'lucide-react'
 import { collection, getDocs, orderBy, query } from 'firebase/firestore'
 import { kmsDB } from './lib/firebase'
-import { userCol } from './lib/userDB'
 import { signOutAll } from './lib/auth'
 
 const Dashboard = lazy(() => import('./pages/invest/Dashboard'))

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, setDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDocNested, userDoc } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { getMultipleQuotes } from '../../lib/fugle'
 import { Plus, Trash2, RefreshCw, TrendingUp, TrendingDown, Pencil, Check, X, FileText } from 'lucide-react'
 

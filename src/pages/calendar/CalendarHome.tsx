@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, addDoc, deleteDoc, doc, orderBy, query, setDoc, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { calcPositions, type TradeRecord } from '../../lib/calc'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS, type CalendarEvent } from '../../lib/calendarData'
 import { Plus, X, ChevronLeft, ChevronRight, RefreshCw, ExternalLink } from 'lucide-react'
