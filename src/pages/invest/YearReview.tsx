@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { collection, getDocs, orderBy, query, doc, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol, userDocNested } from '../../lib/userDB'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { type TradeRecord } from '../../lib/calc'
 
@@ -208,9 +209,9 @@ export default function YearReview() {
         setLoading(true)
         try {
             const [tradesSnap, dividendsSnap, snapshotsSnap] = await Promise.all([
-                getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'asc'))),
-                getDocs(query(collection(investDB, 'assetSnapshots'), orderBy('date', 'asc')))
+                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
+                getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc'))),
+                getDocs(query(userCol(investDB, 'assetSnapshots'), orderBy('date', 'asc')))
             ])
 
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
@@ -223,13 +224,13 @@ export default function YearReview() {
             setAssetSnapshots(snapshots)
 
             // \u8b80\u53d6\u7e3e\u6548\u8a08\u7b97\u8d77\u59cb\u65e5\u8a2d\u5b9a
-            getDoc(doc(investDB, 'settings', 'performanceConfig')).then(pd => {
+            getDoc(userDocNested(investDB, 'settings', 'performanceConfig')).then(pd => {
                 if (pd.exists()) setPerfConfig({ startDate: pd.data().startDate || null, startValue: pd.data().startValue || null })
             }).catch(() => { })
             // \u5132\u5b58\u4ea4\u6613/\u80a1\u5229/\u73fe\u50f9\u4f9b CAGR \u8a08\u7b97
             allTradesRef.current = trades
             allDividendsRef.current = dividends
-            getDoc(doc(investDB, 'settings', 'lastPrices')).then(pd => {
+            getDoc(userDocNested(investDB, 'settings', 'lastPrices')).then(pd => {
                 savedPricesRef.current = pd.exists() ? pd.data() as Record<string, number | string> : {}
             }).catch(() => { })
 
@@ -439,18 +440,18 @@ export default function YearReview() {
     const loadPerformance = useCallback(async () => {
         setXirrLoading(true)
         try {
-            const tradesSnap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc')))
+            const tradesSnap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc')))
             const allTrades = tradesSnap.docs.map(d => d.data() as TradeRecord)
 
             interface CashflowRecord { date: string; type: 'in' | 'out'; amount: number }
-            const cashSnap = await getDocs(query(collection(investDB, 'cashflow'), orderBy('date', 'asc')))
+            const cashSnap = await getDocs(query(userCol(investDB, 'cashflow'), orderBy('date', 'asc')))
             const cashflows = cashSnap.docs.map(d => d.data() as CashflowRecord)
 
             interface DividendRecord { date: string; cashDividend: number }
-            const dividendsSnap = await getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'asc')))
+            const dividendsSnap = await getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc')))
             const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
 
-            const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
+            const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
             const savedPrices: Record<string, number | string> = priceDoc.exists() ? priceDoc.data() : {}
 
             const posDetail: Record<string, {

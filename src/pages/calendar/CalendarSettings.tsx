@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, setDoc, deleteDoc, doc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol, userDoc } from '../../lib/userDB'
 import { Plus, Trash2, Search } from 'lucide-react'
 
 const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
@@ -15,9 +16,9 @@ export default function CalendarSettings() {
   const [search, setSearch] = useState('')
 
   const load = async () => {
-    const snap = await getDocs(collection(investDB, 'calendarWatchList'))
+    const snap = await getDocs(userCol(investDB, 'calendarWatchList'))
     setWatchList(snap.docs.map(d => ({ code: d.id, name: d.data().name || d.id })))
-    const dictSnap = await getDocs(collection(investDB, 'stockDict'))
+    const dictSnap = await getDocs(userCol(investDB, 'stockDict'))
     const dict: Record<string, string> = {}
     dictSnap.docs.forEach(d => { dict[d.id] = d.data().name })
     setStockDict(dict)
@@ -29,12 +30,12 @@ export default function CalendarSettings() {
     if (!newCode.trim()) return
     const code = newCode.trim()
     const name = newName.trim() || stockDict[code] || code
-    await setDoc(doc(investDB, 'calendarWatchList', code), { code, name })
+    await setDoc(userDoc(investDB, 'calendarWatchList', code), { code, name })
     setNewCode(''); setNewName(''); load()
   }
 
   const handleDelete = async (code: string) => {
-    await deleteDoc(doc(investDB, 'calendarWatchList', code)); load()
+    await deleteDoc(userDoc(investDB, 'calendarWatchList', code)); load()
   }
 
   // 自動帶入股票名稱

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, orderBy, query } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol } from '../../lib/userDB'
 import { calcPositions, type TradeRecord, type DividendRecord, type RealizedRecord } from '../../lib/calc'
 import { Search } from 'lucide-react'
 
@@ -20,8 +21,8 @@ export default function HistoryPnL() {
         setLoading(true)
         try {
             const [tradesSnap, divSnap] = await Promise.all([
-                getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'desc'))),
+                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
+                getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'desc'))),
             ])
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const dividendRecords = divSnap.docs.map(d => d.data() as DividendRecord)

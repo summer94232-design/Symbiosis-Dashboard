@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, updateDoc, deleteDoc, doc, query, orderBy } from 'firebase/firestore'
 import { kmsDB } from '../../lib/firebase'
+import { userCol } from '../../lib/userDB'
 import { Trash2, RotateCcw, FileText, Link, Image } from 'lucide-react'
 
 interface Note {
@@ -24,7 +25,7 @@ export default function KMSTrash() {
 
   const load = async () => {
     setLoading(true)
-    const q = query(collection(kmsDB, 'trash'), orderBy('deletedAt', 'desc'))
+    const q = query(userCol(kmsDB, 'trash'), orderBy('deletedAt', 'desc'))
     const snap = await getDocs(q)
     const now = Date.now()
     const data: Note[] = []
@@ -35,7 +36,7 @@ export default function KMSTrash() {
       const deletedTime = new Date(item.deletedAt).getTime()
       // 超過 30 天自動永久刪除
       if (now - deletedTime > 30 * 24 * 60 * 60 * 1000) {
-        toDelete.push(deleteDoc(doc(kmsDB, 'trash', d.id)))
+        toDelete.push(deleteDoc(userDoc(kmsDB, 'trash', d.id)))
       } else {
         data.push(item)
       }
@@ -52,26 +53,26 @@ export default function KMSTrash() {
   const handleRestore = async (note: Note) => {
     const { id, ...data } = note
     const { deletedAt, ...noteData } = data as any
-    await updateDoc(doc(kmsDB, 'notes', id), { ...noteData, updatedAt: new Date().toISOString() }).catch(async () => {
+    await updateDoc(userDoc(kmsDB, 'notes', id), { ...noteData, updatedAt: new Date().toISOString() }).catch(async () => {
       // 如果 notes 中沒有此 id，重新新增
       const { addDoc } = await import('firebase/firestore')
-      await addDoc(collection(kmsDB, 'notes'), { ...noteData, updatedAt: new Date().toISOString() })
+      await addDoc(userCol(kmsDB, 'notes'), { ...noteData, updatedAt: new Date().toISOString() })
     })
-    await deleteDoc(doc(kmsDB, 'trash', id))
+    await deleteDoc(userDoc(kmsDB, 'trash', id))
     load()
   }
 
   // 永久刪除
   const handlePermanentDelete = async (id: string) => {
     if (!confirm('確定要永久刪除？此操作無法復原。')) return
-    await deleteDoc(doc(kmsDB, 'trash', id))
+    await deleteDoc(userDoc(kmsDB, 'trash', id))
     load()
   }
 
   // 清空垃圾桶
   const handleEmptyTrash = async () => {
     if (!confirm(`確定要清空垃圾桶？共 ${trashed.length} 則筆記將永久刪除。`)) return
-    await Promise.all(trashed.map(n => deleteDoc(doc(kmsDB, 'trash', n.id))))
+    await Promise.all(trashed.map(n => deleteDoc(userDoc(kmsDB, 'trash', n.id))))
     setTrashed([])
   }
 

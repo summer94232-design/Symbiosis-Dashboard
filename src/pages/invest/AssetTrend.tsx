@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, doc, setDoc, deleteDoc, orderBy, query, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol, userDocNested, userDoc } from '../../lib/userDB'
 import { calcPositions, calcAvailableCash, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Save, Pencil, Trash2, Plus, X, Check, Zap, AlertTriangle } from 'lucide-react'
@@ -54,7 +55,7 @@ export default function AssetTrend() {
 
     const loadSnapshots = async () => {
         setLoading(true)
-        const q = query(collection(investDB, 'assetSnapshots'), orderBy('date', 'asc'))
+        const q = query(userCol(investDB, 'assetSnapshots'), orderBy('date', 'asc'))
         const snap = await getDocs(q)
         setSnapshots(snap.docs.map(d => d.data() as SnapshotRecord))
         setLoading(false)
@@ -90,9 +91,9 @@ export default function AssetTrend() {
         setMissingPriceCodes([])
         try {
             const [tradesSnap, cashSnap, dividendsSnap] = await Promise.all([
-                getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(collection(investDB, 'cashflow')),
-                getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'asc'))),
+                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
+                getDocs(userCol(investDB, 'cashflow')),
+                getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc'))),
             ])
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const cashRecords = cashSnap.docs.map(d => d.data() as { type: string; amount: number })
@@ -100,7 +101,7 @@ export default function AssetTrend() {
 
             const { holdings: positions } = calcPositions(trades, dividends)
 
-            const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
+            const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
             const savedPrices = (priceDoc.exists() ? priceDoc.data() : {}) as Record<string, number>
 
             const { marketValue, missing } = calcMarketValue(positions, savedPrices)
@@ -125,16 +126,16 @@ export default function AssetTrend() {
         setMissingPriceCodes([])
         try {
             const [tradesSnap, cashSnap, dividendsSnap] = await Promise.all([
-                getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(collection(investDB, 'cashflow')),
-                getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'asc'))),
+                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
+                getDocs(userCol(investDB, 'cashflow')),
+                getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc'))),
             ])
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const cashRecords = cashSnap.docs.map(d => d.data() as { type: string; amount: number })
             const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
 
             const { holdings: positions } = calcPositions(trades, dividends)
-            const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
+            const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
             const savedPrices = (priceDoc.exists() ? priceDoc.data() : {}) as Record<string, number>
 
             const { marketValue, missing } = calcMarketValue(positions, savedPrices)
@@ -145,7 +146,7 @@ export default function AssetTrend() {
             const totalAssets = marketValue + cash
             const today = new Date().toISOString().split('T')[0]
 
-            await setDoc(doc(investDB, 'assetSnapshots', today), {
+            await setDoc(userDoc(investDB, 'assetSnapshots', today), {
                 date: today,
                 totalAssets: Math.round(totalAssets),
                 marketValue: Math.round(marketValue),
@@ -159,7 +160,7 @@ export default function AssetTrend() {
     const handleSave = async () => {
         if (!form.date) return
         setFormLoading(true)
-        await setDoc(doc(investDB, 'assetSnapshots', form.date), { ...form })
+        await setDoc(userDoc(investDB, 'assetSnapshots', form.date), { ...form })
         setShowForm(false); setEditingDate(null); setForm(emptySnap)
         setMissingPriceCodes([])
         setFormLoading(false); loadSnapshots()
@@ -168,7 +169,7 @@ export default function AssetTrend() {
     const handleEdit = (s: SnapshotRecord) => { setForm({ ...s }); setEditingDate(s.date); setShowForm(true) }
     const handleDelete = async (date: string) => {
         if (!confirm(`確定要刪除 ${date} 的紀錄？`)) return
-        await deleteDoc(doc(investDB, 'assetSnapshots', date)); loadSnapshots()
+        await deleteDoc(userDoc(investDB, 'assetSnapshots', date)); loadSnapshots()
     }
     const handleCancel = () => { setShowForm(false); setEditingDate(null); setForm(emptySnap); setMissingPriceCodes([]) }
 

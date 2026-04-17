@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, query, orderBy } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol } from '../../lib/userDB'
 import { getDailyNews } from '../../lib/gemini'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS } from '../../lib/calendarData'
 import { calcPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
@@ -62,11 +63,11 @@ export default function DailyBrief() {
         setDataLoading(true)
         try {
             const [personalSnap, taskSnap, tradesSnap, dividendsSnap, settingsSnap] = await Promise.all([
-                getDocs(collection(investDB, 'calendarEvents')),
-                getDocs(query(collection(investDB, 'tasks'), orderBy('order', 'asc'))),
-                getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(collection(investDB, 'dividends')),
-                getDocs(collection(investDB, 'settings'))
+                getDocs(userCol(investDB, 'calendarEvents')),
+                getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc'))),
+                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
+                getDocs(userCol(investDB, 'dividends')),
+                getDocs(userCol(investDB, 'settings'))
             ])
 
             // 行事曆事件

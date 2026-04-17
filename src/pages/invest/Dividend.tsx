@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol, userDoc } from '../../lib/userDB'
 import { Pencil, Trash2, X, Check } from 'lucide-react'
 
 interface DividendRecord {
@@ -27,13 +28,13 @@ export default function Dividend() {
   const [stockDict, setStockDict] = useState<Record<string, string>>({})
 
   const load = async () => {
-    const q = query(collection(investDB, 'dividends'), orderBy('date', 'desc'))
+    const q = query(userCol(investDB, 'dividends'), orderBy('date', 'desc'))
     const snap = await getDocs(q)
     setRecords(snap.docs.map(d => ({ id: d.id, ...d.data() } as DividendRecord)))
   }
 
   const loadDict = async () => {
-    const snap = await getDocs(collection(investDB, 'stockDict'))
+    const snap = await getDocs(userCol(investDB, 'stockDict'))
     const dict: Record<string, string> = {}
     snap.docs.forEach(d => { dict[d.id] = d.data().name })
     setStockDict(dict)
@@ -50,9 +51,9 @@ export default function Dividend() {
     if (!form.code || !form.date) return
     setLoading(true)
     if (editingId) {
-      await updateDoc(doc(investDB, 'dividends', editingId), { ...form })
+      await updateDoc(userDoc(investDB, 'dividends', editingId), { ...form })
     } else {
-      await addDoc(collection(investDB, 'dividends'), { ...form })
+      await addDoc(userCol(investDB, 'dividends'), { ...form })
     }
     setEditingId(null); setForm(empty); setLoading(false); load()
   }
@@ -61,7 +62,7 @@ export default function Dividend() {
   const handleCancel = () => { setForm(empty); setEditingId(null) }
   const handleDelete = async (id: string) => {
     if (!confirm('確定要刪除？')) return
-    await deleteDoc(doc(investDB, 'dividends', id)); load()
+    await deleteDoc(userDoc(investDB, 'dividends', id)); load()
   }
 
   const totalCash = records.reduce((s, r) => s + r.cashDividend, 0)

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, orderBy, query } from 'firebase/firestore'
 import { kmsDB } from '../../lib/firebase'
+import { userCol } from '../../lib/userDB'
 import { Download, FileText, Tag, Filter, Check } from 'lucide-react'
 
 interface Note {
@@ -28,7 +29,7 @@ export default function KMSExport() {
 
   const load = async () => {
     setLoading(true)
-    const q = query(collection(kmsDB, 'notes'), orderBy('createdAt', 'desc'))
+    const q = query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc'))
     const snap = await getDocs(q)
     const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Note))
     setNotes(data)

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { collection, getDocs, orderBy, query, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol, userDocNested, userDoc } from '../../lib/userDB'
 import { getMultipleQuotes } from '../../lib/fugle'
 import { calcPositions, calcAvailableCash, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag } from 'lucide-react'
@@ -89,9 +90,9 @@ export default function Dashboard() {
         setLoading(true)
         try {
             const [tradesSnap, dividendsSnap, cashSnap] = await Promise.all([
-                getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'asc'))),
-                getDocs(collection(investDB, 'cashflow')),
+                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
+                getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc'))),
+                getDocs(userCol(investDB, 'cashflow')),
             ])
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
@@ -100,12 +101,12 @@ export default function Dashboard() {
             const { holdings: positions, realized } = calcPositions(trades, dividends)
             setRealizedPnL(realized.reduce((s, r) => s + r.realized, 0))
 
-            const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
+            const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
             const savedPrices: Record<string, number | string> = priceDoc.exists() ? priceDoc.data() : {}
             const savedAt = typeof savedPrices._updatedAt === 'string' ? savedPrices._updatedAt : ''
 
             // 讀取族群標籤
-            const groupDoc = await getDoc(doc(investDB, 'settings', 'stockGroups'))
+            const groupDoc = await getDoc(userDocNested(investDB, 'settings', 'stockGroups'))
             const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
             setStockGroups(groups)
 
@@ -141,7 +142,7 @@ export default function Dashboard() {
 
     const loadCalendarEvents = async () => {
         try {
-            const snap = await getDocs(collection(investDB, 'calendarEvents'))
+            const snap = await getDocs(userCol(investDB, 'calendarEvents'))
             const todayStr = new Date().toISOString().split('T')[0]
             const future14Str = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]
 
@@ -156,7 +157,7 @@ export default function Dashboard() {
 
     const loadTasks = async () => {
         try {
-            const snap = await getDocs(query(collection(investDB, 'tasks'), orderBy('order', 'asc')))
+            const snap = await getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc')))
             const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as Task))
             setTasks(all.filter(t => !t.done))
         } catch (err) { console.error(err) }
@@ -164,7 +165,7 @@ export default function Dashboard() {
 
     const toggleTask = async (id: string, done: boolean) => {
         try {
-            await updateDoc(doc(investDB, 'tasks', id), { done: !done })
+            await updateDoc(userDoc(investDB, 'tasks', id), { done: !done })
             setTasks(prev => prev.filter(t => t.id !== id))
         } catch (err) { console.error(err) }
     }
@@ -180,7 +181,7 @@ export default function Dashboard() {
 
             const priceData: Record<string, number | string> = { _updatedAt: now }
             symbols.forEach(s => { if (quotes[s] !== null) priceData[s] = quotes[s] as number })
-            await setDoc(doc(investDB, 'settings', 'lastPrices'), priceData)
+            await setDoc(userDocNested(investDB, 'settings', 'lastPrices'), priceData)
 
             let totalMarketValue = 0
             let priceAvailable = false

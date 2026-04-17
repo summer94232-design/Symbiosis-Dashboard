@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, addDoc, deleteDoc, doc, orderBy, query, setDoc, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol, userDoc } from '../../lib/userDB'
 import { calcPositions, type TradeRecord } from '../../lib/calc'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS, type CalendarEvent } from '../../lib/calendarData'
 import { Plus, X, ChevronLeft, ChevronRight, RefreshCw, ExternalLink } from 'lucide-react'
@@ -35,17 +36,17 @@ export default function CalendarHome() {
     const [form, setForm] = useState({ title: '', date: '', description: '', url: '' })
 
     const loadPersonal = async () => {
-        const snap = await getDocs(query(collection(investDB, 'calendarEvents'), orderBy('date', 'asc')))
+        const snap = await getDocs(query(userCol(investDB, 'calendarEvents'), orderBy('date', 'asc')))
         setPersonalEvents(snap.docs.map(d => ({ id: d.id, ...d.data() } as CalendarEvent)))
     }
 
     const loadWatchList = async () => {
-        const snap = await getDocs(collection(investDB, 'calendarWatchList'))
+        const snap = await getDocs(userCol(investDB, 'calendarWatchList'))
         setWatchList(snap.docs.map(d => d.data().code as string).filter(Boolean))
     }
 
     const loadDividends = async () => {
-        const snap = await getDocs(collection(investDB, 'dividends'))
+        const snap = await getDocs(userCol(investDB, 'dividends'))
         const divEvents: CalendarEvent[] = snap.docs
             .map(d => d.data())
             .filter(d => d.date)
@@ -61,7 +62,7 @@ export default function CalendarHome() {
     }
 
     const loadTasks = async () => {
-        const snap = await getDocs(collection(investDB, 'tasks'))
+        const snap = await getDocs(userCol(investDB, 'tasks'))
         const taskEvts: CalendarEvent[] = snap.docs
             .map(d => d.data())
             .filter(t => t.dueDate && !t.done)
@@ -78,7 +79,7 @@ export default function CalendarHome() {
     // 從 Firestore 讀取已儲存的法說會資料（進入頁面時呼叫）
     const loadInvestorFromFirestore = async (y: number, m: number) => {
         const yearMonth = `${y}-${String(m).padStart(2, '0')}`
-        const snap = await getDocs(collection(investDB, 'investorMeetings'))
+        const snap = await getDocs(userCol(investDB, 'investorMeetings'))
         const evts: CalendarEvent[] = []
         snap.docs.forEach(d => {
             const data = d.data()
@@ -107,7 +108,7 @@ export default function CalendarHome() {
 
         try {
             // 取得持倉股票
-            const tradesSnap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc')))
+            const tradesSnap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc')))
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const { holdings } = calcPositions(trades)
             const holdingCodes = Object.keys(holdings)
@@ -171,7 +172,7 @@ export default function CalendarHome() {
 
                     const stockName = holdings[code]?.name || code
                     const docId = `${code}-${yearMonth}`
-                    const docRef = doc(investDB, 'investorMeetings', docId)
+                    const docRef = userDoc(investDB, 'investorMeetings', docId)
 
                     // 讀取 Firestore 既有資料做比對
                     const existing = await getDoc(docRef)
@@ -272,7 +273,7 @@ export default function CalendarHome() {
 
     const handleAddEvent = async () => {
         if (!form.title || !form.date) return
-        await addDoc(collection(investDB, 'calendarEvents'), {
+        await addDoc(userCol(investDB, 'calendarEvents'), {
             title: form.title, date: form.date,
             description: form.description, url: form.url,
             type: 'personal'
@@ -284,7 +285,7 @@ export default function CalendarHome() {
 
     const handleDeleteEvent = async (id: string) => {
         if (!confirm('確定要刪除此行程？')) return
-        await deleteDoc(doc(investDB, 'calendarEvents', id))
+        await deleteDoc(userDoc(investDB, 'calendarEvents', id))
         loadPersonal()
     }
 

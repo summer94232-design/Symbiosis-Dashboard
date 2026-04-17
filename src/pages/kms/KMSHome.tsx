@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { kmsDB, kmsStorage } from '../../lib/firebase'
+import { userCol } from '../../lib/userDB'
 import { generateHashtags, findRelatedNotes } from '../../lib/gemini'
 import { Plus, Search, Pencil, Trash2, X, Check, Link, FileText, Image, Sparkles, ChevronDown, ChevronUp, ArrowUpDown, Link2 } from 'lucide-react'
 import * as mammoth from 'mammoth'
@@ -60,7 +61,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
   const noteRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   const load = async () => {
-    const q = query(collection(kmsDB, 'notes'), orderBy('createdAt', 'desc'))
+    const q = query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc'))
     const snap = await getDocs(q)
     const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Note))
     setNotes(data)
@@ -143,9 +144,9 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     const removedLinks = oldLinks.filter(id => !newLinks.includes(id))
 
     if (editingId) {
-      await updateDoc(doc(kmsDB, 'notes', editingId), { ...form, updatedAt: now })
+      await updateDoc(userDoc(kmsDB, 'notes', editingId), { ...form, updatedAt: now })
     } else {
-      const docRef = await addDoc(collection(kmsDB, 'notes'), { ...form, createdAt: now, updatedAt: now })
+      const docRef = await addDoc(userCol(kmsDB, 'notes'), { ...form, createdAt: now, updatedAt: now })
       // 新筆記的 id
       const newId = docRef.id
       // 更新被連結的筆記加入反向連結
@@ -153,7 +154,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         const linkedNote = notes.find(n => n.id === linkedId)
         if (linkedNote) {
           const updatedLinks = [...new Set([...(linkedNote.links || []), newId])]
-          await updateDoc(doc(kmsDB, 'notes', linkedId), { links: updatedLinks })
+          await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links: updatedLinks })
         }
       }
       setShowForm(false); setEditingId(null); setForm(empty); setLoading(false); load(); return
@@ -164,14 +165,14 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
       const linkedNote = notes.find(n => n.id === linkedId)
       if (linkedNote && editingId) {
         const updatedLinks = [...new Set([...(linkedNote.links || []), editingId])]
-        await updateDoc(doc(kmsDB, 'notes', linkedId), { links: updatedLinks })
+        await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links: updatedLinks })
       }
     }
     for (const linkedId of removedLinks) {
       const linkedNote = notes.find(n => n.id === linkedId)
       if (linkedNote && editingId) {
         const updatedLinks = (linkedNote.links || []).filter(id => id !== editingId)
-        await updateDoc(doc(kmsDB, 'notes', linkedId), { links: updatedLinks })
+        await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links: updatedLinks })
       }
     }
 
@@ -191,14 +192,14 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     for (const linkedId of (note.links || [])) {
       const linkedNote = notes.find(n => n.id === linkedId)
       if (linkedNote) {
-        await updateDoc(doc(kmsDB, 'notes', linkedId), {
+        await updateDoc(userDoc(kmsDB, 'notes', linkedId), {
           links: (linkedNote.links || []).filter(l => l !== id)
         })
       }
     }
     const { setDoc } = await import('firebase/firestore')
-    await setDoc(doc(kmsDB, 'trash', id), { ...note, deletedAt: new Date().toISOString() })
-    await deleteDoc(doc(kmsDB, 'notes', id)); load()
+    await setDoc(userDoc(kmsDB, 'trash', id), { ...note, deletedAt: new Date().toISOString() })
+    await deleteDoc(userDoc(kmsDB, 'notes', id)); load()
   }
 
   const handleSort = (key: typeof sortBy) => {

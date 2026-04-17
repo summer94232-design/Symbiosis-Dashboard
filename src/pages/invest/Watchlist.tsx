@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, setDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol, userDocNested, userDoc } from '../../lib/userDB'
 import { getMultipleQuotes } from '../../lib/fugle'
 import { Plus, Trash2, RefreshCw, TrendingUp, TrendingDown, Pencil, Check, X, FileText } from 'lucide-react'
 
@@ -32,10 +33,10 @@ export default function Watchlist() {
 
     const load = async () => {
         setLoading(true)
-        const snap = await getDocs(collection(investDB, 'watchlist'))
+        const snap = await getDocs(userCol(investDB, 'watchlist'))
         const data = snap.docs.map(d => ({ code: d.id, ...d.data() } as WatchItem))
         // 讀取儲存的現價
-        const priceSnap = await getDocs(collection(investDB, 'settings'))
+        const priceSnap = await getDocs(userCol(investDB, 'settings'))
         const priceData = priceSnap.docs.find(d => d.id === 'watchlistPrices')?.data() || {}
         const savedAt = priceData._updatedAt || ''
         if (savedAt) setLastUpdated(savedAt)
@@ -43,7 +44,7 @@ export default function Watchlist() {
         setItems(data.sort((a, b) => a.code.localeCompare(b.code)))
 
         // 讀取股票字典
-        const dictSnap = await getDocs(collection(investDB, 'stockDict'))
+        const dictSnap = await getDocs(userCol(investDB, 'stockDict'))
         const dict: Record<string, string> = {}
         dictSnap.docs.forEach(d => { dict[d.id] = d.data().name })
         setStockDict(dict)
@@ -68,14 +69,14 @@ export default function Watchlist() {
             codes.forEach(c => { if (quotes[c] !== null) watchlistPriceData[c] = quotes[c] })
 
             // lastPrices：與 Dashboard/Holdings 共用，合併現有快取再更新
-            const existingSnap = await getDocs(collection(investDB, 'settings'))
+            const existingSnap = await getDocs(userCol(investDB, 'settings'))
             const existingPrices = existingSnap.docs.find(d => d.id === 'lastPrices')?.data() || {}
             const lastPriceData: Record<string, any> = { ...existingPrices, _updatedAt: now }
             codes.forEach(c => { if (quotes[c] !== null) lastPriceData[c] = quotes[c] })
 
             await Promise.all([
-                setDoc(doc(investDB, 'settings', 'watchlistPrices'), watchlistPriceData),
-                setDoc(doc(investDB, 'settings', 'lastPrices'), lastPriceData),
+                setDoc(userDocNested(investDB, 'settings', 'watchlistPrices'), watchlistPriceData),
+                setDoc(userDocNested(investDB, 'settings', 'lastPrices'), lastPriceData),
             ])
 
             setItems(prev => prev.map(item => ({ ...item, currentPrice: quotes[item.code] ?? item.currentPrice })))
@@ -88,7 +89,7 @@ export default function Watchlist() {
         if (!form.code.trim()) return
         const code = form.code.trim()
         const name = form.name.trim() || stockDict[code] || code
-        await setDoc(doc(investDB, 'watchlist', code), {
+        await setDoc(userDoc(investDB, 'watchlist', code), {
             name,
             targetHigh: form.targetHigh ? parseFloat(form.targetHigh) : null,
             targetLow: form.targetLow ? parseFloat(form.targetLow) : null,
@@ -102,7 +103,7 @@ export default function Watchlist() {
     const handleEdit = async (code: string) => {
         const item = items.find(i => i.code === code)
         if (!item) return
-        await updateDoc(doc(investDB, 'watchlist', code), {
+        await updateDoc(userDoc(investDB, 'watchlist', code), {
             targetHigh: form.targetHigh ? parseFloat(form.targetHigh) : null,
             targetLow: form.targetLow ? parseFloat(form.targetLow) : null,
             note: form.note || null,
@@ -113,7 +114,7 @@ export default function Watchlist() {
 
     const handleDelete = async (code: string) => {
         if (!confirm(`確定要從自選股移除 ${code}？`)) return
-        await deleteDoc(doc(investDB, 'watchlist', code)); load()
+        await deleteDoc(userDoc(investDB, 'watchlist', code)); load()
     }
 
     const handleCodeChange = (code: string) => {

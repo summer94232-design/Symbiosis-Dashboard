@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol, userDoc } from '../../lib/userDB'
 import { Pencil, Trash2, X, Check } from 'lucide-react'
 
 interface CashRecord {
@@ -24,7 +25,7 @@ export default function CashFlow() {
   const [loading, setLoading] = useState(false)
 
   const load = async () => {
-    const q = query(collection(investDB, 'cashflow'), orderBy('date', 'desc'))
+    const q = query(userCol(investDB, 'cashflow'), orderBy('date', 'desc'))
     const snap = await getDocs(q)
     setRecords(snap.docs.map(d => ({ id: d.id, ...d.data() } as CashRecord)))
   }
@@ -35,9 +36,9 @@ export default function CashFlow() {
     if (!form.amount) return
     setLoading(true)
     if (editingId) {
-      await updateDoc(doc(investDB, 'cashflow', editingId), { ...form })
+      await updateDoc(userDoc(investDB, 'cashflow', editingId), { ...form })
     } else {
-      await addDoc(collection(investDB, 'cashflow'), { ...form })
+      await addDoc(userCol(investDB, 'cashflow'), { ...form })
     }
     setEditingId(null); setForm(empty); setLoading(false); load()
   }
@@ -46,7 +47,7 @@ export default function CashFlow() {
   const handleCancel = () => { setForm(empty); setEditingId(null) }
   const handleDelete = async (id: string) => {
     if (!confirm('確定要刪除？')) return
-    await deleteDoc(doc(investDB, 'cashflow', id)); load()
+    await deleteDoc(userDoc(investDB, 'cashflow', id)); load()
   }
 
   const totalIn = records.filter(r => r.type === 'in').reduce((s, r) => s + r.amount, 0)

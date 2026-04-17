@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { collection, getDocs, orderBy, query, doc, getDoc, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol, userDocNested } from '../../lib/userDB'
 import { calcPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { getMultipleQuotes } from '../../lib/fugle'
 import { RefreshCw, TrendingUp, TrendingDown, Tag, Check, X } from 'lucide-react'
@@ -128,21 +129,21 @@ export default function Holdings() {
         setLoading(true)
         try {
             const [snap, divSnap] = await Promise.all([
-                getDocs(query(collection(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(collection(investDB, 'dividends')),
+                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
+                getDocs(userCol(investDB, 'dividends')),
             ])
             const trades = snap.docs.map(d => d.data() as TradeRecord)
             const dividends = divSnap.docs.map(d => d.data() as DividendRecord)
             const { holdings: positions } = calcPositions(trades, dividends)
 
             // 讀取現價
-            const priceDoc = await getDoc(doc(investDB, 'settings', 'lastPrices'))
+            const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
             const savedPrices: Record<string, any> = priceDoc.exists() ? priceDoc.data() : {}
             const savedAt = savedPrices._updatedAt || ''
             if (savedAt) setLastUpdated(savedAt)
 
             // 讀取族群
-            const groupDoc = await getDoc(doc(investDB, 'settings', 'stockGroups'))
+            const groupDoc = await getDoc(userDocNested(investDB, 'settings', 'stockGroups'))
             const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
             setStockGroups(groups)
 
@@ -174,7 +175,7 @@ export default function Holdings() {
 
             const priceData: Record<string, number | string> = { _updatedAt: now }
             symbols.forEach(s => { if (quotes[s] !== null) priceData[s] = quotes[s] as number })
-            await setDoc(doc(investDB, 'settings', 'lastPrices'), priceData)
+            await setDoc(userDocNested(investDB, 'settings', 'lastPrices'), priceData)
 
             const updated: DisplayHolding[] = holdings.map(h => {
                 const currentPrice = quotes[h.code] ?? null
@@ -200,7 +201,7 @@ export default function Holdings() {
         setStockGroups(updated)
         setGroupSaving(true)
         try {
-            await setDoc(doc(investDB, 'settings', 'stockGroups'), updated)
+            await setDoc(userDocNested(investDB, 'settings', 'stockGroups'), updated)
         } catch (err) { console.error(err) }
         setGroupSaving(false)
     }

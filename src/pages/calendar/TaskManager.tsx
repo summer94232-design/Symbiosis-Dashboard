@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query, where, writeBatch } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol, userDoc } from '../../lib/userDB'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import type { DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
@@ -112,12 +113,12 @@ export default function TaskManager() {
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
     const loadTasks = async () => {
-        const snap = await getDocs(query(collection(investDB, 'tasks'), orderBy('order', 'asc')))
+        const snap = await getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc')))
         setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as Task)))
     }
 
     const loadProjects = async () => {
-        const snap = await getDocs(query(collection(investDB, 'taskProjects'), orderBy('order', 'asc')))
+        const snap = await getDocs(query(userCol(investDB, 'taskProjects'), orderBy('order', 'asc')))
         setProjects(snap.docs.map(d => ({ id: d.id, ...d.data() } as Project)))
     }
 
@@ -128,14 +129,14 @@ export default function TaskManager() {
         if (!taskForm.title.trim()) return
         const now = new Date().toISOString()
         if (editingTask) {
-            await updateDoc(doc(investDB, 'tasks', editingTask.id), {
+            await updateDoc(userDoc(investDB, 'tasks', editingTask.id), {
                 title: taskForm.title, priority: taskForm.priority,
                 dueDate: taskForm.dueDate || null, tag: taskForm.tag || null,
                 projectId: taskForm.projectId || null, note: taskForm.note || null
             })
         } else {
             const maxOrder = tasks.length > 0 ? Math.max(...tasks.map(t => t.order)) + 1 : 0
-            await addDoc(collection(investDB, 'tasks'), {
+            await addDoc(userCol(investDB, 'tasks'), {
                 title: taskForm.title, done: false, priority: taskForm.priority,
                 dueDate: taskForm.dueDate || null, tag: taskForm.tag || null,
                 projectId: taskForm.projectId || null, note: taskForm.note || null,
@@ -157,19 +158,19 @@ export default function TaskManager() {
     }
 
     const handleToggleTask = async (id: string, done: boolean) => {
-        await updateDoc(doc(investDB, 'tasks', id), { done }); loadTasks()
+        await updateDoc(userDoc(investDB, 'tasks', id), { done }); loadTasks()
     }
 
     const handleDeleteTask = async (id: string) => {
         if (!confirm('確定要刪除此任務？')) return
-        await deleteDoc(doc(investDB, 'tasks', id)); loadTasks()
+        await deleteDoc(userDoc(investDB, 'tasks', id)); loadTasks()
     }
 
     // 新增專案
     const handleSaveProject = async () => {
         if (!projectForm.title.trim()) return
         const maxOrder = projects.length > 0 ? Math.max(...projects.map(p => p.order)) + 1 : 0
-        await addDoc(collection(investDB, 'taskProjects'), {
+        await addDoc(userCol(investDB, 'taskProjects'), {
             title: projectForm.title, color: projectForm.color,
             order: maxOrder, createdAt: new Date().toISOString()
         })
@@ -181,16 +182,16 @@ export default function TaskManager() {
         if (!confirm('確定要刪除此專案？專案內的任務也會一併刪除。')) return
 
         // 直接從 Firestore 查詢屬於此專案的所有任務，不依賴 React state 快照
-        const snap = await getDocs(query(collection(investDB, 'tasks'), where('projectId', '==', id)))
+        const snap = await getDocs(query(userCol(investDB, 'tasks'), where('projectId', '==', id)))
 
         const batch = writeBatch(investDB)
 
         // 1. 刪除專案文件
-        batch.delete(doc(investDB, 'taskProjects', id))
+        batch.delete(userDoc(investDB, 'taskProjects', id))
 
         // 2. 一併刪除該專案下所有子任務
         snap.docs.forEach(d => {
-            batch.delete(doc(investDB, 'tasks', d.id))
+            batch.delete(userDoc(investDB, 'tasks', d.id))
         })
 
         await batch.commit()
@@ -214,7 +215,7 @@ export default function TaskManager() {
             return [...others, ...newOrder.map((t, i) => ({ ...t, order: i }))]
         })
         const batch = writeBatch(investDB)
-        newOrder.forEach((t, i) => batch.update(doc(investDB, 'tasks', t.id), { order: i }))
+        newOrder.forEach((t, i) => batch.update(userDoc(investDB, 'tasks', t.id), { order: i }))
         await batch.commit()
     }
 

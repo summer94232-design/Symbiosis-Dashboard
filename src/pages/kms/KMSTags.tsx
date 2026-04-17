@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, updateDoc, doc, query } from 'firebase/firestore'
 import { kmsDB } from '../../lib/firebase'
+import { userCol } from '../../lib/userDB'
 import { Pencil, Check, X, Tag, FolderOpen, ChevronRight } from 'lucide-react'
 
 interface TagInfo {
@@ -23,7 +24,7 @@ export default function KMSTags() {
 
   const load = async () => {
     setLoading(true)
-    const snap = await getDocs(collection(kmsDB, 'notes'))
+    const snap = await getDocs(userCol(kmsDB, 'notes'))
     const tagCount: Record<string, number> = {}
     snap.docs.forEach(d => {
       const data = d.data()
@@ -64,14 +65,14 @@ export default function KMSTags() {
   const handleRename = async (oldTag: string) => {
     if (!editValue.trim() || editValue.trim() === oldTag) { setEditingTag(null); return }
     setSaving(true)
-    const snap = await getDocs(query(collection(kmsDB, 'notes')))
+    const snap = await getDocs(query(userCol(kmsDB, 'notes')))
     let updated = 0
     const batch: Promise<void>[] = []
     snap.docs.forEach(d => {
       const data = d.data()
       if (data.hashtags?.includes(oldTag)) {
         const newHashtags = data.hashtags.map((t: string) => t === oldTag ? editValue.trim() : t)
-        batch.push(updateDoc(doc(kmsDB, 'notes', d.id), { hashtags: newHashtags }))
+        batch.push(updateDoc(userDoc(kmsDB, 'notes', d.id), { hashtags: newHashtags }))
         updated++
       }
     })
@@ -86,13 +87,13 @@ export default function KMSTags() {
     if (!toTag.trim() || fromTag === toTag.trim()) return
     if (!confirm(`確定要將「${fromTag}」合併到「${toTag}」？`)) return
     setSaving(true)
-    const snap = await getDocs(query(collection(kmsDB, 'notes')))
+    const snap = await getDocs(query(userCol(kmsDB, 'notes')))
     const batch: Promise<void>[] = []
     snap.docs.forEach(d => {
       const data = d.data()
       if (data.hashtags?.includes(fromTag)) {
         const newHashtags = [...new Set(data.hashtags.map((t: string) => t === fromTag ? toTag.trim() : t))]
-        batch.push(updateDoc(doc(kmsDB, 'notes', d.id), { hashtags: newHashtags }))
+        batch.push(updateDoc(userDoc(kmsDB, 'notes', d.id), { hashtags: newHashtags }))
       }
     })
     await Promise.all(batch)

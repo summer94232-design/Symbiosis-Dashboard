@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol, userDoc } from '../../lib/userDB'
 import { calcFee, calcTax, isETF } from '../../lib/calc'
 import { Pencil, Trash2, X, Check, Upload, Search, ChevronDown, ChevronUp } from 'lucide-react'
 
@@ -81,13 +82,13 @@ export default function Trades() {
     }, [])
 
     const load = async () => {
-        const q = query(collection(investDB, 'trades'), orderBy('date', 'desc'))
+        const q = query(userCol(investDB, 'trades'), orderBy('date', 'desc'))
         const snap = await getDocs(q)
         setTrades(snap.docs.map(d => ({ id: d.id, ...d.data() } as Trade)))
     }
 
     const loadDict = async () => {
-        const snap = await getDocs(collection(investDB, 'stockDict'))
+        const snap = await getDocs(userCol(investDB, 'stockDict'))
         const dict: Record<string, string> = {}
         snap.docs.forEach(d => { dict[d.id] = d.data().name })
         setStockDict(dict)
@@ -129,11 +130,11 @@ export default function Trades() {
     const handleSave = async () => {
         if (!form.code || !form.price || !form.shares) return
         setLoading(true)
-        if (form.name && form.code) await setDoc(doc(investDB, 'stockDict', form.code), { name: form.name })
+        if (form.name && form.code) await setDoc(userDoc(investDB, 'stockDict', form.code), { name: form.name })
         if (editingId) {
-            await updateDoc(doc(investDB, 'trades', editingId), { ...form })
+            await updateDoc(userDoc(investDB, 'trades', editingId), { ...form })
         } else {
-            await addDoc(collection(investDB, 'trades'), { ...form })
+            await addDoc(userCol(investDB, 'trades'), { ...form })
         }
         setEditingId(null); setForm(emptyTrade); setLoading(false); setShowForm(false); setEditModal(false)
         load(); loadDict()
@@ -143,7 +144,7 @@ export default function Trades() {
     const handleCancel = () => { setForm(emptyTrade); setEditingId(null); setShowForm(false); setEditModal(false) }
     const handleDelete = async (id: string) => {
         if (!confirm('確定要刪除？')) return
-        await deleteDoc(doc(investDB, 'trades', id)); load()
+        await deleteDoc(userDoc(investDB, 'trades', id)); load()
     }
 
     const handleImportCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -178,7 +179,7 @@ export default function Trades() {
             if (type === '入金') {
                 const amount = toNum(row['價格/金額'] || row['金額'] || '')
                 if (amount > 0) {
-                    await addDoc(collection(investDB, 'cashflow'), { date, type: 'in', amount, note: row['備註/筆記'] || row['備註'] || '' })
+                    await addDoc(userCol(investDB, 'cashflow'), { date, type: 'in', amount, note: row['備註/筆記'] || row['備註'] || '' })
                     success++
                 } else { skipped++ }
                 continue
@@ -201,11 +202,11 @@ export default function Trades() {
             const total = tradeType === 'buy' ? price * shares + fee : price * shares - fee - tax
 
             try {
-                await addDoc(collection(investDB, 'trades'), {
+                await addDoc(userCol(investDB, 'trades'), {
                     date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total,
                     note: row['備註/筆記'] || row['備註'] || ''
                 })
-                if (name && rawCode) await setDoc(doc(investDB, 'stockDict', rawCode), { name })
+                if (name && rawCode) await setDoc(userDoc(investDB, 'stockDict', rawCode), { name })
                 success++
             } catch { failed++ }
         }

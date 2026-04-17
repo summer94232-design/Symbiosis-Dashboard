@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { collection, getDocs, doc, setDoc, orderBy, query, addDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
+import { userCol, userDoc } from '../../lib/userDB'
 import { calcFee, calcTax } from '../../lib/calc'
 import { Download, Upload, FileSpreadsheet, Database, FileDown } from 'lucide-react'
 import * as XLSX from 'xlsx'
@@ -108,7 +109,7 @@ export default function InvestSettings() {
                     const code = String(row['股票代號'] || row['代號'] || row.code || row.Code || '').trim()
                     const name = String(row['股票名稱'] || row['名稱'] || row.name || row.Name || '').trim()
                     if (code && name) {
-                        try { await setDoc(doc(investDB, 'stockDict', code), { name }); success++ }
+                        try { await setDoc(userDoc(investDB, 'stockDict', code), { name }); success++ }
                         catch { failed++ }
                     } else { failed++ }
                 }
@@ -177,8 +178,8 @@ export default function InvestSettings() {
             const total = totalRaw !== null ? totalRaw : (tradeType === 'buy' ? price * shares + fee : price * shares - fee - tax)
 
             try {
-                await addDoc(collection(investDB, 'trades'), { date, type: tradeType, code, name, price, shares, fee, tax, total, note })
-                if (name && code) await setDoc(doc(investDB, 'stockDict', code), { name })
+                await addDoc(userCol(investDB, 'trades'), { date, type: tradeType, code, name, price, shares, fee, tax, total, note })
+                if (name && code) await setDoc(userDoc(investDB, 'stockDict', code), { name })
                 success++
             } catch { failed++ }
         }
@@ -194,10 +195,10 @@ export default function InvestSettings() {
         setFullExportLoading(true)
         try {
             const [tradesSnap, cashSnap, dividendsSnap, dictSnap] = await Promise.all([
-                getDocs(query(collection(investDB, 'trades'), orderBy('date', 'desc'))),
-                getDocs(query(collection(investDB, 'cashflow'), orderBy('date', 'desc'))),
-                getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'desc'))),
-                getDocs(collection(investDB, 'stockDict')),
+                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'desc'))),
+                getDocs(query(userCol(investDB, 'cashflow'), orderBy('date', 'desc'))),
+                getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'desc'))),
+                getDocs(userCol(investDB, 'stockDict')),
             ])
 
             const tradesData = tradesSnap.docs.map(d => {
@@ -271,7 +272,7 @@ export default function InvestSettings() {
     // ── 分項匯出 CSV ──────────────────────────────────────────────────────
     const exportTrades = async () => {
         setExportLoading(true)
-        const snap = await getDocs(query(collection(investDB, 'trades'), orderBy('date', 'desc')))
+        const snap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'desc')))
         const trades = snap.docs.map(d => d.data() as TradeRow)
         const header = ['日期', '類型', '代號', '名稱', '價格', '股數', '手續費', '交易稅', '收付金額', '備註']
         const rows = trades.map(t => [t.date, t.type === 'buy' ? '買入' : '賣出', t.code, t.name, t.price, t.shares, t.fee, t.tax, t.total, t.note ?? ''])
@@ -281,7 +282,7 @@ export default function InvestSettings() {
     }
 
     const exportCashFlow = async () => {
-        const snap = await getDocs(query(collection(investDB, 'cashflow'), orderBy('date', 'desc')))
+        const snap = await getDocs(query(userCol(investDB, 'cashflow'), orderBy('date', 'desc')))
         const records = snap.docs.map(d => d.data() as CashflowRow)
         const header = ['日期', '類型', '金額', '備註']
         const rows = records.map(r => [r.date, r.type === 'in' ? '入金' : '出金', r.amount, r.note ?? ''])
@@ -290,7 +291,7 @@ export default function InvestSettings() {
     }
 
     const exportDividends = async () => {
-        const snap = await getDocs(query(collection(investDB, 'dividends'), orderBy('date', 'desc')))
+        const snap = await getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'desc')))
         const records = snap.docs.map(d => d.data() as DividendRow)
         const header = ['日期', '代號', '名稱', '現金股利', '股票股利', '備註']
         const rows = records.map(r => [r.date, r.code, r.name, r.cashDividend, r.stockDividend, r.note ?? ''])

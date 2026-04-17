@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { collection, getDocs, orderBy, query } from 'firebase/firestore'
 import { useNavigate } from 'react-router-dom'
 import { kmsDB } from '../../lib/firebase'
+import { userCol } from '../../lib/userDB'
 import { ExternalLink } from 'lucide-react'
 
 interface Note {
@@ -54,7 +55,7 @@ export default function KMSGraph() {
 
   const load = async () => {
     setLoading(true)
-    const q = query(collection(kmsDB, 'notes'), orderBy('createdAt', 'desc'))
+    const q = query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc'))
     const snap = await getDocs(q)
     const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Note))
     setNotes(data)
