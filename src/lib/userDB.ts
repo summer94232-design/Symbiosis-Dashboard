@@ -15,14 +15,22 @@
  */
 
 import { collection, doc } from 'firebase/firestore'
-import { getAuth } from 'firebase/auth'
+import { onAuthStateChanged } from 'firebase/auth'
+import { investAuth } from './auth'
 import type { Firestore } from 'firebase/firestore'
+
+// 快取 uid，避免頁面剛載入時 currentUser 尚未就緒
+let _uid: string | null = null
+
+onAuthStateChanged(investAuth, user => {
+    _uid = user?.uid ?? null
+})
 
 /** 取得目前登入用戶的 uid，未登入時拋出錯誤 */
 export function getUID(): string {
-  const uid = getAuth().currentUser?.uid
-  if (!uid) throw new Error('用戶未登入')
-  return uid
+    const uid = _uid ?? investAuth.currentUser?.uid
+    if (!uid) throw new Error('用戶未登入')
+    return uid
 }
 
 /**
@@ -32,7 +40,7 @@ export function getUID(): string {
  * 對應原本的：collection(db, collectionName)
  */
 export function userCol(db: Firestore, collectionName: string) {
-  return collection(db, 'users', getUID(), collectionName)
+    return collection(db, 'users', getUID(), collectionName)
 }
 
 /**
@@ -42,7 +50,7 @@ export function userCol(db: Firestore, collectionName: string) {
  * 對應原本的：doc(db, collectionName, docId)
  */
 export function userDoc(db: Firestore, collectionName: string, docId: string) {
-  return doc(db, 'users', getUID(), collectionName, docId)
+    return doc(db, 'users', getUID(), collectionName, docId)
 }
 
 /**
@@ -53,5 +61,5 @@ export function userDoc(db: Firestore, collectionName: string, docId: string) {
  * 改為：      userDocNested(db, 'settings', 'lastPrices')
  */
 export function userDocNested(db: Firestore, ...pathSegments: string[]) {
-  return doc(db, 'users', getUID(), ...pathSegments)
+    return doc(db, 'users', getUID(), ...pathSegments)
 }
