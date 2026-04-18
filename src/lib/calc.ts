@@ -37,14 +37,12 @@ export interface TradeRecord {
     note?: string
 }
 
-// ✅ 新增：DividendRecord 型別（供 HistoryPnL、Holdings、DailyBrief 共用）
 export interface DividendRecord {
-    id?: string
     date: string
     code: string
     name: string
     cashDividend: number
-    stockDividend: number  // 配股股數（加入持倉，成本為 0）
+    stockDividend: number
     note?: string
 }
 
@@ -52,8 +50,8 @@ export interface HoldingPosition {
     code: string
     name: string
     shares: number
-    avgCost: number   // FIFO：剩餘批次的加權平均成本（含手續費）
-    totalCost: number // 剩餘持股總成本
+    avgCost: number
+    totalCost: number
 }
 
 export interface RealizedRecord {
@@ -61,7 +59,7 @@ export interface RealizedRecord {
     code: string
     name: string
     shares: number
-    avgCost: number   // 賣出時消耗批次的加權平均成本
+    avgCost: number
     sellPrice: number
     realized: number
     returnRate: number
@@ -72,134 +70,79 @@ export interface CalcResult {
     realized: RealizedRecord[]
 }
 
-// ── FIFO 批次結構 ──
-interface Lot {
-    date: string
-    shares: number
-    unitCost: number  // 含手續費的每股成本
-}
+export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[]): CalcResult {
+    // ✅ 修正：過濾掉 date 為 undefined/null/空字串的異常資料，避免 localeCompare crash
+    const validTrades = trades.filter(t => t && t.date && typeof t.date === 'string')
+    const sorted = [...validTrades].sort((a, b) => a.date.localeCompare(b.date))
 
-// ✅ calcPositions 接受可選的 dividends 參數
-// 配股（stockDividend > 0）會在對應日期後加入持倉，成本為 0，並攤薄 avgCost
-export function calcPositions(trades: TradeRecord[], dividends: DividendRecord[] = []): CalcResult {
-    const sorted = [...trades].sort((a, b) => {
-        const dateComp = a.date.localeCompare(b.date)
-        if (dateComp !== 0) return dateComp
-        // 同一天內：賣出（sell）優先於買入（buy），避免空手賣出
-        if (a.type === b.type) return 0
-        return a.type === 'sell' ? -1 : 1
-    })
-
-    // 每支股票維護一個 lots queue（先進先出）
-    const lots: Record<string, Lot[]> = {}
     const holdings: Record<string, HoldingPosition> = {}
     const realized: RealizedRecord[] = []
 
     for (const t of sorted) {
         const { code, name, type, price, shares, fee, tax } = t
 
-        if (!lots[code]) lots[code] = []
+        // 防呆：跳過欄位不完整的紀錄
+        if (!code || !type || price == null || shares == null) continue
+
         if (!holdings[code]) {
             holdings[code] = { code, name, shares: 0, avgCost: 0, totalCost: 0 }
         }
         const pos = holdings[code]
 
         if (type === 'buy') {
-            // 買進：每股成本 = (成交金額 + 手續費) / 股數，手續費含入成本
-            const unitCost = (price * shares + fee) / shares
-            lots[code].push({ date: t.date, shares, unitCost })
-
-            pos.shares += shares
-            pos.totalCost += price * shares + fee
-            pos.name = name
-            // avgCost = 剩餘批次加權平均（此時就是 totalCost / shares）
-            pos.avgCost = pos.totalCost / pos.shares
-
-        } else {
-            // 賣出：FIFO 消耗最早批次
-            let remaining = shares
-            let costBasis = 0
-
-            const queue = lots[code]
-            while (remaining > 0 && queue.length > 0) {
-                const lot = queue[0]
-                if (lot.shares <= remaining) {
-                    // 整批消耗
-                    costBasis += lot.unitCost * lot.shares
-                    remaining -= lot.shares
-                    queue.shift()
-                } else {
-                    // 部分消耗
-                    costBasis += lot.unitCost * remaining
-                    lot.shares -= remaining
-                    remaining = 0
-                }
-            }
-
-            const sellRevenue = price * shares - fee - tax
+            const buyCost = price * shares + (fee || 0)
+            const newTotalCost = pos.totalCost + buyCost
+            const newShares = pos.shares + shares
+            pos.avgCost = newShares > 0 ? newTotalCost / newShares : 0
+            pos.totalCost = newTotalCost
+            pos.shares = newShares
+            pos.name = name || pos.name
+        } else if (type === 'sell') {
+            const sellRevenue = price * shares - (fee || 0) - (tax || 0)
+            const costBasis = pos.avgCost * shares
             const pnl = sellRevenue - costBasis
             const returnRate = costBasis > 0 ? pnl / costBasis : 0
-            const avgCostOfSold = shares > 0 ? costBasis / shares : 0
-
             realized.push({
-                date: t.date, code, name, shares,
-                avgCost: avgCostOfSold,
-                sellPrice: price,
-                realized: pnl,
-                returnRate
+                date: t.date, code, name: name || pos.name, shares,
+                avgCost: pos.avgCost, sellPrice: price, realized: pnl, returnRate
             })
-
             pos.shares -= shares
-            pos.totalCost -= costBasis
-
+            pos.totalCost -= pos.avgCost * shares
             if (pos.shares <= 0) {
                 pos.shares = 0
                 pos.totalCost = 0
                 pos.avgCost = 0
-                lots[code] = []
-            } else {
-                // 重新計算剩餘批次的加權平均成本
-                const remaining_lots = lots[code]
-                const remainingCost = remaining_lots.reduce((s, l) => s + l.unitCost * l.shares, 0)
-                const remainingShares = remaining_lots.reduce((s, l) => s + l.shares, 0)
-                pos.totalCost = remainingCost
-                pos.avgCost = remainingShares > 0 ? remainingCost / remainingShares : 0
             }
         }
     }
 
-    // ✅ 套用配股：stockDividend > 0 時加入股數，成本為 0，攤薄 avgCost
-    // 依日期排序，確保配股按時間順序處理
-    const sortedDividends = [...dividends].sort((a, b) => a.date.localeCompare(b.date))
-    for (const d of sortedDividends) {
-        if (d.stockDividend <= 0) continue
-        if (!holdings[d.code]) continue  // 配股時已無持倉則略過
-        const pos = holdings[d.code]
-        pos.shares += d.stockDividend
-        // totalCost 不變（配股成本為 0），avgCost 攤薄重算
-        pos.avgCost = pos.totalCost / pos.shares
+    // ✅ 支援股票股利（配股）：增加股數，攤薄均價，成本不變
+    if (dividends && dividends.length > 0) {
+        const validDivs = dividends.filter(d => d && d.code && d.stockDividend)
+        for (const div of validDivs) {
+            const pos = holdings[div.code]
+            if (!pos || pos.shares <= 0) continue
+            if (div.stockDividend > 0) {
+                const newShares = pos.shares + div.stockDividend
+                // 成本不變，均價攤薄
+                pos.avgCost = pos.totalCost / newShares
+                pos.shares = newShares
+            }
+        }
     }
-
-    // 過濾掉空倉
-    Object.keys(holdings).forEach(code => {
-        if (holdings[code].shares <= 0) delete holdings[code]
-    })
 
     return { holdings, realized }
 }
 
-// ✅ 修正：統一參數順序為 (trades, cashRecords)
-// 注意：AssetTrend.tsx 的呼叫也已同步修正為此順序
-// ✅ 新增 dividends 參數，現金股息計入可用現金
+// ✅ 修正：參數順序為 (cashflows, trades)，與原始 calc.ts 一致
+// Dashboard.tsx 呼叫時需改為 calcAvailableCash(cashRecords, trades)
 export function calcAvailableCash(
-    trades: TradeRecord[],
-    cashRecords: { type: string; amount: number }[],
-    dividends: DividendRecord[] = []
+    cashflows: { type: string; amount: number }[],
+    trades: TradeRecord[]
 ): number {
-    const cashIn = cashRecords.filter(c => c.type === 'in').reduce((s, c) => s + c.amount, 0)
-    const cashOut = cashRecords.filter(c => c.type === 'out').reduce((s, c) => s + c.amount, 0)
-    const buyTotal = trades.filter(t => t.type === 'buy').reduce((s, t) => s + t.total, 0)
-    const sellTotal = trades.filter(t => t.type === 'sell').reduce((s, t) => s + t.total, 0)
-    const dividendCash = dividends.reduce((s, d) => s + d.cashDividend, 0)
-    return cashIn - cashOut - buyTotal + sellTotal + dividendCash
+    const cashIn = cashflows.filter(c => c.type === 'in').reduce((s, c) => s + (c.amount || 0), 0)
+    const cashOut = cashflows.filter(c => c.type === 'out').reduce((s, c) => s + (c.amount || 0), 0)
+    const buyTotal = trades.filter(t => t.type === 'buy').reduce((s, t) => s + (t.total || 0), 0)
+    const sellTotal = trades.filter(t => t.type === 'sell').reduce((s, t) => s + (t.total || 0), 0)
+    return cashIn - cashOut - buyTotal + sellTotal
 }

@@ -115,6 +115,7 @@ export default function DailyBrief() {
             const { holdings: positions } = calcPositions(trades, dividends)
 
             const holdingList: HoldingItem[] = Object.values(positions)
+                .filter(pos => pos.shares > 0)
                 .map(pos => {
                     const currentPrice = priceData[pos.code] ?? null
                     const returnRate = currentPrice !== null

@@ -81,9 +81,13 @@ export default function InvestSettings() {
     const [importing, setImporting] = useState(false)
     const [importResult, setImportResult] = useState<{ success: number; failed: number } | null>(null)
     const [tradeImportResult, setTradeImportResult] = useState<{ success: number; failed: number; skipped: number } | null>(null)
+    const [cashImportResult, setCashImportResult] = useState<{ success: number; failed: number } | null>(null)
+    const [divImportResult, setDivImportResult] = useState<{ success: number; failed: number } | null>(null)
     const [exportLoading, setExportLoading] = useState(false)
     const [fullExportLoading, setFullExportLoading] = useState(false)
     const [tradeImporting, setTradeImporting] = useState(false)
+    const [cashImporting, setCashImporting] = useState(false)
+    const [divImporting, setDivImporting] = useState(false)
     const [msg, setMsg] = useState('')
 
     const showMsg = (text: string) => {
@@ -187,6 +191,100 @@ export default function InvestSettings() {
         setTradeImportResult({ success, failed, skipped })
         showMsg(`✅ 買賣紀錄匯入完成！成功 ${success} 筆，失敗 ${failed} 筆，略過 ${skipped} 筆`)
         setTradeImporting(false)
+        e.target.value = ''
+    }
+
+    // ── 匯入出入金 CSV ────────────────────────────────────────────────────
+    const handleImportCashCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        setCashImporting(true)
+        setCashImportResult(null)
+
+        const text = await file.text()
+        const lines = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim())
+
+        if (lines.length < 2) {
+            showMsg('❌ CSV 內容為空或格式錯誤')
+            setCashImporting(false)
+            e.target.value = ''
+            return
+        }
+
+        const headers = parseCSVLine(lines[0])
+        let success = 0, failed = 0
+
+        for (let i = 1; i < lines.length; i++) {
+            const cols = parseCSVLine(lines[i])
+            const row: Record<string, string> = {}
+            headers.forEach((h, idx) => { row[h] = cols[idx] || '' })
+
+            const date = row['日期'] || ''
+            const typeStr = row['類型'] || ''
+            const amount = toNum(row['金額'] || row['金額/收付'] || '')
+            const note = row['備註'] || ''
+
+            if (!date || !typeStr || !amount) { failed++; continue }
+
+            const cashType = typeStr === '入金' || typeStr === 'in' ? 'in' : typeStr === '出金' || typeStr === 'out' ? 'out' : null
+            if (!cashType) { failed++; continue }
+
+            try {
+                await addDoc(userCol(investDB, 'cashflow'), { date, type: cashType, amount, note })
+                success++
+            } catch { failed++ }
+        }
+
+        setCashImportResult({ success, failed })
+        showMsg(`✅ 出入金匯入完成！成功 ${success} 筆，失敗 ${failed} 筆`)
+        setCashImporting(false)
+        e.target.value = ''
+    }
+
+    // ── 匯入除權息 CSV ────────────────────────────────────────────────────
+    const handleImportDividendCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        setDivImporting(true)
+        setDivImportResult(null)
+
+        const text = await file.text()
+        const lines = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim())
+
+        if (lines.length < 2) {
+            showMsg('❌ CSV 內容為空或格式錯誤')
+            setDivImporting(false)
+            e.target.value = ''
+            return
+        }
+
+        const headers = parseCSVLine(lines[0])
+        let success = 0, failed = 0
+
+        for (let i = 1; i < lines.length; i++) {
+            const cols = parseCSVLine(lines[i])
+            const row: Record<string, string> = {}
+            headers.forEach((h, idx) => { row[h] = cols[idx] || '' })
+
+            const date = row['日期'] || ''
+            const code = (row['代號'] || row['股票代號'] || '').trim()
+            const name = (row['名稱'] || row['股票名稱'] || '').trim()
+            const cashDividend = toNum(row['現金股利'] || row['現金'] || '')
+            const stockDividend = toNum(row['股票股利'] || row['股票'] || '')
+            const note = row['備註'] || ''
+
+            if (!date || !code) { failed++; continue }
+
+            try {
+                await addDoc(userCol(investDB, 'dividends'), { date, code, name, cashDividend, stockDividend, note })
+                if (name && code) await setDoc(userDoc(investDB, 'stockDict', code), { name })
+                success++
+            } catch { failed++ }
+        }
+
+        setDivImportResult({ success, failed })
+        showMsg(`✅ 除權息匯入完成！成功 ${success} 筆，失敗 ${failed} 筆`)
+        setDivImporting(false)
         e.target.value = ''
     }
 
@@ -310,10 +408,10 @@ export default function InvestSettings() {
     const today = () => new Date().toISOString().split('T')[0]
 
     return (
-        <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '900px', margin: '0 auto' }}>
+        <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1200px', margin: '0 auto' }}>
             <div style={{ marginBottom: '24px' }}>
                 <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>設定與備份</h1>
-                <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>匯入股票字典、買賣紀錄，匯出報表與完整備份</p>
+                <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>匯入資料、匯出報表與完整備份</p>
             </div>
 
             {msg && (
@@ -322,117 +420,147 @@ export default function InvestSettings() {
                 </div>
             )}
 
-            {/* ① 一鍵匯出全部資料 */}
-            <div style={{ ...card, marginBottom: '20px', border: '1px solid rgba(79,142,247,0.4)', background: 'linear-gradient(135deg, #1a1d27 0%, #1e2236 100%)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                    <Database size={18} color="#4f8ef7" />
-                    <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>一鍵匯出全部資料</span>
-                    <span style={{ fontSize: '11px', backgroundColor: 'rgba(79,142,247,0.2)', color: '#4f8ef7', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>備份 / 核查用</span>
-                </div>
-                <p style={{ fontSize: '13px', color: '#8892a4', marginBottom: '16px', lineHeight: 1.6 }}>
-                    將系統內<strong style={{ color: '#e2e8f0' }}>全部資料</strong>（買賣紀錄、出入金、除權息、股票字典）一次匯出為<strong style={{ color: '#4f8ef7' }}> Excel 多工作表檔案</strong>，包含 Firestore ID，方便核查是否有錯誤資料。
-                </p>
-                <button style={{ ...btn('#4f8ef7'), opacity: fullExportLoading ? 0.6 : 1 }} onClick={exportAllData} disabled={fullExportLoading}>
-                    <FileDown size={16} />
-                    {fullExportLoading ? '匯出中，請稍候...' : '匯出完整備份 (.xlsx)'}
-                </button>
+            {/* ── 匯入區（兩欄） ── */}
+            <div style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Upload size={15} color="#8892a4" />
+                <span style={{ fontSize: '13px', fontWeight: 600, color: '#8892a4', textTransform: 'uppercase', letterSpacing: '0.05em' }}>匯入資料</span>
             </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '14px', marginBottom: '24px' }}>
 
-            {/* ② 股票字典匯入 */}
-            <div style={{ ...card, marginBottom: '20px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                    <FileSpreadsheet size={18} color="#a78bfa" />
-                    <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>匯入股票字典</span>
-                </div>
-                <p style={{ fontSize: '13px', color: '#8892a4', marginBottom: '16px', lineHeight: 1.6 }}>
-                    支援 <strong style={{ color: '#e2e8f0' }}>.xlsx / .xls</strong> 格式，欄位需包含 <strong style={{ color: '#a78bfa' }}>「股票代號」</strong> 和 <strong style={{ color: '#a78bfa' }}>「股票名稱」</strong>。<br />
-                    匯入後輸入代號時會自動帶入名稱，重複代號會自動覆蓋更新。
-                </p>
-                <label style={{ ...btn('#a78bfa'), width: 'fit-content', cursor: 'pointer', opacity: importing ? 0.6 : 1 }}>
-                    <Upload size={16} />
-                    {importing ? '匯入中...' : '選擇 Excel 檔案匯入'}
-                    <input type="file" accept=".xlsx,.xls" onChange={handleImportDict} disabled={importing} style={{ display: 'none' }} />
-                </label>
-                {importResult && (
-                    <div style={{ marginTop: '16px', padding: '16px', backgroundColor: '#0f1117', borderRadius: '8px', border: '1px solid #2e3349' }}>
-                        <div style={{ display: 'flex', gap: '24px' }}>
-                            <div>
-                                <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>成功匯入</div>
-                                <div style={{ fontSize: '22px', fontWeight: 700, color: '#00c896' }}>{importResult.success} 筆</div>
-                            </div>
-                            {importResult.failed > 0 && (
-                                <div>
-                                    <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>略過（格式錯誤）</div>
-                                    <div style={{ fontSize: '22px', fontWeight: 700, color: '#ff5757' }}>{importResult.failed} 筆</div>
-                                </div>
-                            )}
-                        </div>
+                {/* ① 股票字典 */}
+                <div style={card}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <FileSpreadsheet size={16} color="#a78bfa" />
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>股票字典</span>
+                        <span style={{ fontSize: '11px', backgroundColor: 'rgba(167,139,250,0.15)', color: '#a78bfa', padding: '1px 7px', borderRadius: '20px' }}>xlsx / xls</span>
                     </div>
-                )}
-            </div>
-
-            {/* ③ 匯入買賣紀錄 CSV */}
-            <div style={{ ...card, marginBottom: '20px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                    <Upload size={18} color="#00c896" />
-                    <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>匯入買賣紀錄</span>
-                    <span style={{ fontSize: '11px', backgroundColor: 'rgba(0,200,150,0.15)', color: '#00c896', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>CSV</span>
-                </div>
-                <p style={{ fontSize: '13px', color: '#8892a4', marginBottom: '4px', lineHeight: 1.6 }}>
-                    支援 <strong style={{ color: '#e2e8f0' }}>.csv</strong> 格式，需包含以下欄位：
-                </p>
-                <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', border: '1px solid #2e3349', fontSize: '12px', color: '#8892a4', fontFamily: 'monospace', lineHeight: 1.8 }}>
-                    <span style={{ color: '#4f8ef7' }}>必填：</span> 日期、類型（買入/賣出）、代號、名稱、價格、股數<br />
-                    <span style={{ color: '#8892a4' }}>選填：</span> 手續費、交易稅、收付金額、備註<br />
-                    <span style={{ color: '#f5a623' }}>※</span> 股數支援含千分位逗號格式（如 1,000）<br />
-                    <span style={{ color: '#f5a623' }}>※</span> 未填手續費/交易稅時，系統將依規則自動計算（含零股最低 1 元）
-                </div>
-                <label style={{ ...btn('#00c896'), width: 'fit-content', cursor: 'pointer', opacity: tradeImporting ? 0.6 : 1 }}>
-                    <Upload size={16} />
-                    {tradeImporting ? '匯入中...' : '選擇 CSV 檔案匯入'}
-                    <input type="file" accept=".csv" onChange={handleImportTradesCSV} disabled={tradeImporting} style={{ display: 'none' }} />
-                </label>
-                {tradeImportResult && (
-                    <div style={{ marginTop: '16px', padding: '16px', backgroundColor: '#0f1117', borderRadius: '8px', border: '1px solid #2e3349', display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
-                        <div>
-                            <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>成功匯入</div>
-                            <div style={{ fontSize: '22px', fontWeight: 700, color: '#00c896' }}>{tradeImportResult.success} 筆</div>
+                    <p style={{ fontSize: '12px', color: '#8892a4', marginBottom: '12px', lineHeight: 1.6 }}>
+                        需含 <strong style={{ color: '#a78bfa' }}>「股票代號」</strong> 和 <strong style={{ color: '#a78bfa' }}>「股票名稱」</strong> 欄位。匯入後輸入代號自動帶入名稱。
+                    </p>
+                    <label style={{ ...btn('#a78bfa'), width: 'fit-content', cursor: 'pointer', opacity: importing ? 0.6 : 1, fontSize: '13px' }}>
+                        <Upload size={14} />{importing ? '匯入中...' : '選擇 Excel 匯入'}
+                        <input type="file" accept=".xlsx,.xls" onChange={handleImportDict} disabled={importing} style={{ display: 'none' }} />
+                    </label>
+                    {importResult && (
+                        <div style={{ marginTop: '10px', padding: '10px 14px', backgroundColor: '#0f1117', borderRadius: '8px', border: '1px solid #2e3349', display: 'flex', gap: '20px' }}>
+                            <div><div style={{ fontSize: '11px', color: '#8892a4' }}>成功</div><div style={{ fontSize: '18px', fontWeight: 700, color: '#00c896' }}>{importResult.success}</div></div>
+                            {importResult.failed > 0 && <div><div style={{ fontSize: '11px', color: '#8892a4' }}>略過</div><div style={{ fontSize: '18px', fontWeight: 700, color: '#ff5757' }}>{importResult.failed}</div></div>}
                         </div>
-                        {tradeImportResult.failed > 0 && (
-                            <div>
-                                <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>失敗（資料不完整）</div>
-                                <div style={{ fontSize: '22px', fontWeight: 700, color: '#ff5757' }}>{tradeImportResult.failed} 筆</div>
-                            </div>
-                        )}
-                        {tradeImportResult.skipped > 0 && (
-                            <div>
-                                <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>略過（非買賣類型）</div>
-                                <div style={{ fontSize: '22px', fontWeight: 700, color: '#8892a4' }}>{tradeImportResult.skipped} 筆</div>
-                            </div>
-                        )}
+                    )}
+                </div>
+
+                {/* ② 買賣紀錄 */}
+                <div style={card}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <Upload size={16} color="#00c896" />
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>買賣紀錄</span>
+                        <span style={{ fontSize: '11px', backgroundColor: 'rgba(0,200,150,0.15)', color: '#00c896', padding: '1px 7px', borderRadius: '20px' }}>CSV</span>
                     </div>
-                )}
+                    <div style={{ backgroundColor: '#0f1117', borderRadius: '6px', padding: '7px 10px', marginBottom: '12px', border: '1px solid #2e3349', fontSize: '11px', color: '#8892a4', lineHeight: 1.8 }}>
+                        <span style={{ color: '#4f8ef7' }}>必填：</span>日期、類型（買入/賣出）、代號、名稱、價格、股數<br />
+                        <span style={{ color: '#8892a4' }}>選填：</span>手續費、交易稅、收付金額、備註
+                    </div>
+                    <label style={{ ...btn('#00c896'), width: 'fit-content', cursor: 'pointer', opacity: tradeImporting ? 0.6 : 1, fontSize: '13px' }}>
+                        <Upload size={14} />{tradeImporting ? '匯入中...' : '選擇 CSV 匯入'}
+                        <input type="file" accept=".csv" onChange={handleImportTradesCSV} disabled={tradeImporting} style={{ display: 'none' }} />
+                    </label>
+                    {tradeImportResult && (
+                        <div style={{ marginTop: '10px', padding: '10px 14px', backgroundColor: '#0f1117', borderRadius: '8px', border: '1px solid #2e3349', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                            <div><div style={{ fontSize: '11px', color: '#8892a4' }}>成功</div><div style={{ fontSize: '18px', fontWeight: 700, color: '#00c896' }}>{tradeImportResult.success}</div></div>
+                            {tradeImportResult.failed > 0 && <div><div style={{ fontSize: '11px', color: '#8892a4' }}>失敗</div><div style={{ fontSize: '18px', fontWeight: 700, color: '#ff5757' }}>{tradeImportResult.failed}</div></div>}
+                            {tradeImportResult.skipped > 0 && <div><div style={{ fontSize: '11px', color: '#8892a4' }}>略過</div><div style={{ fontSize: '18px', fontWeight: 700, color: '#8892a4' }}>{tradeImportResult.skipped}</div></div>}
+                        </div>
+                    )}
+                </div>
+
+                {/* ③ 出入金 */}
+                <div style={card}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <Upload size={16} color="#4f8ef7" />
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>出入金紀錄</span>
+                        <span style={{ fontSize: '11px', backgroundColor: 'rgba(79,142,247,0.15)', color: '#4f8ef7', padding: '1px 7px', borderRadius: '20px' }}>CSV</span>
+                    </div>
+                    <div style={{ backgroundColor: '#0f1117', borderRadius: '6px', padding: '7px 10px', marginBottom: '12px', border: '1px solid #2e3349', fontSize: '11px', color: '#8892a4', lineHeight: 1.8 }}>
+                        <span style={{ color: '#4f8ef7' }}>必填：</span>日期、類型（入金/出金）、金額<br />
+                        <span style={{ color: '#8892a4' }}>選填：</span>備註
+                    </div>
+                    <label style={{ ...btn('#4f8ef7'), width: 'fit-content', cursor: 'pointer', opacity: cashImporting ? 0.6 : 1, fontSize: '13px' }}>
+                        <Upload size={14} />{cashImporting ? '匯入中...' : '選擇 CSV 匯入'}
+                        <input type="file" accept=".csv" onChange={handleImportCashCSV} disabled={cashImporting} style={{ display: 'none' }} />
+                    </label>
+                    {cashImportResult && (
+                        <div style={{ marginTop: '10px', padding: '10px 14px', backgroundColor: '#0f1117', borderRadius: '8px', border: '1px solid #2e3349', display: 'flex', gap: '16px' }}>
+                            <div><div style={{ fontSize: '11px', color: '#8892a4' }}>成功</div><div style={{ fontSize: '18px', fontWeight: 700, color: '#00c896' }}>{cashImportResult.success}</div></div>
+                            {cashImportResult.failed > 0 && <div><div style={{ fontSize: '11px', color: '#8892a4' }}>失敗</div><div style={{ fontSize: '18px', fontWeight: 700, color: '#ff5757' }}>{cashImportResult.failed}</div></div>}
+                        </div>
+                    )}
+                </div>
+
+                {/* ④ 除權息 */}
+                <div style={card}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <Upload size={16} color="#f5a623" />
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>除權息紀錄</span>
+                        <span style={{ fontSize: '11px', backgroundColor: 'rgba(245,166,35,0.15)', color: '#f5a623', padding: '1px 7px', borderRadius: '20px' }}>CSV</span>
+                    </div>
+                    <div style={{ backgroundColor: '#0f1117', borderRadius: '6px', padding: '7px 10px', marginBottom: '12px', border: '1px solid #2e3349', fontSize: '11px', color: '#8892a4', lineHeight: 1.8 }}>
+                        <span style={{ color: '#4f8ef7' }}>必填：</span>日期、代號<br />
+                        <span style={{ color: '#8892a4' }}>選填：</span>名稱、現金股利、股票股利、備註
+                    </div>
+                    <label style={{ ...btn('#f5a623'), width: 'fit-content', cursor: 'pointer', opacity: divImporting ? 0.6 : 1, fontSize: '13px' }}>
+                        <Upload size={14} />{divImporting ? '匯入中...' : '選擇 CSV 匯入'}
+                        <input type="file" accept=".csv" onChange={handleImportDividendCSV} disabled={divImporting} style={{ display: 'none' }} />
+                    </label>
+                    {divImportResult && (
+                        <div style={{ marginTop: '10px', padding: '10px 14px', backgroundColor: '#0f1117', borderRadius: '8px', border: '1px solid #2e3349', display: 'flex', gap: '16px' }}>
+                            <div><div style={{ fontSize: '11px', color: '#8892a4' }}>成功</div><div style={{ fontSize: '18px', fontWeight: 700, color: '#00c896' }}>{divImportResult.success}</div></div>
+                            {divImportResult.failed > 0 && <div><div style={{ fontSize: '11px', color: '#8892a4' }}>失敗</div><div style={{ fontSize: '18px', fontWeight: 700, color: '#ff5757' }}>{divImportResult.failed}</div></div>}
+                        </div>
+                    )}
+                </div>
             </div>
 
-            {/* ④ 分項匯出報表 */}
-            <div style={card}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                    <Download size={18} color="#f5a623" />
-                    <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>分項匯出報表（CSV）</span>
+            {/* ── 匯出區（兩欄） ── */}
+            <div style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Download size={15} color="#8892a4" />
+                <span style={{ fontSize: '13px', fontWeight: 600, color: '#8892a4', textTransform: 'uppercase', letterSpacing: '0.05em' }}>匯出報表</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '14px' }}>
+
+                {/* ⑤ 完整備份 */}
+                <div style={{ ...card, border: '1px solid rgba(79,142,247,0.4)', background: 'linear-gradient(135deg, #1a1d27 0%, #1e2236 100%)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <Database size={16} color="#4f8ef7" />
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>完整備份</span>
+                        <span style={{ fontSize: '11px', backgroundColor: 'rgba(79,142,247,0.2)', color: '#4f8ef7', padding: '1px 7px', borderRadius: '20px' }}>xlsx 多工作表</span>
+                    </div>
+                    <p style={{ fontSize: '12px', color: '#8892a4', marginBottom: '14px', lineHeight: 1.6 }}>
+                        買賣紀錄、出入金、除權息、股票字典全部一次匯出，含 Firestore ID 方便核查錯誤資料。
+                    </p>
+                    <button style={{ ...btn('#4f8ef7'), opacity: fullExportLoading ? 0.6 : 1, fontSize: '13px' }} onClick={exportAllData} disabled={fullExportLoading}>
+                        <FileDown size={14} />{fullExportLoading ? '匯出中...' : '匯出完整備份 (.xlsx)'}
+                    </button>
                 </div>
-                <p style={{ fontSize: '13px', color: '#8892a4', marginBottom: '16px' }}>
-                    匯出後可直接用 Excel 開啟，所有中文字符完整顯示。
-                </p>
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                    <button style={btn('#4f8ef7')} onClick={exportTrades} disabled={exportLoading}>
-                        <Download size={16} />買賣紀錄
-                    </button>
-                    <button style={btn('#00c896')} onClick={exportCashFlow}>
-                        <Download size={16} />出入金紀錄
-                    </button>
-                    <button style={btn('#f5a623')} onClick={exportDividends}>
-                        <Download size={16} />除權息紀錄
-                    </button>
+
+                {/* ⑥ 分項匯出 */}
+                <div style={card}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <Download size={16} color="#f5a623" />
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>分項匯出</span>
+                        <span style={{ fontSize: '11px', backgroundColor: 'rgba(245,166,35,0.15)', color: '#f5a623', padding: '1px 7px', borderRadius: '20px' }}>CSV</span>
+                    </div>
+                    <p style={{ fontSize: '12px', color: '#8892a4', marginBottom: '14px' }}>匯出後可直接用 Excel 開啟，中文字符完整顯示。</p>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button style={{ ...btn('#4f8ef7'), fontSize: '13px' }} onClick={exportTrades} disabled={exportLoading}>
+                            <Download size={14} />買賣紀錄
+                        </button>
+                        <button style={{ ...btn('#00c896'), fontSize: '13px' }} onClick={exportCashFlow}>
+                            <Download size={14} />出入金
+                        </button>
+                        <button style={{ ...btn('#f5a623'), fontSize: '13px' }} onClick={exportDividends}>
+                            <Download size={14} />除權息
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

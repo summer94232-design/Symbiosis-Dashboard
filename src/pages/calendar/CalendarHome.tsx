@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
-import { collection, getDocs, addDoc, deleteDoc, doc, orderBy, query, setDoc, getDoc } from 'firebase/firestore'
+import { useState, useEffect, useRef } from 'react'
+import { getDocs, addDoc, deleteDoc, orderBy, query, setDoc, getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc, userDocNested } from '../../lib/userDB'
+import { userCol, userDoc } from '../../lib/userDB'
 import { calcPositions, type TradeRecord } from '../../lib/calc'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS, type CalendarEvent } from '../../lib/calendarData'
-import { Plus, X, ChevronLeft, ChevronRight, RefreshCw, ExternalLink } from 'lucide-react'
+import { Plus, X, ChevronLeft, ChevronRight, ExternalLink, Upload } from 'lucide-react'
+import * as XLSX from 'xlsx'
 
 const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
 const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
@@ -12,10 +13,6 @@ const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 
 const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
-
-// Firestore investorMeetings 文件格式
-// doc ID: `{stockCode}-{YYYY-MM}`  例如 `2330-2026-04`
-// 欄位: { stockCode, stockName, yearMonth, dates: string[], updatedAt }
 
 export default function CalendarHome() {
     const today = new Date()
@@ -28,11 +25,16 @@ export default function CalendarHome() {
     const [taskEvents, setTaskEvents] = useState<CalendarEvent[]>([])
     const [selectedDay, setSelectedDay] = useState<string | null>(null)
     const [showForm, setShowForm] = useState(false)
+    const [showXlsxImport, setShowXlsxImport] = useState(false)
     const [loadingInvestor, setLoadingInvestor] = useState(false)
     const [investorError, setInvestorError] = useState<string | null>(null)
     const [investorInfo, setInvestorInfo] = useState<string | null>(null)
-    const [watchList, setWatchList] = useState<string[]>([])
+    const [xlsxImporting, setXlsxImporting] = useState(false)
+    // 用 ref 保存最新 watchList，避免 closure 捕捉到舊值
+    const watchListRef = useRef<{ code: string; name: string }[]>([])
     const [filterTypes, setFilterTypes] = useState<Set<string>>(new Set(['fomc', 'futures', 'tech', 'investor', 'personal', 'dividend']))
+    const [myStocksOnly, setMyStocksOnly] = useState(false)
+    const [myStockCodes, setMyStockCodes] = useState<Set<string>>(new Set())
     const [form, setForm] = useState({ title: '', date: '', description: '', url: '' })
 
     const loadPersonal = async () => {
@@ -42,7 +44,25 @@ export default function CalendarHome() {
 
     const loadWatchList = async () => {
         const snap = await getDocs(userCol(investDB, 'calendarWatchList'))
-        setWatchList(snap.docs.map(d => d.data().code as string).filter(Boolean))
+        const list = snap.docs.map(d => ({
+            code: d.data().code || d.id,
+            name: d.data().name || d.data().code || d.id
+        }))
+        watchListRef.current = list
+        // 重新計算 myStockCodes（持倉 + 關注清單）
+        await refreshMyStockCodes(list.map(w => w.code))
+    }
+
+    // 計算「我的股票」代號集合 = 持倉 + 關注清單
+    const refreshMyStockCodes = async (watchCodes?: string[]) => {
+        try {
+            const tradesSnap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc')))
+            const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
+            const { holdings } = calcPositions(trades)
+            const holdingCodes = Object.keys(holdings)
+            const wl = watchCodes ?? watchListRef.current.map(w => w.code)
+            setMyStockCodes(new Set([...holdingCodes, ...wl]))
+        } catch { /* ignore */ }
     }
 
     const loadDividends = async () => {
@@ -76,28 +96,31 @@ export default function CalendarHome() {
         setTaskEvents(taskEvts)
     }
 
-    // 從 Firestore 讀取已儲存的法說會資料（進入頁面時呼叫）
+    // 從 Firestore 讀取已儲存的法說會資料（進入頁面或切換月份時呼叫）
     const loadInvestorFromFirestore = async (y: number, m: number) => {
+        if (loadingInvestor) return  // 手動更新進行中時不觸發
         const yearMonth = `${y}-${String(m).padStart(2, '0')}`
         const snap = await getDocs(userCol(investDB, 'investorMeetings'))
-        const evts: CalendarEvent[] = []
+        const evtMap = new Map<string, CalendarEvent>()
         snap.docs.forEach(d => {
             const data = d.data()
-            // 只取當月資料
             if (data.yearMonth !== yearMonth) return
             const dates: string[] = Array.isArray(data.dates) ? data.dates : []
             dates.forEach((isoDate: string) => {
-                evts.push({
-                    id: `investor-${data.stockCode}-${isoDate}`,
-                    date: isoDate,
-                    title: `${data.stockName || data.stockCode} 法說會`,
-                    type: 'investor',
-                    stockCode: data.stockCode,
-                    description: `${data.stockName || data.stockCode}（${data.stockCode}）法人說明會`
-                })
+                const id = `investor-${data.stockCode}-${isoDate}`
+                if (!evtMap.has(id)) {
+                    evtMap.set(id, {
+                        id,
+                        date: isoDate,
+                        title: `${data.stockName || data.stockCode} 法說會`,
+                        type: 'investor',
+                        stockCode: data.stockCode,
+                        description: `${data.stockName || data.stockCode}（${data.stockCode}）法人說明會`
+                    })
+                }
             })
         })
-        setInvestorEvents(evts)
+        setInvestorEvents([...evtMap.values()])
     }
 
     // 手動更新法說會：打 API → 比對 Firestore → 有變動就寫入
@@ -113,9 +136,15 @@ export default function CalendarHome() {
             const { holdings } = calcPositions(trades)
             const holdingCodes = Object.keys(holdings)
 
+            // 直接從 Firestore 重新讀取 watchList（確保拿到最新值）
+            await loadWatchList()
+            const currentWatchList = watchListRef.current
+            const watchCodes = currentWatchList.map(w => w.code)
+            const watchNameMap: Record<string, string> = {}
+            currentWatchList.forEach(w => { watchNameMap[w.code] = w.name })
+
             // 查詢清單 = 持倉 + 關注清單（去重）
-            const currentWatchList = Array.isArray(watchList) ? watchList : []
-            const allCodes = [...new Set([...holdingCodes, ...currentWatchList])]
+            const allCodes = [...new Set([...holdingCodes, ...watchCodes])]
 
             console.log('法說會查詢股票清單：', allCodes)
 
@@ -128,39 +157,21 @@ export default function CalendarHome() {
             const yearMonth = `${year}-${String(month).padStart(2, '0')}`
             let successCount = 0
             let failCount = 0
-            let changedCount = 0  // 有變動的股票數
-            const newAllEvents: CalendarEvent[] = []
+            let changedCount = 0
+            const evtMap = new Map<string, CalendarEvent>()
 
             for (const code of allCodes) {
                 try {
-                    console.log(`查詢 ${code} 法說會...`)
-
                     const res = await fetch(
                         `/.netlify/functions/mops-proxy?stockNo=${encodeURIComponent(code)}&year=${year}&month=${month}`
                     )
 
-                    if (!res.ok) {
-                        console.warn(`${code} 回應異常：HTTP ${res.status}`)
-                        failCount++
-                        continue
-                    }
+                    if (!res.ok) { failCount++; continue }
 
                     let json: { source?: string; dates?: string[]; error?: string }
-                    try {
-                        json = await res.json()
-                    } catch {
-                        console.warn(`${code} JSON 解析失敗`)
-                        failCount++
-                        continue
-                    }
+                    try { json = await res.json() } catch { failCount++; continue }
+                    if (json.error) { failCount++; continue }
 
-                    if (json.error) {
-                        console.warn(`${code} 查詢錯誤：`, json.error)
-                        failCount++
-                        continue
-                    }
-
-                    // 過濾有效日期（當月）
                     const rawDates: string[] = Array.isArray(json.dates) ? json.dates : []
                     const newDates = rawDates.filter(isoDate => {
                         if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return false
@@ -170,21 +181,17 @@ export default function CalendarHome() {
 
                     console.log(`${code} 法說會日期（來源：${json.source}）:`, newDates)
 
-                    const stockName = holdings[code]?.name || code
+                    // 名稱優先順序：持倉 > watchList > code
+                    const stockName = holdings[code]?.name || watchNameMap[code] || code
                     const docId = `${code}-${yearMonth}`
                     const docRef = userDoc(investDB, 'investorMeetings', docId)
 
-                    // 讀取 Firestore 既有資料做比對
                     const existing = await getDoc(docRef)
                     const oldDates: string[] = existing.exists() ? (existing.data().dates || []) : []
-
-                    // 比對：排序後轉字串比較
                     const oldSorted = [...oldDates].sort().join(',')
                     const newSorted = [...newDates].sort().join(',')
-                    const hasChanged = oldSorted !== newSorted
 
-                    if (hasChanged) {
-                        // 寫入 Firestore（新增或更新）
+                    if (oldSorted !== newSorted) {
                         await setDoc(docRef, {
                             stockCode: code,
                             stockName,
@@ -193,19 +200,20 @@ export default function CalendarHome() {
                             updatedAt: new Date().toISOString()
                         })
                         changedCount++
-                        console.log(`${code} 法說會有變動：${JSON.stringify(oldDates)} → ${JSON.stringify(newDates)}`)
                     }
 
-                    // 組成 CalendarEvent
                     newDates.forEach((isoDate: string) => {
-                        newAllEvents.push({
-                            id: `investor-${code}-${isoDate}`,
-                            date: isoDate,
-                            title: `${stockName} 法說會`,
-                            type: 'investor',
-                            stockCode: code,
-                            description: `${stockName}（${code}）法人說明會`
-                        })
+                        const id = `investor-${code}-${isoDate}`
+                        if (!evtMap.has(id)) {
+                            evtMap.set(id, {
+                                id,
+                                date: isoDate,
+                                title: `${stockName} 法說會`,
+                                type: 'investor',
+                                stockCode: code,
+                                description: `${stockName}（${code}）法人說明會`
+                            })
+                        }
                     })
 
                     successCount++
@@ -215,10 +223,8 @@ export default function CalendarHome() {
                 }
             }
 
-            console.log(`法說會查詢完成：成功 ${successCount} / 失敗 ${failCount}，變動 ${changedCount} 檔，共 ${newAllEvents.length} 個事件`)
-            setInvestorEvents(newAllEvents)
+            setInvestorEvents([...evtMap.values()])
 
-            // 顯示結果訊息
             if (failCount > 0 && successCount === 0) {
                 setInvestorError(`查詢失敗（${failCount} 檔），請確認 mops-proxy 是否正常運作`)
             } else if (failCount > 0) {
@@ -236,6 +242,76 @@ export default function CalendarHome() {
         setLoadingInvestor(false)
     }
 
+    // ── xlsx 手動匯入法說會 ──────────────────────────────────────────────
+    const handleXlsxImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        setXlsxImporting(true)
+
+        const reader = new FileReader()
+        reader.onload = async (evt) => {
+            try {
+                const data = new Uint8Array(evt.target!.result as ArrayBuffer)
+                // ⚠️ 不使用 cellDates:true，避免 UTC 轉換在 UTC+8 時區造成日期差一天
+                // 改用 dateNF 格式字串，讓 SheetJS 直接輸出 YYYY-MM-DD 文字
+                const wb = XLSX.read(data, { type: 'array', cellDates: false, dateNF: 'yyyy-mm-dd' })
+                const sheet = wb.Sheets[wb.SheetNames[0]]
+                const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: '', raw: false })
+
+                const byDoc: Record<string, { stockCode: string; stockName: string; yearMonth: string; dates: Set<string> }> = {}
+
+                for (const row of rows) {
+                    const code = String(row['股票代號'] || row['代號'] || row['code'] || '').trim()
+                    const name = String(row['股票名稱'] || row['名稱'] || row['name'] || code).trim()
+
+                    // raw:false 讓日期以格式字串輸出，取前 10 碼即為 YYYY-MM-DD
+                    const rawDate = String(row['法說會日期'] || row['日期'] || row['date'] || '').trim()
+                    const isoDate = rawDate.slice(0, 10).replace(/\//g, '-')
+
+                    if (!code || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) continue
+
+                    const [y, m] = isoDate.split('-')
+                    const yearMonth = `${y}-${m}`
+                    const docId = `${code}-${yearMonth}`
+
+                    if (!byDoc[docId]) {
+                        byDoc[docId] = { stockCode: code, stockName: name, yearMonth, dates: new Set() }
+                    }
+                    byDoc[docId].dates.add(isoDate)
+                }
+
+                let written = 0
+                for (const [, info] of Object.entries(byDoc)) {
+                    const docId = `${info.stockCode}-${info.yearMonth}`
+                    const docRef = userDoc(investDB, 'investorMeetings', docId)
+                    const existing = await getDoc(docRef)
+                    const oldDates: string[] = existing.exists() ? (existing.data().dates || []) : []
+                    // 合併並去重：用 Set 確保同一股票同一日期不重複
+                    const mergedDates = [...new Set([...oldDates, ...info.dates])].sort()
+
+                    await setDoc(docRef, {
+                        stockCode: info.stockCode,
+                        stockName: info.stockName,
+                        yearMonth: info.yearMonth,
+                        dates: mergedDates,
+                        updatedAt: new Date().toISOString()
+                    })
+                    written++
+                }
+
+                setInvestorInfo(`✅ xlsx 匯入完成，已寫入 ${written} 筆法說會資料`)
+                setShowXlsxImport(false)
+                await loadInvestorFromFirestore(year, month)
+            } catch (err) {
+                console.error('xlsx 匯入失敗：', err)
+                setInvestorError('xlsx 匯入失敗，請確認欄位格式（股票代號、股票名稱、法說會日期）')
+            }
+            setXlsxImporting(false)
+            e.target.value = ''
+        }
+        reader.readAsArrayBuffer(file)
+    }
+
     useEffect(() => {
         loadPersonal()
         loadWatchList()
@@ -243,25 +319,27 @@ export default function CalendarHome() {
         loadTasks()
     }, [])
 
-    // 切換月份或初始進入時，從 Firestore 直接讀取（不打 API）
     useEffect(() => {
         loadInvestorFromFirestore(year, month)
     }, [year, month])
 
-    // 合併所有事件
     useEffect(() => {
         const futuresDates = getFuturesSettlementDates(year, month)
+        // 法說會依「只顯示我的股票」篩選
+        const filteredInvestor = myStocksOnly
+            ? investorEvents.filter(e => e.stockCode && myStockCodes.has(e.stockCode))
+            : investorEvents
         const allEvents = [
             ...FOMC_DATES,
             ...TECH_EVENTS,
             ...futuresDates,
             ...personalEvents,
             ...dividendEvents,
-            ...investorEvents,
+            ...filteredInvestor,
             ...taskEvents,
         ].filter(e => filterTypes.has(e.type))
         setEvents(allEvents)
-    }, [year, month, personalEvents, dividendEvents, investorEvents, taskEvents, filterTypes])
+    }, [year, month, personalEvents, dividendEvents, investorEvents, taskEvents, filterTypes, myStocksOnly, myStockCodes])
 
     const toggleFilter = (type: string) => {
         setFilterTypes(prev => {
@@ -287,6 +365,34 @@ export default function CalendarHome() {
         if (!confirm('確定要刪除此行程？')) return
         await deleteDoc(userDoc(investDB, 'calendarEvents', id))
         loadPersonal()
+    }
+
+    // 刪除單筆法說會日期（從 investorMeetings.dates[] 移除）
+    const handleDeleteInvestorDate = async (stockCode: string, isoDate: string) => {
+        if (!confirm(`確定要刪除 ${stockCode} 在 ${isoDate} 的法說會？`)) return
+        const yearMonth = `${year}-${String(month).padStart(2, '0')}`
+        const docRef = userDoc(investDB, 'investorMeetings', `${stockCode}-${yearMonth}`)
+        const snap = await getDoc(docRef)
+        if (!snap.exists()) return
+        const oldDates: string[] = snap.data().dates || []
+        const newDates = oldDates.filter(d => d !== isoDate)
+        await updateDoc(docRef, { dates: newDates, updatedAt: new Date().toISOString() })
+        // 重新載入
+        await loadInvestorFromFirestore(year, month)
+    }
+
+    // 刪除除權息事件（找到對應 dividends 文件刪除）
+    const handleDeleteDividend = async (ev: CalendarEvent) => {
+        if (!confirm(`確定要刪除 ${ev.title}？`)) return
+        const snap = await getDocs(userCol(investDB, 'dividends'))
+        const match = snap.docs.find(d => {
+            const data = d.data()
+            return data.code === ev.stockCode && data.date === ev.date
+        })
+        if (match) {
+            await deleteDoc(userDoc(investDB, 'dividends', match.id))
+            loadDividends()
+        }
     }
 
     const prevMonth = () => { if (month === 1) { setYear(y => y - 1); setMonth(12) } else setMonth(m => m - 1) }
@@ -316,10 +422,9 @@ export default function CalendarHome() {
                 {/* 標題列 */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                     <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>財經行事曆</h1>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <button onClick={loadInvestorMeetings} disabled={loadingInvestor} style={btn('#21253a')}>
-                            <RefreshCw size={14} style={{ animation: loadingInvestor ? 'spin 1s linear infinite' : 'none' }} />
-                            {loadingInvestor ? '更新中...' : '更新法說會'}
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button onClick={() => setShowXlsxImport(true)} style={btn('#21253a')} title="從 xlsx 手動匯入法說會日期">
+                            <Upload size={14} />匯入法說會
                         </button>
                         <button onClick={() => setShowForm(true)} style={btn('#4f8ef7')}>
                             <Plus size={14} />新增行程
@@ -327,50 +432,22 @@ export default function CalendarHome() {
                     </div>
                 </div>
 
-                {/* 法說會錯誤提示 */}
+                {/* 錯誤 / 成功提示 */}
                 {investorError && (
-                    <div style={{
-                        backgroundColor: 'rgba(255,180,0,0.10)',
-                        border: '1px solid rgba(255,180,0,0.35)',
-                        borderRadius: '8px',
-                        padding: '10px 16px',
-                        marginBottom: '16px',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: '12px'
-                    }}>
+                    <div style={{ backgroundColor: 'rgba(255,180,0,0.10)', border: '1px solid rgba(255,180,0,0.35)', borderRadius: '8px', padding: '10px 16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
                         <span style={{ fontSize: '13px', color: '#f5c842' }}>⚠️ {investorError}</span>
-                        <button onClick={() => setInvestorError(null)}
-                            style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', flexShrink: 0 }}>
-                            <X size={14} />
-                        </button>
+                        <button onClick={() => setInvestorError(null)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={14} /></button>
                     </div>
                 )}
-
-                {/* 法說會更新成功提示 */}
                 {investorInfo && (
-                    <div style={{
-                        backgroundColor: 'rgba(0,200,150,0.10)',
-                        border: '1px solid rgba(0,200,150,0.35)',
-                        borderRadius: '8px',
-                        padding: '10px 16px',
-                        marginBottom: '16px',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: '12px'
-                    }}>
+                    <div style={{ backgroundColor: 'rgba(0,200,150,0.10)', border: '1px solid rgba(0,200,150,0.35)', borderRadius: '8px', padding: '10px 16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
                         <span style={{ fontSize: '13px', color: '#00c896' }}>{investorInfo}</span>
-                        <button onClick={() => setInvestorInfo(null)}
-                            style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', flexShrink: 0 }}>
-                            <X size={14} />
-                        </button>
+                        <button onClick={() => setInvestorInfo(null)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={14} /></button>
                     </div>
                 )}
 
                 {/* 篩選器 */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                     {Object.entries(EVENT_LABELS).map(([type, label]) => (
                         <button key={type} onClick={() => toggleFilter(type)}
                             style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 12px', borderRadius: '20px', border: '1px solid', borderColor: filterTypes.has(type) ? EVENT_COLORS[type] : '#2e3349', backgroundColor: filterTypes.has(type) ? `${EVENT_COLORS[type]}18` : 'transparent', color: filterTypes.has(type) ? EVENT_COLORS[type] : '#8892a4', fontSize: '12px', cursor: 'pointer' }}>
@@ -379,6 +456,20 @@ export default function CalendarHome() {
                         </button>
                     ))}
                 </div>
+                {/* 法說會篩選：只顯示我的股票 */}
+                {filterTypes.has('investor') && (
+                    <div style={{ marginBottom: '16px' }}>
+                        <button
+                            onClick={() => setMyStocksOnly(v => !v)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 14px', borderRadius: '20px', border: `1px solid ${myStocksOnly ? '#00c896' : '#2e3349'}`, backgroundColor: myStocksOnly ? 'rgba(0,200,150,0.12)' : 'transparent', color: myStocksOnly ? '#00c896' : '#8892a4', fontSize: '12px', cursor: 'pointer' }}>
+                            {/* 自製 toggle */}
+                            <span style={{ width: '28px', height: '15px', borderRadius: '8px', backgroundColor: myStocksOnly ? '#00c896' : '#2e3349', display: 'inline-flex', alignItems: 'center', padding: '2px', transition: 'background 0.2s', flexShrink: 0 }}>
+                                <span style={{ width: '11px', height: '11px', borderRadius: '50%', backgroundColor: '#fff', transform: myStocksOnly ? 'translateX(13px)' : 'translateX(0)', transition: 'transform 0.2s', display: 'block' }} />
+                            </span>
+                            法說會：只顯示持倉 &amp; 關注清單的股票
+                        </button>
+                    </div>
+                )}
 
                 <div style={{ display: 'grid', gap: '16px', gridTemplateColumns: selectedDay ? '1fr 300px' : '1fr' }}>
                     {/* 月曆 */}
@@ -452,6 +543,20 @@ export default function CalendarHome() {
                                                             <X size={14} />
                                                         </button>
                                                     )}
+                                                    {ev.type === 'investor' && ev.stockCode && (
+                                                        <button onClick={() => handleDeleteInvestorDate(ev.stockCode!, ev.date)}
+                                                            style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer', padding: 0 }}
+                                                            title="刪除此法說會日期">
+                                                            <X size={14} />
+                                                        </button>
+                                                    )}
+                                                    {ev.type === 'dividend' && (
+                                                        <button onClick={() => handleDeleteDividend(ev)}
+                                                            style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer', padding: 0 }}
+                                                            title="刪除此除權息記錄">
+                                                            <X size={14} />
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
@@ -466,7 +571,31 @@ export default function CalendarHome() {
                     )}
                 </div>
 
-                {/* 新增行程表單 */}
+                {/* xlsx 匯入法說會 Modal */}
+                {showXlsxImport && (
+                    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                        <div style={{ ...card, width: '100%', maxWidth: '520px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                <span style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0' }}>手動匯入法說會日期</span>
+                                <button onClick={() => setShowXlsxImport(false)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
+                            </div>
+                            <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', border: '1px solid #2e3349', fontSize: '12px', color: '#8892a4', lineHeight: 1.8 }}>
+                                <span style={{ color: '#4f8ef7', fontWeight: 600 }}>支援 .xlsx / .xls 格式，必要欄位（順序不限）：</span><br />
+                                <span style={{ color: '#e2e8f0' }}>股票代號</span>、<span style={{ color: '#e2e8f0' }}>股票名稱</span>、<span style={{ color: '#e2e8f0' }}>法說會日期</span><br />
+                                日期格式：<span style={{ color: '#00c896' }}>YYYY-MM-DD</span> 或 <span style={{ color: '#00c896' }}>YYYY/MM/DD</span>（Excel 日期格式亦可）<br />
+                                <span style={{ color: '#f5a623' }}>※ 匯入的日期會與 Firestore 既有資料合併（不覆蓋）</span>
+                            </div>
+                            <label style={{ ...btn('#00c896'), width: 'fit-content', cursor: 'pointer', opacity: xlsxImporting ? 0.6 : 1 }}>
+                                <Upload size={15} />
+                                {xlsxImporting ? '匯入中...' : '選擇 Excel 檔案匯入'}
+                                <input type="file" accept=".xlsx,.xls" onChange={handleXlsxImport} disabled={xlsxImporting} style={{ display: 'none' }} />
+                            </label>
+                            <button style={{ ...btn('#2e3349'), marginTop: '12px' }} onClick={() => setShowXlsxImport(false)}><X size={14} />關閉</button>
+                        </div>
+                    </div>
+                )}
+
+                {/* 新增行程 Modal */}
                 {showForm && (
                     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                         <div style={{ ...card, width: '100%', maxWidth: '480px' }}>

@@ -80,7 +80,7 @@ export const EVENT_LABELS: Record<string, string> = {
   fomc: 'FOMC',
   futures: '期貨結算',
   tech: '科技活動',
-  investor: '法說會',
+    investor: '財報日',
   personal: '個人行程',
   dividend: '除權息',
 }

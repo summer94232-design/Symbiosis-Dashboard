@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { collection, getDocs, orderBy, query, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
@@ -86,14 +86,27 @@ export default function Dashboard() {
     const [upcomingEvents, setUpcomingEvents] = useState<CalendarEvent[]>([])
     const [tasks, setTasks] = useState<Task[]>([])
 
+    // ✅ 優化：單一 Promise.all 並行抓取所有資料，消除串行等待
     const loadData = async () => {
         setLoading(true)
         try {
-            const [tradesSnap, dividendsSnap, cashSnap] = await Promise.all([
+            const todayStr_ = new Date().toISOString().split('T')[0]
+            const future14Str = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]
+
+            const [
+                tradesSnap, dividendsSnap, cashSnap,
+                priceDoc, groupDoc,
+                eventsSnap, tasksSnap,
+            ] = await Promise.all([
                 getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
                 getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc'))),
                 getDocs(userCol(investDB, 'cashflow')),
+                getDoc(userDocNested(investDB, 'settings', 'lastPrices')),
+                getDoc(userDocNested(investDB, 'settings', 'stockGroups')),
+                getDocs(userCol(investDB, 'calendarEvents')),
+                getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc'))),
             ])
+
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
             const cashRecords = cashSnap.docs.map(d => d.data() as CashRecord)
@@ -101,22 +114,32 @@ export default function Dashboard() {
             const { holdings: positions, realized } = calcPositions(trades, dividends)
             setRealizedPnL(realized.reduce((s, r) => s + r.realized, 0))
 
-            const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
             const savedPrices: Record<string, number | string> = priceDoc.exists() ? priceDoc.data() : {}
             const savedAt = typeof savedPrices._updatedAt === 'string' ? savedPrices._updatedAt : ''
 
-            // 讀取族群標籤
-            const groupDoc = await getDoc(userDocNested(investDB, 'settings', 'stockGroups'))
             const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
             setStockGroups(groups)
+
+            // 行事曆事件
+            const calEvents: CalendarEvent[] = eventsSnap.docs
+                .map(d => ({ id: d.id, ...d.data() } as CalendarEvent))
+                .filter(e => e.date >= todayStr_ && e.date <= future14Str)
+                .sort((a, b) => a.date.localeCompare(b.date))
+            setUpcomingEvents(calEvents)
+
+            // 待辦任務
+            const allTasks = tasksSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task))
+            setTasks(allTasks.filter(t => !t.done))
 
             let totalMarketValue = 0
             let priceAvailable = false
 
-            const holdingList: HoldingItem[] = Object.values(positions).map(pos => {
-                const currentPrice = typeof savedPrices[pos.code] === 'number'
-                    ? savedPrices[pos.code] as number
-                    : null
+            // 過濾已平倉（shares <= 0）部位
+            const activePositions = Object.values(positions).filter(pos => pos.shares > 0)
+
+            const holdingList: HoldingItem[] = activePositions.map(pos => {
+                const rawPrice = savedPrices[pos.code]
+                const currentPrice = typeof rawPrice === 'number' && rawPrice > 0 ? rawPrice : null
                 if (currentPrice !== null) priceAvailable = true
                 const marketValue = currentPrice !== null ? currentPrice * pos.shares : pos.totalCost
                 const unrealizedPnL = currentPrice !== null ? marketValue - pos.totalCost : 0
@@ -133,34 +156,11 @@ export default function Dashboard() {
             holdingList.sort((a, b) => b.marketValue - a.marketValue)
 
             setHoldings(holdingList)
-            setTotalCash(calcAvailableCash(trades, cashRecords, dividends))
+            setTotalCash(calcAvailableCash(cashRecords, trades))
             setHasPrice(priceAvailable)
             if (savedAt) setLastUpdated(savedAt)
         } catch (err) { console.error(err) }
         finally { setLoading(false) }
-    }
-
-    const loadCalendarEvents = async () => {
-        try {
-            const snap = await getDocs(userCol(investDB, 'calendarEvents'))
-            const todayStr = new Date().toISOString().split('T')[0]
-            const future14Str = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]
-
-            const events: CalendarEvent[] = snap.docs
-                .map(d => ({ id: d.id, ...d.data() } as CalendarEvent))
-                .filter(e => e.date >= todayStr && e.date <= future14Str)
-                .sort((a, b) => a.date.localeCompare(b.date))
-
-            setUpcomingEvents(events)
-        } catch (err) { console.error(err) }
-    }
-
-    const loadTasks = async () => {
-        try {
-            const snap = await getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc')))
-            const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as Task))
-            setTasks(all.filter(t => !t.done))
-        } catch (err) { console.error(err) }
     }
 
     const toggleTask = async (id: string, done: boolean) => {
@@ -181,13 +181,15 @@ export default function Dashboard() {
 
             const priceData: Record<string, number | string> = { _updatedAt: now }
             symbols.forEach(s => { if (quotes[s] !== null) priceData[s] = quotes[s] as number })
-            await setDoc(userDocNested(investDB, 'settings', 'lastPrices'), priceData)
+            // ✅ merge:true 避免覆蓋其他已快取的股票現價
+            await setDoc(userDocNested(investDB, 'settings', 'lastPrices'), priceData, { merge: true })
 
             let totalMarketValue = 0
             let priceAvailable = false
 
             const updated: HoldingItem[] = holdings.map(h => {
-                const currentPrice = quotes[h.code] ?? null
+                const rawPrice = quotes[h.code]
+                const currentPrice = (typeof rawPrice === 'number' && rawPrice > 0) ? rawPrice : null
                 if (currentPrice !== null) priceAvailable = true
                 const marketValue = currentPrice !== null ? currentPrice * h.shares : h.totalCost
                 const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
@@ -210,16 +212,9 @@ export default function Dashboard() {
         setPriceLoading(false)
     }
 
-    const didLoad = useRef(false)
+    // ✅ 優化：直接呼叫，移除不必要的 setTimeout 延遲
     useEffect(() => {
-        if (didLoad.current) return
-        didLoad.current = true
-        const timer = setTimeout(() => {
-            void loadData()
-            void loadCalendarEvents()
-            void loadTasks()
-        }, 0)
-        return () => clearTimeout(timer)
+        void loadData()
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 

@@ -136,6 +136,9 @@ export default function Holdings() {
             const dividends = divSnap.docs.map(d => d.data() as DividendRecord)
             const { holdings: positions } = calcPositions(trades, dividends)
 
+            // ✅ 修正 Bug 2：過濾掉已平倉（shares <= 0）的部位
+            const activePositions = Object.values(positions).filter(pos => pos.shares > 0)
+
             // 讀取現價
             const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
             const savedPrices: Record<string, any> = priceDoc.exists() ? priceDoc.data() : {}
@@ -147,10 +150,12 @@ export default function Holdings() {
             const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
             setStockGroups(groups)
 
-            const list: DisplayHolding[] = Object.values(positions).map(pos => {
-                const currentPrice = savedPrices[pos.code] ?? null
-                const marketValue = currentPrice ? currentPrice * pos.shares : pos.totalCost
-                const unrealizedPnL = currentPrice ? marketValue - pos.totalCost : 0
+            const list: DisplayHolding[] = activePositions.map(pos => {
+                // ✅ 修正 Bug 1：與 Dashboard 一致，用 typeof 確保拿到的是 number
+                const rawPrice = savedPrices[pos.code]
+                const currentPrice = typeof rawPrice === 'number' && rawPrice > 0 ? rawPrice : null
+                const marketValue = currentPrice !== null ? currentPrice * pos.shares : pos.totalCost
+                const unrealizedPnL = currentPrice !== null ? marketValue - pos.totalCost : 0
                 const returnRate = pos.totalCost > 0 ? (unrealizedPnL / pos.totalCost) * 100 : 0
                 return {
                     code: pos.code, name: pos.name, shares: pos.shares,
@@ -173,12 +178,14 @@ export default function Holdings() {
             const quotes = await getMultipleQuotes(symbols)
             const now = new Date().toLocaleString('zh-TW')
 
+            // ✅ 修正：使用 merge: true 避免覆蓋其他股票的現價快取
             const priceData: Record<string, number | string> = { _updatedAt: now }
             symbols.forEach(s => { if (quotes[s] !== null) priceData[s] = quotes[s] as number })
-            await setDoc(userDocNested(investDB, 'settings', 'lastPrices'), priceData)
+            await setDoc(userDocNested(investDB, 'settings', 'lastPrices'), priceData, { merge: true })
 
             const updated: DisplayHolding[] = holdings.map(h => {
-                const currentPrice = quotes[h.code] ?? null
+                const rawPrice = quotes[h.code]
+                const currentPrice = (typeof rawPrice === 'number' && rawPrice > 0) ? rawPrice : null
                 const marketValue = currentPrice !== null ? currentPrice * h.shares : h.totalCost
                 const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
                 const returnRate = (currentPrice !== null && h.totalCost > 0)
@@ -271,7 +278,8 @@ export default function Holdings() {
                         </div>
                     ))}
                 </div>
-                        <div style={card}>
+
+                <div style={card}>
                     {loading ? (
                         <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div>
                     ) : holdings.length === 0 ? (
