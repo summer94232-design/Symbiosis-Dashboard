@@ -108,7 +108,7 @@ export default function AssetTrend() {
             setMissingPriceCodes(missing)
 
             // ✅ 新增 dividends：現金股息計入可用現金
-            const cash = calcAvailableCash(trades, cashRecords, dividends)
+            const cash = calcAvailableCash(cashRecords, trades)
             const totalAssets = marketValue + cash
 
             setForm(f => ({
@@ -142,7 +142,7 @@ export default function AssetTrend() {
             setMissingPriceCodes(missing)
 
             // ✅ 新增 dividends：現金股息計入可用現金
-            const cash = calcAvailableCash(trades, cashRecords, dividends)
+            const cash = calcAvailableCash(cashRecords, trades)
             const totalAssets = marketValue + cash
             const today = new Date().toISOString().split('T')[0]
 
