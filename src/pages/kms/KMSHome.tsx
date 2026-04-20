@@ -623,7 +623,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                                                 style={{ margin: 0, fontSize: '13px', color: '#8892a4', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
                                                 {note.content}
                                             </p>
-                                            {note.content.length > 150 && (
+                                            {(note.content.split('\n').length > 3 || note.content.length > 120) && (
                                                 <button onClick={() => setExpandedId(isExpanded ? null : note.id!)}
                                                     style={{ background: 'none', border: 'none', color: '#4f8ef7', fontSize: '12px', cursor: 'pointer', padding: '4px 0', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                     {isExpanded ? <><ChevronUp size={12} />收起</> : <><ChevronDown size={12} />展開全文</>}

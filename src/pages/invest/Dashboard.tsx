@@ -72,6 +72,52 @@ function renderCustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent
     )
 }
 
+// 個股圓餅圖 — 自訂 Tooltip
+function AssetTooltip({ active, payload, totalAssets }: any) {
+    if (!active || !payload?.length) return null
+    const { name, value, payload: { fill } } = payload[0]
+    const pct = totalAssets > 0 ? ((value / totalAssets) * 100).toFixed(1) : '0.0'
+    return (
+        <div style={{ backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '10px', padding: '10px 14px', minWidth: '160px', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '8px' }}>
+                <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: fill, flexShrink: 0 }} />
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#e2e8f0' }}>{name}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', fontSize: '12px' }}>
+                <span style={{ color: '#8892a4' }}>市值</span>
+                <span style={{ color: '#e2e8f0', fontWeight: 600 }}>${value.toLocaleString()}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', fontSize: '12px', marginTop: '4px' }}>
+                <span style={{ color: '#8892a4' }}>佔比</span>
+                <span style={{ color: '#4f8ef7', fontWeight: 600 }}>{pct}%</span>
+            </div>
+        </div>
+    )
+}
+
+// 族群圓餅圖 — 自訂 Tooltip
+function GroupTooltip({ active, payload, totalAssets }: any) {
+    if (!active || !payload?.length) return null
+    const { name, value, payload: { fill } } = payload[0]
+    const pct = totalAssets > 0 ? ((value / totalAssets) * 100).toFixed(1) : '0.0'
+    return (
+        <div style={{ backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '10px', padding: '10px 14px', minWidth: '160px', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '8px' }}>
+                <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: fill, flexShrink: 0 }} />
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#e2e8f0' }}>{name}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', fontSize: '12px' }}>
+                <span style={{ color: '#8892a4' }}>市值</span>
+                <span style={{ color: '#e2e8f0', fontWeight: 600 }}>${value.toLocaleString()}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', fontSize: '12px', marginTop: '4px' }}>
+                <span style={{ color: '#8892a4' }}>佔比</span>
+                <span style={{ color: '#a78bfa', fontWeight: 600 }}>{pct}%</span>
+            </div>
+        </div>
+    )
+}
+
 export default function Dashboard() {
     const navigate = useNavigate()
     const [holdings, setHoldings] = useState<HoldingItem[]>([])
@@ -264,11 +310,6 @@ export default function Dashboard() {
         ? `未實現損益（${holdingsWithPrice.length}/${holdings.length} 檔）`
         : '未實現損益'
 
-    const tooltipFormatter = (value: number | string | readonly (string | number)[] | undefined): [string, string] => {
-        const num = value === undefined ? 0 : typeof value === 'number' ? value : Number(value)
-        return [`$${num.toLocaleString()}`, '金額']
-    }
-
     const todayStr = new Date().toISOString().split('T')[0]
     const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0]
 
@@ -402,7 +443,7 @@ export default function Dashboard() {
                                                         <Cell key={i} fill={entry.fill} />
                                                     ))}
                                                 </Pie>
-                                                <Tooltip formatter={tooltipFormatter} contentStyle={{ backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '8px', color: '#e2e8f0' }} />
+                                                <Tooltip content={<AssetTooltip totalAssets={totalAssets} />} />
                                             </PieChart>
                                         </ResponsiveContainer>
                                         <div className="pie-legend" style={{ marginTop: '8px' }}>
@@ -424,9 +465,6 @@ export default function Dashboard() {
                             <div style={card}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
                                     <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>族群佔比</div>
-                                    <span style={{ fontSize: '11px', backgroundColor: 'rgba(167,139,250,0.15)', color: '#a78bfa', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
-                                        自訂分類
-                                    </span>
                                 </div>
                                 {!hasAnyGroup ? (
                                     <div style={{ textAlign: 'center', padding: '40px 20px', color: '#8892a4', fontSize: '13px' }}>
@@ -458,7 +496,7 @@ export default function Dashboard() {
                                                         <Cell key={i} fill={entry.fill} />
                                                     ))}
                                                 </Pie>
-                                                <Tooltip formatter={tooltipFormatter} contentStyle={{ backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '8px', color: '#e2e8f0' }} />
+                                                <Tooltip content={<GroupTooltip totalAssets={totalAssets} />} />
                                             </PieChart>
                                         </ResponsiveContainer>
                                         <div className="pie-legend" style={{ marginTop: '8px' }}>

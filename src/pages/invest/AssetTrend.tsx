@@ -184,6 +184,8 @@ export default function AssetTrend() {
     const filtered = filterByRange(snapshots)
     const latest = snapshots[snapshots.length - 1]
 
+
+
     return (
         <>
             <style>{`
@@ -194,7 +196,7 @@ export default function AssetTrend() {
             <div style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
                     <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>資產趨勢</h2>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <button onClick={saveToday} disabled={saving} style={btn('#00c896')}>
                             <Save size={15} style={{ animation: saving ? 'spin 1s linear infinite' : 'none' }} />
                             {saving ? '儲存中...' : '儲存今日快照'}

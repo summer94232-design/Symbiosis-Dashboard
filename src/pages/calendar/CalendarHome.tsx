@@ -33,7 +33,7 @@ export default function CalendarHome() {
     // 用 ref 保存最新 watchList，避免 closure 捕捉到舊值
     const watchListRef = useRef<{ code: string; name: string }[]>([])
     const [filterTypes, setFilterTypes] = useState<Set<string>>(new Set(['fomc', 'futures', 'tech', 'investor', 'personal', 'dividend']))
-    const [myStocksOnly, setMyStocksOnly] = useState(false)
+    const [myStocksOnly, setMyStocksOnly] = useState(true)
     const [myStockCodes, setMyStockCodes] = useState<Set<string>>(new Set())
     const [form, setForm] = useState({ title: '', date: '', description: '', url: '' })
 

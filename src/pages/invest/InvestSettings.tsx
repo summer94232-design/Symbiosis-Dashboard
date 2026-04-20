@@ -6,6 +6,13 @@ import { calcFee, calcTax } from '../../lib/calc'
 import { Download, Upload, FileSpreadsheet, Database, FileDown } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
+interface SnapshotRecord {
+    date: string
+    totalAssets: number
+    marketValue: number
+    cash: number
+}
+
 interface StockRow {
     '股票代號'?: string
     '代號'?: string
@@ -85,6 +92,7 @@ export default function InvestSettings() {
     const [divImportResult, setDivImportResult] = useState<{ success: number; failed: number } | null>(null)
     const [exportLoading, setExportLoading] = useState(false)
     const [fullExportLoading, setFullExportLoading] = useState(false)
+    const [trendExportLoading, setTrendExportLoading] = useState(false)
     const [tradeImporting, setTradeImporting] = useState(false)
     const [cashImporting, setCashImporting] = useState(false)
     const [divImporting, setDivImporting] = useState(false)
@@ -292,11 +300,12 @@ export default function InvestSettings() {
     const exportAllData = async () => {
         setFullExportLoading(true)
         try {
-            const [tradesSnap, cashSnap, dividendsSnap, dictSnap] = await Promise.all([
+            const [tradesSnap, cashSnap, dividendsSnap, dictSnap, snapshotsSnap] = await Promise.all([
                 getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'desc'))),
                 getDocs(query(userCol(investDB, 'cashflow'), orderBy('date', 'desc'))),
                 getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'desc'))),
                 getDocs(userCol(investDB, 'stockDict')),
+                getDocs(query(userCol(investDB, 'assetSnapshots'), orderBy('date', 'desc'))),
             ])
 
             const tradesData = tradesSnap.docs.map(d => {
@@ -345,16 +354,28 @@ export default function InvestSettings() {
                 '股票名稱': (d.data() as { name: string }).name,
             }))
 
+            const snapshotsData = snapshotsSnap.docs.map(d => {
+                const s = d.data() as SnapshotRecord
+                return {
+                    '日期': s.date,
+                    '總資產': s.totalAssets,
+                    '股票市值': s.marketValue,
+                    '現金': s.cash,
+                }
+            })
+
             const wb = XLSX.utils.book_new()
             XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tradesData.length ? tradesData : [{}]), '買賣紀錄')
             XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(cashData.length ? cashData : [{}]), '出入金紀錄')
             XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dividendsData.length ? dividendsData : [{}]), '除權息紀錄')
             XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dictData.length ? dictData : [{}]), '股票字典')
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(snapshotsData.length ? snapshotsData : [{}]), '資產趨勢')
             XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
                 { '項目': '買賣紀錄', '筆數': tradesData.length },
                 { '項目': '出入金紀錄', '筆數': cashData.length },
                 { '項目': '除權息紀錄', '筆數': dividendsData.length },
                 { '項目': '股票字典', '筆數': dictData.length },
+                { '項目': '資產趨勢快照', '筆數': snapshotsData.length },
                 { '項目': '匯出時間', '筆數': new Date().toLocaleString('zh-TW') },
             ]), '摘要')
 
@@ -395,6 +416,33 @@ export default function InvestSettings() {
         const rows = records.map(r => [r.date, r.code, r.name, r.cashDividend, r.stockDividend, r.note ?? ''])
         downloadCSV([header, ...rows].map(r => r.join(',')).join('\n'), `除權息紀錄_${today()}.csv`)
         showMsg('✅ 已匯出除權息紀錄')
+    }
+
+    const exportTrendCSV = async () => {
+        setTrendExportLoading(true)
+        const snap = await getDocs(query(userCol(investDB, 'assetSnapshots'), orderBy('date', 'asc')))
+        const records = snap.docs.map(d => d.data() as SnapshotRecord)
+        if (records.length === 0) { showMsg('⚠️ 尚無資產趨勢資料'); setTrendExportLoading(false); return }
+        const header = ['日期', '總資產', '股票市值', '現金']
+        const rows = records.map(r => [r.date, r.totalAssets, r.marketValue, r.cash])
+        downloadCSV([header, ...rows].map(r => r.join(',')).join('\n'), `資產趨勢_${today()}.csv`)
+        showMsg('✅ 已匯出資產趨勢（CSV）')
+        setTrendExportLoading(false)
+    }
+
+    const exportTrendXLSX = async () => {
+        setTrendExportLoading(true)
+        const snap = await getDocs(query(userCol(investDB, 'assetSnapshots'), orderBy('date', 'asc')))
+        const records = snap.docs.map(d => d.data() as SnapshotRecord)
+        if (records.length === 0) { showMsg('⚠️ 尚無資產趨勢資料'); setTrendExportLoading(false); return }
+        const rows = records.map(r => ({ '日期': r.date, '總資產': r.totalAssets, '股票市值': r.marketValue, '現金': r.cash }))
+        const ws = XLSX.utils.json_to_sheet(rows)
+        ws['!cols'] = [{ wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }]
+        const wb = XLSX.utils.book_new()
+        XLSX.utils.book_append_sheet(wb, ws, '資產趨勢')
+        XLSX.writeFile(wb, `資產趨勢_${today()}.xlsx`)
+        showMsg('✅ 已匯出資產趨勢（Excel）')
+        setTrendExportLoading(false)
     }
 
     const downloadCSV = (csv: string, filename: string) => {
@@ -559,6 +607,26 @@ export default function InvestSettings() {
                         </button>
                         <button style={{ ...btn('#f5a623'), fontSize: '13px' }} onClick={exportDividends}>
                             <Download size={14} />除權息
+                        </button>
+                    </div>
+                </div>
+
+                {/* ⑦ 資產趨勢匯出 */}
+                <div style={card}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <Download size={16} color="#00c896" />
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>資產趨勢</span>
+                        <span style={{ fontSize: '11px', backgroundColor: 'rgba(0,200,150,0.15)', color: '#00c896', padding: '1px 7px', borderRadius: '20px' }}>CSV / xlsx</span>
+                    </div>
+                    <p style={{ fontSize: '12px', color: '#8892a4', marginBottom: '14px', lineHeight: 1.6 }}>
+                        匯出所有資產快照紀錄（日期、總資產、股票市值、現金），完整備份也已包含此資料。
+                    </p>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button style={{ ...btn('#00c896'), fontSize: '13px', opacity: trendExportLoading ? 0.6 : 1 }} onClick={exportTrendCSV} disabled={trendExportLoading}>
+                            <Download size={14} />CSV
+                        </button>
+                        <button style={{ ...btn('#21253a'), border: '1px solid #2e3349', fontSize: '13px', opacity: trendExportLoading ? 0.6 : 1 }} onClick={exportTrendXLSX} disabled={trendExportLoading}>
+                            <Download size={14} />Excel
                         </button>
                     </div>
                 </div>

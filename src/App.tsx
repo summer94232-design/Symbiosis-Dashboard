@@ -249,7 +249,7 @@ export default function App() {
                     <LogOut size={14} />登出
                 </button>
                 <div style={{ textAlign: 'center', marginTop: '8px' }}>
-                    <span style={{ fontSize: '11px', color: '#8892a4' }}>v0.1.0</span>
+                    <span style={{ fontSize: '11px', color: '#8892a4' }}>v14.1.1</span>
                 </div>
             </div>
         </aside>
