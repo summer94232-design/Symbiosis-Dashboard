@@ -50,7 +50,6 @@ export default function AssetTrend() {
     const [editingDate, setEditingDate] = useState<string | null>(null)
     const [form, setForm] = useState<SnapshotRecord>(emptySnap)
     const [formLoading, setFormLoading] = useState(false)
-    // ✅ 記錄哪些持倉沒有現價，供警示使用
     const [missingPriceCodes, setMissingPriceCodes] = useState<string[]>([])
 
     const loadSnapshots = async () => {
@@ -66,7 +65,6 @@ export default function AssetTrend() {
         init()
     }, [])
 
-    // 計算市值時若有持倉無現價，記錄缺漏代號供警示
     const calcMarketValue = (
         positions: Record<string, { code: string; shares: number; totalCost: number }>,
         savedPrices: Record<string, number>
@@ -78,7 +76,6 @@ export default function AssetTrend() {
             if (price !== undefined && price > 0) {
                 marketValue += price * pos.shares
             } else {
-                // 無現價時 fallback 到成本，並記錄該代號
                 marketValue += pos.totalCost
                 missing.push(pos.code)
             }
@@ -107,7 +104,6 @@ export default function AssetTrend() {
             const { marketValue, missing } = calcMarketValue(positions, savedPrices)
             setMissingPriceCodes(missing)
 
-            // ✅ 新增 dividends：現金股息計入可用現金
             const cash = calcAvailableCash(cashRecords, trades)
             const totalAssets = marketValue + cash
 
@@ -141,7 +137,6 @@ export default function AssetTrend() {
             const { marketValue, missing } = calcMarketValue(positions, savedPrices)
             setMissingPriceCodes(missing)
 
-            // ✅ 新增 dividends：現金股息計入可用現金
             const cash = calcAvailableCash(cashRecords, trades)
             const totalAssets = marketValue + cash
             const today = new Date().toISOString().split('T')[0]
@@ -184,7 +179,21 @@ export default function AssetTrend() {
     const filtered = filterByRange(snapshots)
     const latest = snapshots[snapshots.length - 1]
 
-
+    // Y 軸範圍：依資料自動計算，不從 0 開始
+    const yDomain = (() => {
+        if (filtered.length < 2) return ['auto', 'auto'] as [string, string]
+        const allValues = filtered.map(d => d.totalAssets)
+        const minVal = Math.min(...allValues)
+        const maxVal = Math.max(...allValues)
+        const span = maxVal - minVal
+        // 上下各留 10% 空間，最少留 5% of maxVal
+        const padding = span * 0.1 || maxVal * 0.05
+        // 向下/上取整到最近的「整萬」
+        const step = 10000
+        const yMin = Math.floor((minVal - padding) / step) * step
+        const yMax = Math.ceil((maxVal + padding) / step) * step
+        return [yMin, yMax] as [number, number]
+    })()
 
     return (
         <>
@@ -249,11 +258,14 @@ export default function AssetTrend() {
                             <LineChart data={filtered} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#2e3349" />
                                 <XAxis dataKey="date" tick={{ fill: '#8892a4', fontSize: 12 }} tickFormatter={d => d.slice(5)} />
-                                <YAxis tick={{ fill: '#8892a4', fontSize: 12 }} tickFormatter={v => `${(v / 10000).toFixed(0)}萬`} width={60} />
+                                <YAxis
+                                    domain={yDomain}
+                                    tick={{ fill: '#8892a4', fontSize: 12 }}
+                                    tickFormatter={v => `${(v / 10000).toFixed(0)}萬`}
+                                    width={60}
+                                />
                                 <Tooltip content={<CustomTooltip />} />
                                 <Line type="monotone" dataKey="totalAssets" name="總資產" stroke="#4f8ef7" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#4f8ef7' }} />
-                                <Line type="monotone" dataKey="marketValue" name="股票市值" stroke="#00c896" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#00c896' }} />
-                                <Line type="monotone" dataKey="cash" name="現金" stroke="#f5a623" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#f5a623' }} />
                             </LineChart>
                         </ResponsiveContainer>
                     )}
