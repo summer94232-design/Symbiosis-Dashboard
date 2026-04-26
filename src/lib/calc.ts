@@ -35,6 +35,9 @@ export interface TradeRecord {
     tax: number
     total: number
     note?: string
+    isMargin?: boolean     // 是否為融資交易
+    marginRatio?: number   // 融資成數（例：0.6）
+    marginAmount?: number  // 融資借款金額
 }
 
 export interface DividendRecord {
@@ -142,6 +145,7 @@ export function calcAvailableCash(
 ): number {
     const cashIn = cashflows.filter(c => c.type === 'in').reduce((s, c) => s + (c.amount || 0), 0)
     const cashOut = cashflows.filter(c => c.type === 'out').reduce((s, c) => s + (c.amount || 0), 0)
+    // 融資買入只算自備款（total = 自備款 + 手續費），不算融資借款部分
     const buyTotal = trades.filter(t => t.type === 'buy').reduce((s, t) => s + (t.total || 0), 0)
     const sellTotal = trades.filter(t => t.type === 'sell').reduce((s, t) => s + (t.total || 0), 0)
     return cashIn - cashOut - buyTotal + sellTotal

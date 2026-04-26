@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from 'react'
+import { useState, useEffect, lazy, Suspense, memo } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
 import { LayoutDashboard, ArrowLeftRight, TrendingUp, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper } from 'lucide-react'
 import { getDocs, orderBy, query } from 'firebase/firestore'
@@ -112,6 +112,136 @@ const PageLoader = () => (
     </div>
 )
 
+// ─────────────────────────────────────────────────────────────
+// ★ 核心修復：Sidebar 移到 App 函式外部，用 memo 避免不必要重繪
+// ─────────────────────────────────────────────────────────────
+interface SidebarProps {
+    isMobile: boolean
+    setSidebarOpen: (open: boolean) => void
+    currentSystem: string
+    isKMSHome: boolean
+    tagTree: Record<string, TreeNode>
+    kmsExpanded: boolean
+    setKmsExpanded: (v: boolean | ((prev: boolean) => boolean)) => void
+    selectedTag: string
+    setSelectedTag: (tag: string) => void
+    expandedNodes: Set<string>
+    toggleNode: (path: string) => void
+}
+
+const Sidebar = memo(({
+    isMobile,
+    setSidebarOpen,
+    currentSystem,
+    isKMSHome,
+    tagTree,
+    kmsExpanded,
+    setKmsExpanded,
+    selectedTag,
+    setSelectedTag,
+    expandedNodes,
+    toggleNode,
+}: SidebarProps) => (
+    <aside style={{ width: '224px', minWidth: '224px', backgroundColor: '#1a1d27', borderRight: '1px solid #2e3349', display: 'flex', flexDirection: 'column', height: '100vh', position: isMobile ? 'fixed' : 'relative', top: 0, left: 0, zIndex: 100 }}>
+        <div style={{ padding: '20px', borderBottom: '1px solid #2e3349', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+                <div style={{ fontSize: '16px', fontWeight: 700, color: '#e2e8f0' }}>共生</div>
+                <div style={{ fontSize: '12px', color: '#8892a4', marginTop: '2px' }}>Symbiosis Dashboard</div>
+            </div>
+            {isMobile && <button onClick={() => setSidebarOpen(false)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={20} /></button>}
+        </div>
+
+        {/* 三系統切換 */}
+        <div style={{ display: 'flex', margin: '12px', backgroundColor: '#21253a', borderRadius: '8px', padding: '4px', gap: '4px' }}>
+            {[
+                { to: '/invest', label: '投資', key: 'invest' },
+                { to: '/kms', label: '知識', key: 'kms' },
+                { to: '/calendar', label: '行事曆', key: 'calendar' },
+            ].map(({ to, label, key }) => (
+                <NavLink key={key} to={to} style={{ flex: 1, textAlign: 'center', fontSize: '11px', padding: '6px 4px', borderRadius: '6px', textDecoration: 'none', backgroundColor: currentSystem === key ? '#4f8ef7' : 'transparent', color: currentSystem === key ? '#fff' : '#8892a4', fontWeight: currentSystem === key ? 600 : 400 }}>
+                    {label}
+                </NavLink>
+            ))}
+        </div>
+
+        <nav style={{ flex: 1, padding: '0 12px', overflowY: 'auto' }}>
+            {currentSystem === 'invest' && (
+                investNav.map(({ to, icon: Icon, label }) => (
+                    <NavLink key={to} to={to} end={to === '/invest'}
+                        style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'rgba(79,142,247,0.12)' : 'transparent', color: isActive ? '#4f8ef7' : '#8892a4', fontWeight: isActive ? 600 : 400 })}>
+                        <Icon size={16} /><span>{label}</span>
+                    </NavLink>
+                ))
+            )}
+
+            {currentSystem === 'calendar' && (
+                calendarNav.map(({ to, icon: Icon, label }) => (
+                    <NavLink key={to} to={to} end={to === '/calendar'}
+                        style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'rgba(79,142,247,0.12)' : 'transparent', color: isActive ? '#4f8ef7' : '#8892a4', fontWeight: isActive ? 600 : 400 })}>
+                        <Icon size={16} /><span>{label}</span>
+                    </NavLink>
+                ))
+            )}
+
+            {currentSystem === 'kms' && (
+                <>
+                    <div>
+                        <div style={{ display: 'flex', alignItems: 'center', borderRadius: '8px', marginBottom: '2px', backgroundColor: isKMSHome ? 'rgba(79,142,247,0.12)' : 'transparent' }}>
+                            <NavLink to="/kms" end onClick={() => { setSelectedTag(''); setKmsExpanded(true) }}
+                                style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', textDecoration: 'none', fontSize: '14px', color: isKMSHome ? '#4f8ef7' : '#8892a4', fontWeight: isKMSHome ? 600 : 400 }}>
+                                <BookOpen size={16} /><span>知識庫</span>
+                            </NavLink>
+                            {Object.keys(tagTree).length > 0 && (
+                                <button onClick={() => setKmsExpanded(v => !v)}
+                                    style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', padding: '10px 8px', display: 'flex' }}>
+                                    {kmsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                </button>
+                            )}
+                        </div>
+                        {kmsExpanded && Object.keys(tagTree).length > 0 && (
+                            <div style={{ marginBottom: '4px' }}>
+                                {Object.values(tagTree).sort((a, b) => a.name.localeCompare(b.name, 'zh-TW')).map(node => (
+                                    <TreeNodeComponent key={node.fullPath} node={node} depth={0}
+                                        selectedTag={selectedTag} setSelectedTag={setSelectedTag}
+                                        expandedNodes={expandedNodes} toggleNode={toggleNode} />
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    <NavLink to="/kms/tags" style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'rgba(79,142,247,0.12)' : 'transparent', color: isActive ? '#4f8ef7' : '#8892a4', fontWeight: isActive ? 600 : 400 })}>
+                        <Tag size={16} /><span>標籤管理</span>
+                    </NavLink>
+                    <NavLink to="/kms/export" style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'rgba(0,200,150,0.10)' : 'transparent', color: isActive ? '#00c896' : '#8892a4', fontWeight: isActive ? 600 : 400 })}>
+                        <Download size={16} /><span>匯出筆記</span>
+                    </NavLink>
+                    <NavLink to="/kms/graph" style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'rgba(79,142,247,0.12)' : 'transparent', color: isActive ? '#4f8ef7' : '#8892a4', fontWeight: isActive ? 600 : 400 })}>
+                        <Network size={16} /><span>知識圖譜</span>
+                    </NavLink>
+                    <NavLink to="/kms/trash" style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'rgba(255,87,87,0.10)' : 'transparent', color: isActive ? '#ff5757' : '#8892a4', fontWeight: isActive ? 600 : 400 })}>
+                        <Trash2 size={16} /><span>垃圾桶</span>
+                    </NavLink>
+                </>
+            )}
+        </nav>
+
+        <div style={{ padding: '12px', borderTop: '1px solid #2e3349' }}>
+            <button onClick={() => signOutAll()}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: 'transparent', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px', color: '#8892a4', fontSize: '12px', cursor: 'pointer', transition: 'all 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = '#ff5757'; e.currentTarget.style.color = '#ff5757' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = '#2e3349'; e.currentTarget.style.color = '#8892a4' }}>
+                <LogOut size={14} />登出
+            </button>
+            <div style={{ textAlign: 'center', marginTop: '8px' }}>
+                <span style={{ fontSize: '11px', color: '#8892a4' }}>v14.1.1</span>
+            </div>
+        </div>
+    </aside>
+))
+
+Sidebar.displayName = 'Sidebar'
+
+// ─────────────────────────────────────────────────────────────
+
 export default function App() {
     const location = useLocation()
     const isKMS = location.pathname.startsWith('/kms')
@@ -138,6 +268,7 @@ export default function App() {
         if (isKMSHome) { setKmsExpanded(true) } else { setKmsExpanded(false); setSelectedTag('') }
     }, [isKMSHome])
 
+    // ★ 修復：移除 location.pathname，只在進入/離開 KMS 時載入一次
     useEffect(() => {
         if (!isKMS) return
         const loadTags = async () => {
@@ -148,7 +279,7 @@ export default function App() {
             setTagTree(buildTree(Array.from(tags).sort()))
         }
         loadTags()
-    }, [isKMS, location.pathname])
+    }, [isKMS]) // ← 移除了 location.pathname
 
     const toggleNode = (path: string) => {
         setExpandedNodes(prev => {
@@ -158,110 +289,27 @@ export default function App() {
         })
     }
 
-    const Sidebar = () => (
-        <aside style={{ width: '224px', minWidth: '224px', backgroundColor: '#1a1d27', borderRight: '1px solid #2e3349', display: 'flex', flexDirection: 'column', height: '100vh', position: isMobile ? 'fixed' : 'relative', top: 0, left: 0, zIndex: 100 }}>
-            <div style={{ padding: '20px', borderBottom: '1px solid #2e3349', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                    <div style={{ fontSize: '16px', fontWeight: 700, color: '#e2e8f0' }}>共生</div>
-                    <div style={{ fontSize: '12px', color: '#8892a4', marginTop: '2px' }}>Symbiosis Dashboard</div>
-                </div>
-                {isMobile && <button onClick={() => setSidebarOpen(false)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={20} /></button>}
-            </div>
-
-            {/* 三系統切換 */}
-            <div style={{ display: 'flex', margin: '12px', backgroundColor: '#21253a', borderRadius: '8px', padding: '4px', gap: '4px' }}>
-                {[
-                    { to: '/invest', label: '投資', key: 'invest' },
-                    { to: '/kms', label: '知識', key: 'kms' },
-                    { to: '/calendar', label: '行事曆', key: 'calendar' },
-                ].map(({ to, label, key }) => (
-                    <NavLink key={key} to={to} style={{ flex: 1, textAlign: 'center', fontSize: '11px', padding: '6px 4px', borderRadius: '6px', textDecoration: 'none', backgroundColor: currentSystem === key ? '#4f8ef7' : 'transparent', color: currentSystem === key ? '#fff' : '#8892a4', fontWeight: currentSystem === key ? 600 : 400 }}>
-                        {label}
-                    </NavLink>
-                ))}
-            </div>
-
-            <nav style={{ flex: 1, padding: '0 12px', overflowY: 'auto' }}>
-                {currentSystem === 'invest' && (
-                    investNav.map(({ to, icon: Icon, label }) => (
-                        <NavLink key={to} to={to} end={to === '/invest'}
-                            style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'rgba(79,142,247,0.12)' : 'transparent', color: isActive ? '#4f8ef7' : '#8892a4', fontWeight: isActive ? 600 : 400 })}>
-                            <Icon size={16} /><span>{label}</span>
-                        </NavLink>
-                    ))
-                )}
-
-                {currentSystem === 'calendar' && (
-                    calendarNav.map(({ to, icon: Icon, label }) => (
-                        <NavLink key={to} to={to} end={to === '/calendar'}
-                            style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'rgba(79,142,247,0.12)' : 'transparent', color: isActive ? '#4f8ef7' : '#8892a4', fontWeight: isActive ? 600 : 400 })}>
-                            <Icon size={16} /><span>{label}</span>
-                        </NavLink>
-                    ))
-                )}
-
-                {currentSystem === 'kms' && (
-                    <>
-                        <div>
-                            <div style={{ display: 'flex', alignItems: 'center', borderRadius: '8px', marginBottom: '2px', backgroundColor: isKMSHome ? 'rgba(79,142,247,0.12)' : 'transparent' }}>
-                                <NavLink to="/kms" end onClick={() => { setSelectedTag(''); setKmsExpanded(true) }}
-                                    style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', textDecoration: 'none', fontSize: '14px', color: isKMSHome ? '#4f8ef7' : '#8892a4', fontWeight: isKMSHome ? 600 : 400 }}>
-                                    <BookOpen size={16} /><span>知識庫</span>
-                                </NavLink>
-                                {Object.keys(tagTree).length > 0 && (
-                                    <button onClick={() => setKmsExpanded(v => !v)}
-                                        style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', padding: '10px 8px', display: 'flex' }}>
-                                        {kmsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                    </button>
-                                )}
-                            </div>
-                            {kmsExpanded && Object.keys(tagTree).length > 0 && (
-                                <div style={{ marginBottom: '4px' }}>
-                                    {Object.values(tagTree).sort((a, b) => a.name.localeCompare(b.name, 'zh-TW')).map(node => (
-                                        <TreeNodeComponent key={node.fullPath} node={node} depth={0}
-                                            selectedTag={selectedTag} setSelectedTag={setSelectedTag}
-                                            expandedNodes={expandedNodes} toggleNode={toggleNode} />
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                        <NavLink to="/kms/tags" style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'rgba(79,142,247,0.12)' : 'transparent', color: isActive ? '#4f8ef7' : '#8892a4', fontWeight: isActive ? 600 : 400 })}>
-                            <Tag size={16} /><span>標籤管理</span>
-                        </NavLink>
-                        <NavLink to="/kms/export" style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'rgba(0,200,150,0.10)' : 'transparent', color: isActive ? '#00c896' : '#8892a4', fontWeight: isActive ? 600 : 400 })}>
-                            <Download size={16} /><span>匯出筆記</span>
-                        </NavLink>
-                        <NavLink to="/kms/graph" style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'rgba(79,142,247,0.12)' : 'transparent', color: isActive ? '#4f8ef7' : '#8892a4', fontWeight: isActive ? 600 : 400 })}>
-                            <Network size={16} /><span>知識圖譜</span>
-                        </NavLink>
-                        <NavLink to="/kms/trash" style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'rgba(255,87,87,0.10)' : 'transparent', color: isActive ? '#ff5757' : '#8892a4', fontWeight: isActive ? 600 : 400 })}>
-                            <Trash2 size={16} /><span>垃圾桶</span>
-                        </NavLink>
-                    </>
-                )}
-            </nav>
-
-            <div style={{ padding: '12px', borderTop: '1px solid #2e3349' }}>
-                <button onClick={() => signOutAll()}
-                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: 'transparent', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px', color: '#8892a4', fontSize: '12px', cursor: 'pointer', transition: 'all 0.15s' }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#ff5757'; e.currentTarget.style.color = '#ff5757' }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#2e3349'; e.currentTarget.style.color = '#8892a4' }}>
-                    <LogOut size={14} />登出
-                </button>
-                <div style={{ textAlign: 'center', marginTop: '8px' }}>
-                    <span style={{ fontSize: '11px', color: '#8892a4' }}>v14.1.1</span>
-                </div>
-            </div>
-        </aside>
-    )
+    const sidebarProps: SidebarProps = {
+        isMobile,
+        setSidebarOpen,
+        currentSystem,
+        isKMSHome,
+        tagTree,
+        kmsExpanded,
+        setKmsExpanded,
+        selectedTag,
+        setSelectedTag,
+        expandedNodes,
+        toggleNode,
+    }
 
     return (
         <div style={{ display: 'flex', height: '100vh', backgroundColor: '#0f1117', overflow: 'hidden' }}>
-            {!isMobile && <Sidebar />}
+            {!isMobile && <Sidebar {...sidebarProps} />}
             {isMobile && sidebarOpen && (
                 <>
                     <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 99 }} />
-                    <Sidebar />
+                    <Sidebar {...sidebarProps} />
                 </>
             )}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>

@@ -148,39 +148,64 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         const removedLinks = oldLinks.filter(id => !newLinks.includes(id))
 
         if (editingId) {
-            await updateDoc(userDoc(kmsDB, 'notes', editingId), { ...form, updatedAt: now })
+            const updatedNote: Note = { ...form, updatedAt: now }
+            await updateDoc(userDoc(kmsDB, 'notes', editingId), { ...updatedNote })
+
+            // 更新雙向連結
+            for (const linkedId of addedLinks) {
+                const linkedNote = notes.find(n => n.id === linkedId)
+                if (linkedNote) {
+                    const updatedLinks = [...new Set([...(linkedNote.links || []), editingId])]
+                    await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links: updatedLinks })
+                    // 本地同步
+                    setNotes(prev => prev.map(n => n.id === linkedId ? { ...n, links: updatedLinks } : n))
+                }
+            }
+            for (const linkedId of removedLinks) {
+                const linkedNote = notes.find(n => n.id === linkedId)
+                if (linkedNote) {
+                    const updatedLinks = (linkedNote.links || []).filter(id => id !== editingId)
+                    await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links: updatedLinks })
+                    setNotes(prev => prev.map(n => n.id === linkedId ? { ...n, links: updatedLinks } : n))
+                }
+            }
+
+            // 本地 state 更新，不重讀 Firestore
+            setNotes(prev => prev.map(n => n.id === editingId ? { ...n, ...updatedNote } : n))
         } else {
             const docRef = await addDoc(userCol(kmsDB, 'notes'), { ...form, createdAt: now, updatedAt: now })
-            // 新筆記的 id
             const newId = docRef.id
-            // 更新被連結的筆記加入反向連結
+            const newNote: Note = { ...form, id: newId, createdAt: now, updatedAt: now }
+
+            // 更新被連結的筆記加入反向連結（本地 + Firestore）
+            const updatedLinks: Record<string, string[]> = {}
             for (const linkedId of newLinks) {
                 const linkedNote = notes.find(n => n.id === linkedId)
                 if (linkedNote) {
-                    const updatedLinks = [...new Set([...(linkedNote.links || []), newId])]
-                    await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links: updatedLinks })
+                    const links = [...new Set([...(linkedNote.links || []), newId])]
+                    await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links })
+                    updatedLinks[linkedId] = links
                 }
             }
-            setShowForm(false); setEditingId(null); setForm(empty); setLoading(false); load(); return
+
+            // 本地 state 插入新筆記（前端依 createdAt desc，新筆記放最前）
+            setNotes(prev => {
+                const updated = prev.map(n => updatedLinks[n.id!] ? { ...n, links: updatedLinks[n.id!] } : n)
+                return [newNote, ...updated]
+            })
+
+            // 更新 allTags
+            const newTags = new Set(allTags)
+                ; (form.hashtags || []).forEach(t => newTags.add(t))
+            setAllTags(Array.from(newTags).sort())
         }
 
-        // 更新雙向連結
-        for (const linkedId of addedLinks) {
-            const linkedNote = notes.find(n => n.id === linkedId)
-            if (linkedNote && editingId) {
-                const updatedLinks = [...new Set([...(linkedNote.links || []), editingId])]
-                await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links: updatedLinks })
-            }
-        }
-        for (const linkedId of removedLinks) {
-            const linkedNote = notes.find(n => n.id === linkedId)
-            if (linkedNote && editingId) {
-                const updatedLinks = (linkedNote.links || []).filter(id => id !== editingId)
-                await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links: updatedLinks })
-            }
-        }
+        // 更新 allTags（編輯情境）
+        const newTagsSet = new Set(allTags)
+            ; (form.hashtags || []).forEach(t => newTagsSet.add(t))
+        setAllTags(Array.from(newTagsSet).sort())
 
-        setShowForm(false); setEditingId(null); setForm(empty); setLoading(false); load()
+        setShowForm(false); setEditingId(null); setForm(empty); setLoading(false)
     }
 
     const handleEdit = (note: Note) => {
@@ -192,18 +217,20 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     const handleDelete = async (id: string) => {
         if (!confirm('確定要刪除？筆記將移至垃圾桶，30 天後永久刪除。')) return
         const note = notes.find(n => n.id === id); if (!note) return
-        // 移除其他筆記中對此筆記的連結
+        // 移除其他筆記中對此筆記的連結（本地 + Firestore）
         for (const linkedId of (note.links || [])) {
             const linkedNote = notes.find(n => n.id === linkedId)
             if (linkedNote) {
-                await updateDoc(userDoc(kmsDB, 'notes', linkedId), {
-                    links: (linkedNote.links || []).filter(l => l !== id)
-                })
+                const updatedLinks = (linkedNote.links || []).filter(l => l !== id)
+                await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links: updatedLinks })
+                setNotes(prev => prev.map(n => n.id === linkedId ? { ...n, links: updatedLinks } : n))
             }
         }
         const { setDoc } = await import('firebase/firestore')
         await setDoc(userDoc(kmsDB, 'trash', id), { ...note, deletedAt: new Date().toISOString() })
-        await deleteDoc(userDoc(kmsDB, 'notes', id)); load()
+        await deleteDoc(userDoc(kmsDB, 'notes', id))
+        // 本地移除，不重讀 Firestore
+        setNotes(prev => prev.filter(n => n.id !== id))
     }
 
     // ── 批次匯入筆記（JSON） ──────────────────────────────────────────────
@@ -262,6 +289,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
             }
 
             setImportMsg(`✅ 匯入完成：成功 ${success} 筆，略過 ${skipped} 筆`)
+            // 重讀一次（批次匯入資料量大，local state 更新複雜度高，直接重讀即可）
             load()
         } catch (err) {
             setImportMsg('❌ 解析失敗，請確認格式為 JSON 陣列或 CSV（title,content,type,url,hashtags）')

@@ -100,27 +100,45 @@ export default function CalendarHome() {
     const loadInvestorFromFirestore = async (y: number, m: number) => {
         if (loadingInvestor) return  // 手動更新進行中時不觸發
         const yearMonth = `${y}-${String(m).padStart(2, '0')}`
-        const snap = await getDocs(userCol(investDB, 'investorMeetings'))
-        const evtMap = new Map<string, CalendarEvent>()
-        snap.docs.forEach(d => {
-            const data = d.data()
-            if (data.yearMonth !== yearMonth) return
-            const dates: string[] = Array.isArray(data.dates) ? data.dates : []
-            dates.forEach((isoDate: string) => {
-                const id = `investor-${data.stockCode}-${isoDate}`
-                if (!evtMap.has(id)) {
-                    evtMap.set(id, {
-                        id,
-                        date: isoDate,
-                        title: `${data.stockName || data.stockCode} 法說會`,
-                        type: 'investor',
-                        stockCode: data.stockCode,
-                        description: `${data.stockName || data.stockCode}（${data.stockCode}）法人說明會`
+
+        // ── 優化：不再讀整個 collection，改為只查詢當月關注股票的文件 ──
+        try {
+            // 取得關注清單 + 持倉（用 watchListRef 已有的值，避免額外讀取）
+            const watchCodes = watchListRef.current.map(w => w.code)
+            const evtMap = new Map<string, CalendarEvent>()
+
+            // 並行讀取各股票的當月文件（getDoc 單筆，不讀整個 collection）
+            const docIds = watchCodes.length > 0 ? watchCodes : []
+            // 若關注清單尚未載入，先讀一次；否則直接取 ref 值
+            const allCodes = docIds.length > 0 ? docIds : []
+
+            await Promise.all(allCodes.map(async (code) => {
+                const docId = `${code}-${yearMonth}`
+                try {
+                    const snap = await getDoc(userDoc(investDB, 'investorMeetings', docId))
+                    if (!snap.exists()) return
+                    const data = snap.data()
+                    const dates: string[] = Array.isArray(data.dates) ? data.dates : []
+                    dates.forEach((isoDate: string) => {
+                        const id = `investor-${data.stockCode}-${isoDate}`
+                        if (!evtMap.has(id)) {
+                            evtMap.set(id, {
+                                id,
+                                date: isoDate,
+                                title: `${data.stockName || data.stockCode} 法說會`,
+                                type: 'investor',
+                                stockCode: data.stockCode,
+                                description: `${data.stockName || data.stockCode}（${data.stockCode}）法人說明會`
+                            })
+                        }
                     })
-                }
-            })
-        })
-        setInvestorEvents([...evtMap.values()])
+                } catch { /* 單筆文件不存在或讀取失敗，直接跳過 */ }
+            }))
+
+            setInvestorEvents([...evtMap.values()])
+        } catch (err) {
+            console.error('loadInvestorFromFirestore 錯誤：', err)
+        }
     }
 
     // 手動更新法說會：打 API → 比對 Firestore → 有變動就寫入
@@ -314,13 +332,17 @@ export default function CalendarHome() {
 
     useEffect(() => {
         loadPersonal()
-        loadWatchList()
         loadDividends()
         loadTasks()
+        // 先載入關注清單，再載入法說會（確保 watchListRef 有值）
+        loadWatchList().then(() => loadInvestorFromFirestore(year, month))
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     useEffect(() => {
+        // 切換月份時重新載入法說會（watchListRef 此時已有值）
         loadInvestorFromFirestore(year, month)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [year, month])
 
     useEffect(() => {

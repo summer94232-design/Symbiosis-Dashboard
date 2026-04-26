@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query, setDoc } from 'firebase/firestore'
+import { addDoc, getDocs, updateDoc, deleteDoc, orderBy, query, setDoc, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { calcFee, calcTax, isETF } from '../../lib/calc'
@@ -17,11 +17,15 @@ interface Trade {
     tax: number
     total: number
     note: string
+    isMargin?: boolean     // 是否為融資交易
+    marginRatio?: number   // 融資成數（例：0.6）
+    marginAmount?: number  // 融資借款金額
 }
 
 const emptyTrade: Trade = {
     date: new Date().toISOString().split('T')[0],
-    type: 'buy', code: '', name: '', price: 0, shares: 0, fee: 0, tax: 0, total: 0, note: ''
+    type: 'buy', code: '', name: '', price: 0, shares: 0, fee: 0, tax: 0, total: 0, note: '',
+    isMargin: false, marginRatio: 0.6, marginAmount: 0
 }
 
 const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
@@ -31,10 +35,6 @@ const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, b
 
 const isOddLot = (shares: number) => shares > 0 && shares < 1000
 
-/**
- * 穩健 CSV 行解析器
- * 支援：引號包裹欄位、欄位內含逗號（如 "1,000"）
- */
 function parseCSVLine(line: string): string[] {
     const result: string[] = []
     let current = ''
@@ -55,17 +55,43 @@ function parseCSVLine(line: string): string[] {
     return result
 }
 
-/** 去除千分位逗號後轉浮點數："1,234.56" → 1234.56 */
 const toNum = (s: string) => parseFloat((s || '').replace(/,/g, '')) || 0
-/** 去除千分位逗號後轉整數："1,000" → 1000 */
 const toInt = (s: string) => parseInt((s || '').replace(/,/g, '')) || 0
+
+// ★ 本地快取：同一個 session 內不重複查詢同一代號
+const dictCache: Record<string, string> = {}
+
+// ★ 單筆查詢：先查 stockDict（常用），找不到再查 stockDictFull（完整台股）
+async function lookupStockName(code: string): Promise<string> {
+    if (dictCache[code]) return dictCache[code]
+
+    // 先查常用字典
+    const shortDoc = await getDoc(userDoc(investDB, 'stockDict', code))
+    if (shortDoc.exists()) {
+        const name = shortDoc.data().name as string
+        dictCache[code] = name
+        return name
+    }
+
+    // 找不到再查完整字典
+    const fullDoc = await getDoc(userDoc(investDB, 'stockDictFull', code))
+    if (fullDoc.exists()) {
+        const name = fullDoc.data().name as string
+        dictCache[code] = name
+        // 找到後順便寫回 stockDict，下次直接命中
+        await setDoc(userDoc(investDB, 'stockDict', code), { name })
+        return name
+    }
+
+    return ''
+}
 
 export default function Trades() {
     const [trades, setTrades] = useState<Trade[]>([])
     const [editingId, setEditingId] = useState<string | null>(null)
     const [form, setForm] = useState<Trade>(emptyTrade)
     const [loading, setLoading] = useState(false)
-    const [stockDict, setStockDict] = useState<Record<string, string>>({})
+    const [lookingUp, setLookingUp] = useState(false)
     const [importing, setImporting] = useState(false)
     const [importResult, setImportResult] = useState<{ success: number; failed: number; skipped: number } | null>(null)
     const [search, setSearch] = useState('')
@@ -74,6 +100,8 @@ export default function Trades() {
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
     const [editModal, setEditModal] = useState(false)
     const fileRef = useRef<HTMLInputElement>(null)
+    // debounce ref for code lookup
+    const lookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     useEffect(() => {
         const handle = () => setIsMobile(window.innerWidth < 768)
@@ -84,42 +112,65 @@ export default function Trades() {
     const load = async () => {
         const q = query(userCol(investDB, 'trades'), orderBy('date', 'desc'))
         const snap = await getDocs(q)
-        setTrades(snap.docs.map(d => ({ id: d.id, ...d.data() } as Trade)))
+        const rawTrades = snap.docs.map(d => ({ id: d.id, ...d.data() } as Trade))
+        // 統一所有舊格式：spot_buy/margin_buy → buy+isMargin, spot_sell/margin_sell → sell+isMargin
+        const normalized = rawTrades.map(t => {
+            const type = t.type as string
+            if (type === 'spot_buy') return { ...t, type: 'buy' as const, isMargin: false }
+            if (type === 'spot_sell') return { ...t, type: 'sell' as const, isMargin: false }
+            if (type === 'margin_buy') return { ...t, type: 'buy' as const, isMargin: true }
+            if (type === 'margin_sell') return { ...t, type: 'sell' as const, isMargin: true }
+            return t
+        })
+        setTrades(normalized)
     }
 
-    const loadDict = async () => {
-        const snap = await getDocs(userCol(investDB, 'stockDict'))
-        const dict: Record<string, string> = {}
-        snap.docs.forEach(d => { dict[d.id] = d.data().name })
-        setStockDict(dict)
-    }
+    useEffect(() => { load() }, [])
 
-    useEffect(() => {
-        const init = async () => { await Promise.all([load(), loadDict()]) }
-        init()
-    }, [])
-
+    // ★ 輸入代號後 debounce 500ms 再查詢，避免每按一個字就打 Firebase
     const handleCodeChange = (code: string) => {
         const upper = code.toUpperCase()
         setForm(f => {
-            const name = stockDict[upper] || f.name
             const fee = f.price && f.shares ? calcFee(f.price, f.shares) : f.fee
             const tax = f.type === 'sell' && f.price && f.shares ? calcTax(f.price, f.shares, upper) : 0
-            const u = { ...f, code: upper, name, fee, tax }
+            const u = { ...f, code: upper, fee, tax }
             u.total = f.type === 'buy' ? f.price * f.shares + u.fee : f.price * f.shares - u.fee - u.tax
             return u
         })
+
+        if (lookupTimer.current) clearTimeout(lookupTimer.current)
+        if (upper.length < 3) return
+
+        lookupTimer.current = setTimeout(async () => {
+            setLookingUp(true)
+            const name = await lookupStockName(upper)
+            if (name) {
+                setForm(f => ({ ...f, name }))
+            }
+            setLookingUp(false)
+        }, 500)
     }
 
-    const calcTotal = (f: Trade) => f.type === 'buy' ? f.price * f.shares + f.fee : f.price * f.shares - f.fee - f.tax
+    const calcTotal = (f: Trade) => {
+        if (f.type === 'buy' && f.isMargin) {
+            // 融資買入：total = 自備款 + 手續費（不含融資借款部分）
+            const stockValue = f.price * f.shares
+            const marginAmt = Math.floor(stockValue * (f.marginRatio ?? 0.6))
+            return stockValue - marginAmt + f.fee
+        }
+        return f.type === 'buy' ? f.price * f.shares + f.fee : f.price * f.shares - f.fee - f.tax
+    }
 
     const handleChange = (key: keyof Trade, value: Trade[keyof Trade]) => {
         setForm(f => {
             const u = { ...f, [key]: value }
-            if (['price', 'shares', 'type', 'code'].includes(key)) {
+            if (['price', 'shares', 'type', 'code', 'marginRatio', 'isMargin'].includes(key)) {
                 if (u.price && u.shares) {
                     u.fee = calcFee(u.price, u.shares)
                     u.tax = u.type === 'sell' ? calcTax(u.price, u.shares, u.code) : 0
+                    if (u.type === 'buy' && u.isMargin) {
+                        u.marginAmount = Math.floor(u.price * u.shares * (u.marginRatio ?? 0.6))
+                    }
                 }
             }
             u.total = calcTotal(u)
@@ -130,17 +181,24 @@ export default function Trades() {
     const handleSave = async () => {
         if (!form.code || !form.price || !form.shares) return
         setLoading(true)
-        if (form.name && form.code) await setDoc(userDoc(investDB, 'stockDict', form.code), { name: form.name })
+        if (form.name && form.code) {
+            dictCache[form.code] = form.name
+            await setDoc(userDoc(investDB, 'stockDict', form.code), { name: form.name })
+        }
         if (editingId) {
             await updateDoc(userDoc(investDB, 'trades', editingId), { ...form })
         } else {
             await addDoc(userCol(investDB, 'trades'), { ...form })
         }
         setEditingId(null); setForm(emptyTrade); setLoading(false); setShowForm(false); setEditModal(false)
-        load(); loadDict()
+        load()
     }
 
-    const handleEdit = (t: Trade) => { setForm(t); setEditingId(t.id!); setEditModal(true) }
+    const handleEdit = (t: Trade) => {
+        if (t.code && t.name) dictCache[t.code] = t.name
+        // 已在 load() 正規化，直接使用
+        setForm(t); setEditingId(t.id!); setEditModal(true)
+    }
     const handleCancel = () => { setForm(emptyTrade); setEditingId(null); setShowForm(false); setEditModal(false) }
     const handleDelete = async (id: string) => {
         if (!confirm('確定要刪除？')) return
@@ -153,7 +211,6 @@ export default function Trades() {
         setImporting(true); setImportResult(null)
 
         const text = await file.text()
-        // 移除 BOM、統一換行符
         const lines = text
             .replace(/^\uFEFF/, '')
             .replace(/\r\n/g, '\n')
@@ -184,36 +241,42 @@ export default function Trades() {
                 } else { skipped++ }
                 continue
             }
-            if (type !== '買進' && type !== '賣出') { skipped++; continue }
+            // 支援新舊格式：現貨買入/現貨賣出/融資買入/融資賣出/買進/賣出
+            const validTypes = ['買進', '賣出', '現貨買入', '現貨賣出', '融資買入', '融資賣出']
+            if (!validTypes.includes(type)) { skipped++; continue }
+
+            const isMarginCSV = type === '融資買入' || type === '融資賣出'
+            const tradeType = (type === '賣出' || type === '現貨賣出' || type === '融資賣出') ? 'sell' : 'buy'
 
             const rawCode = (row['代號'] || '').replace('.TW', '').replace('.tw', '').trim()
             const name = (row['名稱'] || '').trim()
             const price = toNum(row['價格/金額'] || row['價格'] || '')
-            // ★ 關鍵修正：toInt 會先去除千分位逗號再轉整數
-            // "1,000" → remove commas → "1000" → parseInt → 1000（正確）
-            // 舊寫法 parseInt("1,000") → 1（只讀逗號前的數字）
             const shares = toInt(row['股數'])
 
             if (!rawCode || !price || !shares) { failed++; continue }
 
-            const tradeType = type === '買進' ? 'buy' : 'sell'
+            const isSell = tradeType === 'sell'
             const fee = calcFee(price, shares)
-            const tax = tradeType === 'sell' ? calcTax(price, shares, rawCode) : 0
-            const total = tradeType === 'buy' ? price * shares + fee : price * shares - fee - tax
+            const tax = isSell ? calcTax(price, shares, rawCode) : 0
+            const total = isSell ? price * shares - fee - tax : price * shares + fee
 
             try {
                 await addDoc(userCol(investDB, 'trades'), {
-                    date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total,
+                    date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total, isMargin: isMarginCSV,
                     note: row['備註/筆記'] || row['備註'] || ''
                 })
-                if (name && rawCode) await setDoc(userDoc(investDB, 'stockDict', rawCode), { name })
+                // ★ CSV 匯入時同步寫入 stockDict（只寫有名稱的）
+                if (name && rawCode) {
+                    dictCache[rawCode] = name
+                    await setDoc(userDoc(investDB, 'stockDict', rawCode), { name })
+                }
                 success++
             } catch { failed++ }
         }
 
         setImportResult({ success, failed, skipped })
         setImporting(false); e.target.value = ''
-        load(); loadDict()
+        load()
     }
 
     const filtered = trades.filter(t =>
@@ -247,8 +310,14 @@ export default function Trades() {
                                     <option value="sell">賣出</option>
                                 </select>
                             </div>
-                            <div><label style={lbl}>股票代號</label><input style={inp} placeholder="例：2330" value={form.code} onChange={e => handleCodeChange(e.target.value)} /></div>
-                            <div><label style={lbl}>股票名稱</label><input style={inp} placeholder="例：台積電" value={form.name} onChange={e => handleChange('name', e.target.value)} /></div>
+                            <div>
+                                <label style={lbl}>股票代號</label>
+                                <input style={inp} placeholder="例：2330" value={form.code} onChange={e => handleCodeChange(e.target.value)} />
+                            </div>
+                            <div>
+                                <label style={lbl}>股票名稱 {lookingUp && <span style={{ color: '#8892a4', fontSize: '10px' }}>查詢中...</span>}</label>
+                                <input style={inp} placeholder="輸入代號後自動帶入" value={form.name} onChange={e => handleChange('name', e.target.value)} />
+                            </div>
                             <div><label style={lbl}>價格</label><input type="number" style={inp} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} /></div>
                             <div><label style={lbl}>股數</label><input type="number" style={inp} placeholder="0" value={form.shares || ''} onChange={e => handleChange('shares', parseInt(e.target.value) || 0)} /></div>
                             <div>
@@ -261,8 +330,44 @@ export default function Trades() {
                                 </span></label>
                                 <input type="number" style={inp} value={form.tax || ''} onChange={e => handleChange('tax', parseFloat(e.target.value) || 0)} />
                             </div>
-                            <div><label style={lbl}>收付金額</label><input type="number" style={{ ...inp, color: form.type === 'buy' ? '#ff5757' : '#00c896' }} value={form.total} readOnly /></div>
-                            <div className="span2"><label style={lbl}>備註</label><input style={inp} placeholder="選填" value={form.note} onChange={e => handleChange('note', e.target.value)} /></div>
+                            <div>
+                                <label style={lbl}>收付金額 {form.isMargin && form.type === 'buy' && <span style={{ color: '#f5a623', fontSize: '11px' }}>（自備款）</span>}</label>
+                                <input type="number" style={{ ...inp, color: form.type === 'buy' ? '#ff5757' : '#00c896' }} value={form.total} readOnly />
+                            </div>
+                            <div className="span2">
+                                <label style={lbl}>備註</label>
+                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                    <input style={{ ...inp, flex: 1 }} placeholder="選填" value={form.note} onChange={e => handleChange('note', e.target.value)} />
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', flexShrink: 0, userSelect: 'none' as const }}>
+                                        <div
+                                            onClick={() => handleChange('isMargin', !form.isMargin)}
+                                            style={{
+                                                width: '38px', height: '22px', borderRadius: '11px', position: 'relative', cursor: 'pointer', flexShrink: 0,
+                                                backgroundColor: form.isMargin ? 'rgba(245,166,35,0.9)' : '#2e3349',
+                                                transition: 'background-color 0.2s'
+                                            }}>
+                                            <div style={{
+                                                position: 'absolute', top: '3px', left: form.isMargin ? '19px' : '3px',
+                                                width: '16px', height: '16px', borderRadius: '50%', backgroundColor: '#fff',
+                                                transition: 'left 0.2s'
+                                            }} />
+                                        </div>
+                                        <span style={{ fontSize: '12px', color: form.isMargin ? '#f5a623' : '#8892a4', fontWeight: form.isMargin ? 600 : 400 }}>融資</span>
+                                    </label>
+                                </div>
+                            </div>
+                            {form.isMargin && form.type === 'buy' && (
+                                <>
+                                    <div>
+                                        <label style={lbl}>融資成數 <span style={{ color: '#f5a623', fontSize: '11px' }}>（例：0.6 = 六成）</span></label>
+                                        <input type="number" step="0.1" min="0" max="1" style={inp} value={form.marginRatio ?? 0.6} onChange={e => handleChange('marginRatio', parseFloat(e.target.value) || 0.6)} />
+                                    </div>
+                                    <div>
+                                        <label style={lbl}>融資金額 <span style={{ color: '#f5a623', fontSize: '11px' }}>（自動計算）</span></label>
+                                        <input type="number" style={{ ...inp, color: '#f5a623' }} value={form.marginAmount ?? 0} readOnly />
+                                    </div>
+                                </>
+                            )}
                         </div>
                         <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
                             <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消</button>
@@ -333,8 +438,14 @@ export default function Trades() {
                                     <option value="sell">賣出</option>
                                 </select>
                             </div>
-                            <div><label style={lbl}>股票代號</label><input style={inp} placeholder="例：2330" value={form.code} onChange={e => handleCodeChange(e.target.value)} /></div>
-                            <div><label style={lbl}>股票名稱</label><input style={inp} placeholder="例：台積電" value={form.name} onChange={e => handleChange('name', e.target.value)} /></div>
+                            <div>
+                                <label style={lbl}>股票代號</label>
+                                <input style={inp} placeholder="例：2330" value={form.code} onChange={e => handleCodeChange(e.target.value)} />
+                            </div>
+                            <div>
+                                <label style={lbl}>股票名稱 {lookingUp && <span style={{ color: '#8892a4', fontSize: '10px' }}>查詢中...</span>}</label>
+                                <input style={inp} placeholder="輸入代號後自動帶入" value={form.name} onChange={e => handleChange('name', e.target.value)} />
+                            </div>
                             <div><label style={lbl}>價格</label><input type="number" style={inp} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} /></div>
                             <div><label style={lbl}>股數</label><input type="number" style={inp} placeholder="0" value={form.shares || ''} onChange={e => handleChange('shares', parseInt(e.target.value) || 0)} /></div>
                             <div>
@@ -347,8 +458,44 @@ export default function Trades() {
                                 </span></label>
                                 <input type="number" style={inp} value={form.tax || ''} onChange={e => handleChange('tax', parseFloat(e.target.value) || 0)} />
                             </div>
-                            <div><label style={lbl}>收付金額</label><input type="number" style={{ ...inp, color: form.type === 'buy' ? '#ff5757' : '#00c896' }} value={form.total} readOnly /></div>
-                            <div className="span2"><label style={lbl}>備註</label><input style={inp} placeholder="選填" value={form.note} onChange={e => handleChange('note', e.target.value)} /></div>
+                            <div>
+                                <label style={lbl}>收付金額 {form.isMargin && form.type === 'buy' && <span style={{ color: '#f5a623', fontSize: '11px' }}>（自備款）</span>}</label>
+                                <input type="number" style={{ ...inp, color: form.type === 'buy' ? '#ff5757' : '#00c896' }} value={form.total} readOnly />
+                            </div>
+                            <div className="span2">
+                                <label style={lbl}>備註</label>
+                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                    <input style={{ ...inp, flex: 1 }} placeholder="選填" value={form.note} onChange={e => handleChange('note', e.target.value)} />
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', flexShrink: 0, userSelect: 'none' as const }}>
+                                        <div
+                                            onClick={() => handleChange('isMargin', !form.isMargin)}
+                                            style={{
+                                                width: '38px', height: '22px', borderRadius: '11px', position: 'relative', cursor: 'pointer', flexShrink: 0,
+                                                backgroundColor: form.isMargin ? 'rgba(245,166,35,0.9)' : '#2e3349',
+                                                transition: 'background-color 0.2s'
+                                            }}>
+                                            <div style={{
+                                                position: 'absolute', top: '3px', left: form.isMargin ? '19px' : '3px',
+                                                width: '16px', height: '16px', borderRadius: '50%', backgroundColor: '#fff',
+                                                transition: 'left 0.2s'
+                                            }} />
+                                        </div>
+                                        <span style={{ fontSize: '12px', color: form.isMargin ? '#f5a623' : '#8892a4', fontWeight: form.isMargin ? 600 : 400 }}>融資</span>
+                                    </label>
+                                </div>
+                            </div>
+                            {form.isMargin && form.type === 'buy' && (
+                                <>
+                                    <div>
+                                        <label style={lbl}>融資成數 <span style={{ color: '#f5a623', fontSize: '11px' }}>（例：0.6 = 六成）</span></label>
+                                        <input type="number" step="0.1" min="0" max="1" style={inp} value={form.marginRatio ?? 0.6} onChange={e => handleChange('marginRatio', parseFloat(e.target.value) || 0.6)} />
+                                    </div>
+                                    <div>
+                                        <label style={lbl}>融資金額 <span style={{ color: '#f5a623', fontSize: '11px' }}>（自動計算）</span></label>
+                                        <input type="number" style={{ ...inp, color: '#f5a623' }} value={form.marginAmount ?? 0} readOnly />
+                                    </div>
+                                </>
+                            )}
                         </div>
                         <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
                             {editingId && <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消</button>}
@@ -382,6 +529,9 @@ export default function Trades() {
                                             <span style={{ backgroundColor: trade.type === 'buy' ? 'rgba(255,87,87,0.15)' : 'rgba(0,200,150,0.15)', color: trade.type === 'buy' ? '#ff5757' : '#00c896', padding: '2px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, flexShrink: 0 }}>
                                                 {trade.type === 'buy' ? '買' : '賣'}
                                             </span>
+                                            {trade.isMargin && (
+                                                <span style={{ backgroundColor: 'rgba(245,166,35,0.15)', color: '#f5a623', padding: '1px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600, flexShrink: 0 }}>融資</span>
+                                            )}
                                             {isOddLot(trade.shares) && (
                                                 <span style={{ backgroundColor: 'rgba(245,166,35,0.12)', color: '#f5a623', padding: '1px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600, flexShrink: 0 }}>零股</span>
                                             )}
@@ -438,6 +588,7 @@ export default function Trades() {
                                             <td>
                                                 <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                                                     <span style={{ backgroundColor: trade.type === 'buy' ? 'rgba(255,87,87,0.15)' : 'rgba(0,200,150,0.15)', color: trade.type === 'buy' ? '#ff5757' : '#00c896', padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>{trade.type === 'buy' ? '買入' : '賣出'}</span>
+                                                    {trade.isMargin && <span style={{ backgroundColor: 'rgba(245,166,35,0.15)', color: '#f5a623', padding: '2px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600 }}>融資</span>}
                                                     {isOddLot(trade.shares) && <span style={{ backgroundColor: 'rgba(245,166,35,0.12)', color: '#f5a623', padding: '2px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600 }}>零股</span>}
                                                 </div>
                                             </td>

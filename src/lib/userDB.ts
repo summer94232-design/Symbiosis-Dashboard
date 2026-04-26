@@ -1,17 +1,9 @@
 /**
  * userDB.ts — 用戶隔離資料路徑工具
  *
- * 所有 Firestore 操作改用此模組的 helper，
- * 確保每位用戶只讀寫自己 users/{uid}/ 下的資料。
- *
- * 使用方式：
- *   import { userCol, userDoc, userDocNested } from '../../lib/userDB'
- *
- *   // 原本：collection(investDB, 'trades')
- *   // 改為：userCol(investDB, 'trades')
- *
- *   // 原本：doc(investDB, 'settings', 'lastPrices')
- *   // 改為：userDocNested(investDB, 'settings', 'lastPrices')
+ * ⚠️ 重要：雖然系統有兩個 Firebase 專案（investDB / kmsDB），
+ * 但統一使用 investAuth 的 uid 作為資料路徑依據。
+ * 原因：兩個專案的 Auth uid 不同，所有資料都建立在 investAuth uid 下。
  */
 
 import { collection, doc } from 'firebase/firestore'
@@ -19,7 +11,7 @@ import { onAuthStateChanged } from 'firebase/auth'
 import { investAuth } from './auth'
 import type { Firestore } from 'firebase/firestore'
 
-// 快取 uid，避免頁面剛載入時 currentUser 尚未就緒
+// 統一使用 investAuth 的 uid
 let _uid: string | null = null
 
 onAuthStateChanged(investAuth, user => {
@@ -36,29 +28,22 @@ export function getUID(): string {
 /**
  * 取得用戶專屬的 collection reference
  * 路徑：users/{uid}/{collectionName}
- *
- * 對應原本的：collection(db, collectionName)
  */
 export function userCol(db: Firestore, collectionName: string) {
     return collection(db, 'users', getUID(), collectionName)
 }
 
 /**
- * 取得用戶專屬的單一 document reference（一層）
+ * 取得用戶專屬的單一 document reference
  * 路徑：users/{uid}/{collectionName}/{docId}
- *
- * 對應原本的：doc(db, collectionName, docId)
  */
 export function userDoc(db: Firestore, collectionName: string, docId: string) {
     return doc(db, 'users', getUID(), collectionName, docId)
 }
 
 /**
- * 取得用戶專屬的巢狀 document reference（settings/lastPrices 等）
- * 路徑：users/{uid}/{col}/{docId}
- *
- * 對應原本的：doc(db, 'settings', 'lastPrices')
- * 改為：      userDocNested(db, 'settings', 'lastPrices')
+ * 取得用戶專屬的巢狀 document reference
+ * 路徑：users/{uid}/{...pathSegments}
  */
 export function userDocNested(db: Firestore, ...pathSegments: string[]) {
     return doc(db, 'users', getUID(), ...pathSegments)

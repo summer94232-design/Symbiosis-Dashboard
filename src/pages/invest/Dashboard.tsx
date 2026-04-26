@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { collection, getDocs, orderBy, query, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { getMultipleQuotes } from '../../lib/fugle'
 import { calcPositions, calcAvailableCash, type TradeRecord, type DividendRecord } from '../../lib/calc'
-import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag } from 'lucide-react'
+import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 
@@ -128,9 +128,21 @@ export default function Dashboard() {
     const [lastUpdated, setLastUpdated] = useState('')
     const [hasPrice, setHasPrice] = useState(false)
     const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
+    const [reloadCooldown, setReloadCooldown] = useState(0) // 秒數倒數
+    const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
     const [upcomingEvents, setUpcomingEvents] = useState<CalendarEvent[]>([])
     const [tasks, setTasks] = useState<Task[]>([])
+
+    // 融資維持率相關
+    interface MarginPosition {
+        code: string
+        name: string
+        shares: number
+        marginAmount: number  // 融資借款金額
+        marginCost: number    // 融資買入時股票總市值（用於計算原始成本）
+    }
+    const [marginPositions, setMarginPositions] = useState<MarginPosition[]>([])
 
     // ✅ 優化：單一 Promise.all 並行抓取所有資料，消除串行等待
     const loadData = async () => {
@@ -205,6 +217,34 @@ export default function Dashboard() {
             setTotalCash(calcAvailableCash(cashRecords, trades))
             setHasPrice(priceAvailable)
             if (savedAt) setLastUpdated(savedAt)
+
+            // ── 計算融資部位（按代號彙總，使用 isMargin 欄位）──
+            const marginMap: Record<string, MarginPosition> = {}
+            for (const t of trades) {
+                if (!t.isMargin) continue
+                const code = t.code
+                if (!marginMap[code]) {
+                    marginMap[code] = { code, name: t.name, shares: 0, marginAmount: 0, marginCost: 0 }
+                }
+                const pos = marginMap[code]
+                if (t.type === 'buy') {
+                    const stockVal = t.price * t.shares
+                    const mAmt = (t as any).marginAmount ?? Math.floor(stockVal * ((t as any).marginRatio ?? 0.6))
+                    pos.shares += t.shares
+                    pos.marginAmount += mAmt
+                    pos.marginCost += stockVal
+                } else if (t.type === 'sell') {
+                    // 融資賣出：按比例歸還借款
+                    if (pos.shares > 0) {
+                        const ratio = t.shares / pos.shares
+                        pos.marginAmount -= pos.marginAmount * ratio
+                        pos.marginCost -= pos.marginCost * ratio
+                        pos.shares -= t.shares
+                    }
+                }
+            }
+            const activeMargin = Object.values(marginMap).filter(m => m.shares > 0 && m.marginAmount > 0)
+            setMarginPositions(activeMargin)
         } catch (err) { console.error(err) }
         finally { setLoading(false) }
     }
@@ -261,8 +301,28 @@ export default function Dashboard() {
     // ✅ 優化：直接呼叫，移除不必要的 setTimeout 延遲
     useEffect(() => {
         void loadData()
+        return () => {
+            if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current)
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
+
+    // 重新載入加 30 秒 cooldown，防止連續點擊觸發多次全量讀取
+    const handleReload = () => {
+        if (reloadCooldown > 0 || loading) return
+        void loadData()
+        setReloadCooldown(30)
+        cooldownTimerRef.current = setInterval(() => {
+            setReloadCooldown(prev => {
+                if (prev <= 1) {
+                    clearInterval(cooldownTimerRef.current!)
+                    cooldownTimerRef.current = null
+                    return 0
+                }
+                return prev - 1
+            })
+        }, 1000)
+    }
 
     const totalMarketValue = holdings.reduce((s, h) => s + h.marketValue, 0)
     const totalCost = holdings.reduce((s, h) => s + h.totalCost, 0)
@@ -271,6 +331,25 @@ export default function Dashboard() {
     const holdingsWithPrice = holdings.filter(h => h.currentPrice !== null)
     const holdingsWithoutPrice = holdings.filter(h => h.currentPrice === null)
     const totalUnrealized = holdingsWithPrice.reduce((s, h) => s + h.unrealizedPnL, 0)
+
+    // ── 融資維持率計算 ──
+    // 維持率 = 融資股票目前市值 / 融資金額（借款） × 100%
+    // 台灣法規：低於 130% 追繳，低於 120% 強制斷頭
+    const totalMarginDebt = marginPositions.reduce((s, m) => s + m.marginAmount, 0)
+    const marginStockMarketValue = marginPositions.reduce((s, m) => {
+        const h = holdings.find(h => h.code === m.code)
+        // 若有現價用市值，否則用買入時成本
+        const mv = h ? h.currentPrice !== null ? h.currentPrice * m.shares : m.marginCost : m.marginCost
+        return s + mv
+    }, 0)
+    const marginRatioValue = totalMarginDebt > 0 ? (marginStockMarketValue / totalMarginDebt) * 100 : null
+    const hasMargin = marginPositions.length > 0
+
+    // 維持率顏色：>160% 綠，130~160% 橙，<130% 紅
+    const marginRatioColor = marginRatioValue === null ? '#8892a4'
+        : marginRatioValue >= 160 ? '#00c896'
+            : marginRatioValue >= 130 ? '#f5a623'
+                : '#ff5757'
 
     // 個股圓餅圖
     const pieData: PieEntry[] = [
@@ -358,12 +437,13 @@ export default function Dashboard() {
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
                         <button
-                            onClick={() => void loadData()}
-                            disabled={loading}
-                            style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 14px', color: '#e2e8f0', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                            onClick={handleReload}
+                            disabled={loading || reloadCooldown > 0}
+                            title={reloadCooldown > 0 ? `請稍候 ${reloadCooldown} 秒後再試` : '重新載入資料'}
+                            style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 14px', color: reloadCooldown > 0 ? '#8892a4' : '#e2e8f0', fontSize: '13px', cursor: reloadCooldown > 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', opacity: reloadCooldown > 0 ? 0.6 : 1 }}
                         >
                             <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
-                            重新載入
+                            {reloadCooldown > 0 ? `${reloadCooldown}s` : '重新載入'}
                         </button>
                         <button
                             onClick={() => void updatePrices()}
@@ -420,6 +500,112 @@ export default function Dashboard() {
                                 </div>
                             ))}
                         </div>
+
+                        {/* ── 融資維持率卡片（有融資部位才顯示）── */}
+                        {hasMargin && (
+                            <div style={{ marginBottom: '16px' }}>
+                                <div style={{
+                                    ...card,
+                                    borderColor: marginRatioValue !== null && marginRatioValue < 130 ? 'rgba(255,87,87,0.5)'
+                                        : marginRatioValue !== null && marginRatioValue < 160 ? 'rgba(245,166,35,0.4)'
+                                            : '#2e3349',
+                                    background: marginRatioValue !== null && marginRatioValue < 130 ? 'linear-gradient(135deg, #1a1d27 0%, rgba(255,87,87,0.06) 100%)'
+                                        : marginRatioValue !== null && marginRatioValue < 160 ? 'linear-gradient(135deg, #1a1d27 0%, rgba(245,166,35,0.05) 100%)'
+                                            : '#1a1d27'
+                                }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+                                        {/* 左：主要數字 */}
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                            <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: `${marginRatioColor}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                <TrendingDown size={20} color={marginRatioColor} />
+                                            </div>
+                                            <div>
+                                                <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>融資維持率</div>
+                                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                                                    <span style={{ fontSize: 'clamp(22px, 3vw, 30px)', fontWeight: 700, color: marginRatioColor, letterSpacing: '-0.5px' }}>
+                                                        {marginRatioValue !== null ? `${marginRatioValue.toFixed(1)}%` : '—'}
+                                                    </span>
+                                                    {marginRatioValue !== null && (
+                                                        <span style={{
+                                                            fontSize: '12px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px',
+                                                            backgroundColor: marginRatioValue >= 160 ? 'rgba(0,200,150,0.12)' : marginRatioValue >= 130 ? 'rgba(245,166,35,0.12)' : 'rgba(255,87,87,0.12)',
+                                                            color: marginRatioColor
+                                                        }}>
+                                                            {marginRatioValue >= 160 ? '✓ 安全' : marginRatioValue >= 130 ? '⚠ 留意' : '⚠ 危險'}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '2px' }}>
+                                                    {!hasPrice ? '尚未更新現價，以買入成本估算' : '以最新現價計算'}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* 右：融資明細 */}
+                                        <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
+                                            <div>
+                                                <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>融資股票市值</div>
+                                                <div style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>${marginStockMarketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
+                                            </div>
+                                            <div>
+                                                <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>融資借款金額</div>
+                                                <div style={{ fontSize: '15px', fontWeight: 600, color: '#f5a623' }}>${totalMarginDebt.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
+                                            </div>
+                                            <div>
+                                                <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>融資部位數</div>
+                                                <div style={{ fontSize: '15px', fontWeight: 600, color: '#a78bfa' }}>{marginPositions.length} 檔</div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 進度條 */}
+                                    {marginRatioValue !== null && (
+                                        <div style={{ marginTop: '16px' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#8892a4', marginBottom: '4px' }}>
+                                                <span>斷頭線 120%</span>
+                                                <span>追繳線 130%</span>
+                                                <span>安全線 160%</span>
+                                                <span>目前 {marginRatioValue.toFixed(1)}%</span>
+                                            </div>
+                                            <div style={{ height: '6px', backgroundColor: '#0f1117', borderRadius: '3px', overflow: 'hidden', position: 'relative' }}>
+                                                {/* 底層色帶 */}
+                                                <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, rgba(255,87,87,0.3) 0%, rgba(255,87,87,0.3) 20%, rgba(245,166,35,0.3) 20%, rgba(245,166,35,0.3) 40%, rgba(0,200,150,0.2) 40%, rgba(0,200,150,0.2) 100%)' }} />
+                                                {/* 當前值指示 */}
+                                                <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${Math.min(marginRatioValue / 250 * 100, 100)}%`, backgroundColor: marginRatioColor, borderRadius: '3px', transition: 'width 0.4s ease' }} />
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* 融資個股明細 */}
+                                    {marginPositions.length > 0 && (
+                                        <div style={{ marginTop: '14px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                            {marginPositions.map(m => {
+                                                const h = holdings.find(h => h.code === m.code)
+                                                const mv = h ? (h.currentPrice !== null ? h.currentPrice * m.shares : m.marginCost) : m.marginCost
+                                                const ratio = m.marginAmount > 0 ? (mv / m.marginAmount) * 100 : 0
+                                                const rColor = ratio >= 160 ? '#00c896' : ratio >= 130 ? '#f5a623' : '#ff5757'
+                                                return (
+                                                    <div key={m.code} style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '8px 12px', border: `1px solid ${rColor}28`, minWidth: '120px' }}>
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                                                            <span style={{ color: '#4f8ef7', fontWeight: 700, fontSize: '13px' }}>{m.code}</span>
+                                                            <span style={{ color: rColor, fontWeight: 600, fontSize: '12px' }}>{ratio.toFixed(0)}%</span>
+                                                        </div>
+                                                        <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '2px' }}>{m.shares.toLocaleString()} 股</div>
+                                                    </div>
+                                                )
+                                            })}
+                                        </div>
+                                    )}
+
+                                    {/* 危險警示 */}
+                                    {marginRatioValue !== null && marginRatioValue < 130 && (
+                                        <div style={{ marginTop: '12px', padding: '8px 12px', backgroundColor: 'rgba(255,87,87,0.08)', border: '1px solid rgba(255,87,87,0.25)', borderRadius: '8px', fontSize: '12px', color: '#ff5757' }}>
+                                            ⚠️ 維持率低於 130%，請留意追繳風險！強制斷頭線為 120%。
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
 
                         {hasPrice && holdingsWithoutPrice.length > 0 && (
                             <div style={{ marginBottom: '12px', padding: '10px 14px', backgroundColor: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.25)', borderRadius: '8px', fontSize: '12px', color: '#f5a623' }}>
