@@ -150,3 +150,56 @@ export function calcAvailableCash(
     const sellTotal = trades.filter(t => t.type === 'sell').reduce((s, t) => s + (t.total || 0), 0)
     return cashIn - cashOut - buyTotal + sellTotal
 }
+
+// ── 融資加碼試算 ──────────────────────────────────────────────────────────────
+// 試算「若現在加碼 X 股，整戶維持率會變成多少」
+// 完全 pure function，不依賴任何外部狀態，可在任何元件中直接呼叫。
+
+export interface MarginSimResult {
+    /** 加碼後整戶維持率（%） */
+    newMarginRatio: number
+    /** 加碼後融資股票市值總和 */
+    newMarketValue: number
+    /** 加碼後融資借款總和 */
+    newDebt: number
+    /** 本次新增借款金額 */
+    addedDebt: number
+    /** 本次自備款（含手續費） */
+    addedEquity: number
+    /** 加碼後距追繳線(130%)尚有多少緩衝（正數=還有空間，負數=已超線） */
+    bufferTo130: number
+    /** 加碼後距斷頭線(120%)尚有多少緩衝 */
+    bufferTo120: number
+}
+
+/**
+ * simulateMarginBuy
+ * @param currentMarketValue  現有融資股票市值合計
+ * @param currentDebt         現有融資借款合計
+ * @param buyPrice            試算買入價格
+ * @param buyShares           試算加碼股數
+ * @param marginRatio         融資成數（預設 0.6 = 六成）
+ */
+export function simulateMarginBuy(
+    currentMarketValue: number,
+    currentDebt: number,
+    buyPrice: number,
+    buyShares: number,
+    marginRatio: number = 0.6
+): MarginSimResult {
+    const totalPrice = buyPrice * buyShares
+    const addedDebt = totalPrice * marginRatio
+    const fee = calcFee(buyPrice, buyShares)
+    const addedEquity = totalPrice * (1 - marginRatio) + fee
+
+    const newMarketValue = currentMarketValue + totalPrice
+    const newDebt = currentDebt + addedDebt
+    const newMarginRatio = newDebt > 0 ? (newMarketValue / newDebt) * 100 : 0
+
+    // bufferTo130 = newMarketValue - (newDebt × 1.30)
+    // 正數代表市值還有這麼多空間才會觸線
+    const bufferTo130 = newMarketValue - newDebt * 1.30
+    const bufferTo120 = newMarketValue - newDebt * 1.20
+
+    return { newMarginRatio, newMarketValue, newDebt, addedDebt, addedEquity, bufferTo130, bufferTo120 }
+}

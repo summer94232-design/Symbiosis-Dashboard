@@ -3,7 +3,7 @@ import { collection, getDocs, orderBy, query, doc, setDoc, getDoc, updateDoc } f
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { getMultipleQuotes } from '../../lib/fugle'
-import { calcPositions, calcAvailableCash, type TradeRecord, type DividendRecord } from '../../lib/calc'
+import { calcPositions, calcAvailableCash, simulateMarginBuy, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useNavigate } from 'react-router-dom'
@@ -143,6 +143,12 @@ export default function Dashboard() {
         marginCost: number    // 融資買入時股票總市值（用於計算原始成本）
     }
     const [marginPositions, setMarginPositions] = useState<MarginPosition[]>([])
+
+    // 融資加碼試算 state
+    const [simOpen, setSimOpen] = useState(false)
+    const [simPrice, setSimPrice] = useState('')
+    const [simShares, setSimShares] = useState('')
+    const [simRatio, setSimRatio] = useState('0.6')
 
     // ✅ 優化：單一 Promise.all 並行抓取所有資料，消除串行等待
     const loadData = async () => {
@@ -349,6 +355,18 @@ export default function Dashboard() {
     const marginRatioColor = marginRatioValue === null ? '#8892a4'
         : marginRatioValue >= 160 ? '#00c896'
             : marginRatioValue >= 130 ? '#f5a623'
+                : '#ff5757'
+
+    // 融資加碼試算結果（即時計算，純前端）
+    const simPriceNum = parseFloat(simPrice)
+    const simSharesNum = parseInt(simShares, 10)
+    const simRatioNum = parseFloat(simRatio)
+    const simResult = (simOpen && simPriceNum > 0 && simSharesNum > 0 && simRatioNum > 0)
+        ? simulateMarginBuy(marginStockMarketValue, totalMarginDebt, simPriceNum, simSharesNum, simRatioNum)
+        : null
+    const simRatioColor = simResult === null ? '#8892a4'
+        : simResult.newMarginRatio >= 160 ? '#00c896'
+            : simResult.newMarginRatio >= 130 ? '#f5a623'
                 : '#ff5757'
 
     // 個股圓餅圖
@@ -603,6 +621,87 @@ export default function Dashboard() {
                                             ⚠️ 維持率低於 130%，請留意追繳風險！強制斷頭線為 120%。
                                         </div>
                                     )}
+
+                                    {/* ── 加碼試算區塊 ── */}
+                                    <div style={{ marginTop: '14px', borderTop: '1px solid #2e3349', paddingTop: '14px' }}>
+                                        <button
+                                            onClick={() => setSimOpen(v => !v)}
+                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#4f8ef7', fontSize: '12px', fontWeight: 600, padding: 0, display: 'flex', alignItems: 'center', gap: '5px' }}
+                                        >
+                                            <span style={{ fontSize: '14px' }}>{simOpen ? '▾' : '▸'}</span>
+                                            加碼試算
+                                        </button>
+
+                                        {simOpen && (
+                                            <div style={{ marginTop: '12px' }}>
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'flex-end' }}>
+                                                    {[
+                                                        { label: '買入價格', value: simPrice, setter: setSimPrice, placeholder: '例：600', unit: '元' },
+                                                        { label: '加碼股數', value: simShares, setter: setSimShares, placeholder: '例：1000', unit: '股' },
+                                                        { label: '融資成數', value: simRatio, setter: setSimRatio, placeholder: '0.6', unit: '' },
+                                                    ].map(({ label, value, setter, placeholder, unit }) => (
+                                                        <div key={label}>
+                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>{label}</div>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                <input
+                                                                    type="number"
+                                                                    value={value}
+                                                                    onChange={e => setter(e.target.value)}
+                                                                    placeholder={placeholder}
+                                                                    style={{ width: '90px', padding: '6px 8px', backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '6px', color: '#e2e8f0', fontSize: '13px', outline: 'none' }}
+                                                                />
+                                                                {unit && <span style={{ fontSize: '12px', color: '#8892a4' }}>{unit}</span>}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                    <button
+                                                        onClick={() => { setSimPrice(''); setSimShares(''); setSimRatio('0.6') }}
+                                                        style={{ padding: '6px 10px', backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '6px', color: '#8892a4', fontSize: '12px', cursor: 'pointer' }}
+                                                    >清除</button>
+                                                </div>
+
+                                                {simResult ? (
+                                                    <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '8px' }}>
+                                                        <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 12px', border: `1px solid ${simRatioColor}30` }}>
+                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>加碼後維持率</div>
+                                                            <div style={{ fontSize: '18px', fontWeight: 700, color: simRatioColor }}>{simResult.newMarginRatio.toFixed(1)}%</div>
+                                                            <div style={{ fontSize: '11px', marginTop: '3px', color: simRatioColor, fontWeight: 600 }}>
+                                                                {simResult.newMarginRatio >= 160 ? '✓ 安全' : simResult.newMarginRatio >= 130 ? '⚠ 留意' : '⚠ 危險'}
+                                                            </div>
+                                                        </div>
+                                                        <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 12px' }}>
+                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>較現在變化</div>
+                                                            <div style={{ fontSize: '16px', fontWeight: 700, color: simResult.newMarginRatio >= (marginRatioValue ?? 0) ? '#00c896' : '#ff5757' }}>
+                                                                {simResult.newMarginRatio >= (marginRatioValue ?? 0) ? '+' : ''}{(simResult.newMarginRatio - (marginRatioValue ?? 0)).toFixed(1)}%
+                                                            </div>
+                                                        </div>
+                                                        <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 12px' }}>
+                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>新增借款</div>
+                                                            <div style={{ fontSize: '14px', fontWeight: 600, color: '#f5a623' }}>${simResult.addedDebt.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
+                                                        </div>
+                                                        <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 12px' }}>
+                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>需自備款</div>
+                                                            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>${simResult.addedEquity.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
+                                                        </div>
+                                                        <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 12px' }}>
+                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>距追繳線(130%)緩衝</div>
+                                                            <div style={{ fontSize: '14px', fontWeight: 600, color: simResult.bufferTo130 >= 0 ? '#00c896' : '#ff5757' }}>
+                                                                {simResult.bufferTo130 >= 0 ? '+' : ''}${simResult.bufferTo130.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
+                                                            </div>
+                                                        </div>
+                                                        <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 12px' }}>
+                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>距斷頭線(120%)緩衝</div>
+                                                            <div style={{ fontSize: '14px', fontWeight: 600, color: simResult.bufferTo120 >= 0 ? '#00c896' : '#ff5757' }}>
+                                                                {simResult.bufferTo120 >= 0 ? '+' : ''}${simResult.bufferTo120.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div style={{ marginTop: '10px', fontSize: '12px', color: '#3d4460' }}>輸入買入價格與股數後自動計算</div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -820,13 +919,13 @@ export default function Dashboard() {
                                         {overdueTasks.length > 0 && (
                                             <>
                                                 <div style={{ fontSize: '11px', color: '#ff5757', fontWeight: 600, padding: '4px 0 2px' }}>⚠️ 逾期</div>
-                                                {overdueTasks.map(t => <TaskRow key={t.id} task={t} todayStr={todayStr} onToggle={toggleTask} />)}
+                                                {overdueTasks.map(t => <TaskRow key={t.id} task={t} todayStr={todayStr} />)}
                                             </>
                                         )}
                                         {todayTasks.length > 0 && (
                                             <>
                                                 <div style={{ fontSize: '11px', color: '#f5a623', fontWeight: 600, padding: '4px 0 2px' }}>今日到期</div>
-                                                {todayTasks.map(t => <TaskRow key={t.id} task={t} todayStr={todayStr} onToggle={toggleTask} />)}
+                                                {todayTasks.map(t => <TaskRow key={t.id} task={t} todayStr={todayStr} />)}
                                             </>
                                         )}
                                         {futureTasks.length > 0 && (
@@ -834,7 +933,7 @@ export default function Dashboard() {
                                                 {(overdueTasks.length > 0 || todayTasks.length > 0) && (
                                                     <div style={{ fontSize: '11px', color: '#8892a4', fontWeight: 600, padding: '4px 0 2px' }}>其他</div>
                                                 )}
-                                                {futureTasks.map(t => <TaskRow key={t.id} task={t} todayStr={todayStr} onToggle={toggleTask} />)}
+                                                {futureTasks.map(t => <TaskRow key={t.id} task={t} todayStr={todayStr} />)}
                                             </>
                                         )}
                                     </div>
@@ -849,16 +948,17 @@ export default function Dashboard() {
     )
 }
 
-function TaskRow({ task, todayStr, onToggle }: {
+function TaskRow({ task, todayStr }: {
     task: Task
     todayStr: string
-    onToggle: (id: string, done: boolean) => void
 }) {
+    const navigate = useNavigate()
     const isOverdue = task.dueDate && task.dueDate < todayStr
     return (
         <div className="task-row"
             style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', backgroundColor: '#0f1117', borderRadius: '8px', cursor: 'pointer' }}
-            onClick={() => onToggle(task.id, task.done)}
+            onClick={() => navigate('/calendar/tasks')}
+            title="點擊前往任務管理頁面"
         >
             <div style={{ width: '16px', height: '16px', border: `1.5px solid ${PRIORITY_COLORS[task.priority]}`, borderRadius: '4px', flexShrink: 0 }} />
             <span style={{ flex: 1, fontSize: '13px', color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</span>

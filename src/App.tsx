@@ -1,6 +1,6 @@
 import { useState, useEffect, lazy, Suspense, memo } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
-import { LayoutDashboard, ArrowLeftRight, TrendingUp, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper } from 'lucide-react'
+import { LayoutDashboard, ArrowLeftRight, TrendingUp, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard } from 'lucide-react'
 import { getDocs, orderBy, query } from 'firebase/firestore'
 import { kmsDB } from './lib/firebase'
 import { userCol } from './lib/userDB'
@@ -15,6 +15,7 @@ const AssetTrend = lazy(() => import('./pages/invest/AssetTrend'))
 const YearReview = lazy(() => import('./pages/invest/YearReview'))
 const HistoryPnL = lazy(() => import('./pages/invest/HistoryPnL'))
 const Watchlist = lazy(() => import('./pages/invest/Watchlist'))
+const MarginManager = lazy(() => import('./pages/invest/MarginManager'))
 const InvestSettings = lazy(() => import('./pages/invest/InvestSettings'))
 const KMSHome = lazy(() => import('./pages/kms/KMSHome'))
 const KMSGraph = lazy(() => import('./pages/kms/KMSGraph'))
@@ -33,6 +34,7 @@ const investNav = [
     { to: '/invest/brief', icon: Newspaper, label: '今日簡報' },
     { to: '/invest/watchlist', icon: TrendingUp, label: '自選股追蹤' },
     { to: '/invest/trend', icon: BarChart2, label: '資產趨勢' },
+    { to: '/invest/margin', icon: CreditCard, label: '融資管理' },
     { to: '/invest/history', icon: History, label: '歷史損益' },
     { to: '/invest/cashflow', icon: DollarSign, label: '出入金' },
     { to: '/invest/dividend', icon: Scissors, label: '除權息' },
@@ -145,8 +147,8 @@ const Sidebar = memo(({
     <aside style={{ width: '224px', minWidth: '224px', backgroundColor: '#1a1d27', borderRight: '1px solid #2e3349', display: 'flex', flexDirection: 'column', height: '100vh', position: isMobile ? 'fixed' : 'relative', top: 0, left: 0, zIndex: 100 }}>
         <div style={{ padding: '20px', borderBottom: '1px solid #2e3349', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-                <div style={{ fontSize: '16px', fontWeight: 700, color: '#e2e8f0' }}>共生</div>
-                <div style={{ fontSize: '12px', color: '#8892a4', marginTop: '2px' }}>Symbiosis Dashboard</div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>Symbiosis Dashboard</div>
+                <div style={{ fontSize: '12px', color: '#8892a4', marginTop: '2px' }}>投資、知識、管理紀錄</div>
             </div>
             {isMobile && <button onClick={() => setSidebarOpen(false)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={20} /></button>}
         </div>
@@ -232,7 +234,7 @@ const Sidebar = memo(({
                 <LogOut size={14} />登出
             </button>
             <div style={{ textAlign: 'center', marginTop: '8px' }}>
-                <span style={{ fontSize: '11px', color: '#8892a4' }}>v14.1.1</span>
+                <span style={{ fontSize: '11px', color: '#8892a4' }}>v14.2.1</span>
             </div>
         </div>
     </aside>
@@ -333,6 +335,7 @@ export default function App() {
                             <Route path="/invest/trend" element={<AssetTrend />} />
                             <Route path="/invest/review" element={<YearReview />} />
                             <Route path="/invest/brief" element={<DailyBrief />} />
+                            <Route path="/invest/margin" element={<MarginManager />} />
                             <Route path="/invest/settings" element={<InvestSettings />} />
                             <Route path="/kms" element={<KMSHome selectedTag={selectedTag} setSelectedTag={setSelectedTag} />} />
                             <Route path="/kms/tags" element={<KMSTags />} />

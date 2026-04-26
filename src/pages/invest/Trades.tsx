@@ -589,7 +589,7 @@ export default function Trades() {
                                                 <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                                                     <span style={{ backgroundColor: trade.type === 'buy' ? 'rgba(255,87,87,0.15)' : 'rgba(0,200,150,0.15)', color: trade.type === 'buy' ? '#ff5757' : '#00c896', padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>{trade.type === 'buy' ? '買入' : '賣出'}</span>
                                                     {trade.isMargin && <span style={{ backgroundColor: 'rgba(245,166,35,0.15)', color: '#f5a623', padding: '2px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600 }}>融資</span>}
-                                                    {isOddLot(trade.shares) && <span style={{ backgroundColor: 'rgba(245,166,35,0.12)', color: '#f5a623', padding: '2px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600 }}>零股</span>}
+                                                    {isOddLot(trade.shares) && <span style={{ backgroundColor: 'rgba(245,166,35,0.12)', color: '#d3d3d3', padding: '2px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600 }}>零股</span>}
                                                 </div>
                                             </td>
                                             <td style={{ color: '#4f8ef7', fontWeight: 700 }}>{trade.code}</td>

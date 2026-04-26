@@ -358,7 +358,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                             <Upload size={14} />批次匯入
                         </button>
                         <button style={btn('#4f8ef7')} onClick={() => { setForm(empty); setEditingId(null); setShowForm(true) }}>
-                            <Plus size={16} />新增筆記
+                            <Plus size={16} />新增
                         </button>
                     </div>
                 </div>
