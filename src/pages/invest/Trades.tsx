@@ -233,10 +233,15 @@ export default function Trades() {
             const type = row['類型']
             const date = row['日期']
 
-            if (type === '入金') {
+            if (type === '入金' || type === '出金') {
                 const amount = toNum(row['價格/金額'] || row['金額'] || '')
                 if (amount > 0) {
-                    await addDoc(userCol(investDB, 'cashflow'), { date, type: 'in', amount, note: row['備註/筆記'] || row['備註'] || '' })
+                    await addDoc(userCol(investDB, 'cashflow'), {
+                        date,
+                        type: type === '入金' ? 'in' : 'out',
+                        amount,
+                        note: row['備註/筆記'] || row['備註'] || ''
+                    })
                     success++
                 } else { skipped++ }
                 continue

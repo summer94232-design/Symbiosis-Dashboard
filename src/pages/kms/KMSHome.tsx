@@ -233,7 +233,28 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         setNotes(prev => prev.filter(n => n.id !== id))
     }
 
-    // ── 批次匯入筆記（JSON） ──────────────────────────────────────────────
+    // ── 批次匯入筆記（JSON / CSV） ────────────────────────────────────────
+    // ✅ 修正：CSV 解析改用支援引號包裹欄位的 parser，避免 content 含逗號時斷行
+    function parseCSVLine(line: string): string[] {
+        const result: string[] = []
+        let current = ''
+        let inQuotes = false
+        for (let i = 0; i < line.length; i++) {
+            const ch = line[i]
+            if (ch === '"') {
+                if (inQuotes && line[i + 1] === '"') { current += '"'; i++ }
+                else { inQuotes = !inQuotes }
+            } else if (ch === ',' && !inQuotes) {
+                result.push(current.trim())
+                current = ''
+            } else {
+                current += ch
+            }
+        }
+        result.push(current.trim())
+        return result
+    }
+
     const handleImportNotes = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
         if (!file) return
@@ -247,11 +268,11 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                 const parsed = JSON.parse(text)
                 rows = Array.isArray(parsed) ? parsed : parsed.notes ?? []
             } else if (file.name.endsWith('.csv')) {
-                // 簡易 CSV：title,content,type,url,hashtags(分號分隔)
+                // ✅ 修正：使用 quoted CSV parser 取代 line.split(',')
                 const lines = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').split('\n').filter(l => l.trim())
-                const headers = lines[0].split(',').map(h => h.trim())
+                const headers = parseCSVLine(lines[0]).map(h => h.trim())
                 rows = lines.slice(1).map(line => {
-                    const cols = line.split(',')
+                    const cols = parseCSVLine(line)
                     const row: Record<string, string> = {}
                     headers.forEach((h, i) => { row[h] = (cols[i] || '').trim() })
                     return row

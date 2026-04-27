@@ -43,23 +43,25 @@ export default function CalendarHome() {
     }
 
     const loadWatchList = async () => {
-        const snap = await getDocs(userCol(investDB, 'calendarWatchList'))
-        const list = snap.docs.map(d => ({
+        const [watchSnap, tradesSnap] = await Promise.all([
+            getDocs(userCol(investDB, 'calendarWatchList')),
+            getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
+        ])
+        const list = watchSnap.docs.map(d => ({
             code: d.data().code || d.id,
             name: d.data().name || d.data().code || d.id
         }))
         watchListRef.current = list
-        // 重新計算 myStockCodes（持倉 + 關注清單）
-        await refreshMyStockCodes(list.map(w => w.code))
+        // ✅ 修正：trades 已在此處讀取，直接傳入，不重複查詢
+        const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
+        refreshMyStockCodes(trades, list.map(w => w.code))
     }
 
-    // 計算「我的股票」代號集合 = 持倉 + 關注清單
-    const refreshMyStockCodes = async (watchCodes?: string[]) => {
+    // ✅ 修正：接收已讀取的 trades，不再重複查詢 Firestore
+    const refreshMyStockCodes = (trades: TradeRecord[], watchCodes?: string[]) => {
         try {
-            const tradesSnap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc')))
-            const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const { holdings } = calcPositions(trades)
-            const holdingCodes = Object.keys(holdings)
+            const holdingCodes = Object.keys(holdings).filter(c => holdings[c].shares > 0)
             const wl = watchCodes ?? watchListRef.current.map(w => w.code)
             setMyStockCodes(new Set([...holdingCodes, ...wl]))
         } catch { /* ignore */ }
@@ -148,18 +150,16 @@ export default function CalendarHome() {
         setInvestorInfo(null)
 
         try {
-            // 取得持倉股票
-            const tradesSnap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc')))
-            const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
-            const { holdings } = calcPositions(trades)
-            const holdingCodes = Object.keys(holdings)
-
-            // 直接從 Firestore 重新讀取 watchList（確保拿到最新值）
+            // ✅ 修正：loadWatchList 內部已讀取 trades 並計算 myStockCodes
+            //    這裡只需重新讀取 watchList（trades 已在 loadWatchList 中處理）
             await loadWatchList()
             const currentWatchList = watchListRef.current
             const watchCodes = currentWatchList.map(w => w.code)
             const watchNameMap: Record<string, string> = {}
             currentWatchList.forEach(w => { watchNameMap[w.code] = w.name })
+
+            // myStockCodes 已被 loadWatchList 更新，取出持倉代號
+            const holdingCodes = [...myStockCodes].filter(c => !watchCodes.includes(c))
 
             // 查詢清單 = 持倉 + 關注清單（去重）
             const allCodes = [...new Set([...holdingCodes, ...watchCodes])]

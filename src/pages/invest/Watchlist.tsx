@@ -73,7 +73,7 @@ function TargetCell({ current, target, type }: { current?: number; target: numbe
     const pct = (target - current) / current * 100
     const reached = type === 'high' ? current >= target : current <= target
     const near = !reached && Math.abs(pct) <= 10
-    const barColor = reached ? (type === 'high' ? '#00c896' : '#ff5757') : near ? '#f5a623' : '#3a4560'
+    const barColor = reached ? (type === 'high' ? '#00c896' : '#ff5757') : near ? '#f5a623' : '#4f8ef7'
     const textColor = reached ? barColor : near ? '#f5a623' : '#8892a4'
     const fill = Math.min(100, type === 'high' ? (current / target) * 100 : (target / current) * 100)
     return (
@@ -130,9 +130,9 @@ function TableRow({ item, ma, onEdit, onDelete }: {
             <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
                 {ma ? (
                     <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                        <MABadge label="5MA" value={ma.ma5} currentPrice={currentPrice} />
-                        <MABadge label="10MA" value={ma.ma10} currentPrice={currentPrice} />
-                        <MABadge label="20MA" value={ma.ma20} currentPrice={currentPrice} />
+                        <MABadge label="5 MA " value={ma.ma5} currentPrice={currentPrice} />
+                        <MABadge label="10 MA " value={ma.ma10} currentPrice={currentPrice} />
+                        <MABadge label="20 MA " value={ma.ma20} currentPrice={currentPrice} />
                     </div>
                 ) : <span style={{ fontSize: '10px', color: '#3d4460' }}>—</span>}
             </td>

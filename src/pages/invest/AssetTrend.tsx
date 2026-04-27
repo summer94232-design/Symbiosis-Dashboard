@@ -105,7 +105,19 @@ export default function AssetTrend() {
             setMissingPriceCodes(missing)
 
             const cash = calcAvailableCash(cashRecords, trades)
-            const totalAssets = marketValue + cash
+
+            // ✅ 修正：扣除融資借款（負債），呈現真實淨資產
+            const totalMarginDebt = trades
+                .filter(t => t.isMargin && t.type === 'buy')
+                .reduce((s, t) => s + ((t as any).marginAmount ?? 0), 0)
+            const totalMarginRepaid = trades
+                .filter(t => t.isMargin && t.type === 'sell')
+                .reduce((s, t) => {
+                    // 賣出時按比例歸還（簡化：直接用 marginAmount 欄位若有，否則略）
+                    return s + ((t as any).marginAmount ?? 0)
+                }, 0)
+            const netMarginDebt = Math.max(0, totalMarginDebt - totalMarginRepaid)
+            const totalAssets = marketValue + cash - netMarginDebt
 
             setForm(f => ({
                 ...f,
@@ -138,7 +150,17 @@ export default function AssetTrend() {
             setMissingPriceCodes(missing)
 
             const cash = calcAvailableCash(cashRecords, trades)
-            const totalAssets = marketValue + cash
+
+            // ✅ 修正：扣除融資借款，呈現真實淨資產
+            const totalMarginDebt = trades
+                .filter(t => t.isMargin && t.type === 'buy')
+                .reduce((s, t) => s + ((t as any).marginAmount ?? 0), 0)
+            const totalMarginRepaid = trades
+                .filter(t => t.isMargin && t.type === 'sell')
+                .reduce((s, t) => s + ((t as any).marginAmount ?? 0), 0)
+            const netMarginDebt = Math.max(0, totalMarginDebt - totalMarginRepaid)
+            const totalAssets = marketValue + cash - netMarginDebt
+
             const today = new Date().toISOString().split('T')[0]
 
             await setDoc(userDoc(investDB, 'assetSnapshots', today), {

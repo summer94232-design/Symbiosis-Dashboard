@@ -2,11 +2,11 @@ import { useState, useEffect, useRef } from 'react'
 import { collection, getDocs, orderBy, query, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
-import { getMultipleQuotes } from '../../lib/fugle'
 import { calcPositions, calcAvailableCash, simulateMarginBuy, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useNavigate } from 'react-router-dom'
+import { usePrices } from '../../PriceContext'
 
 const COLORS = ['#4f8ef7', '#00c896', '#f5a623', '#ff5757', '#a78bfa', '#34d399', '#fb923c', '#60a5fa', '#f472b6', '#facc15', '#38bdf8', '#4ade80']
 const CASH_COLOR = '#8892a4'
@@ -120,11 +120,13 @@ function GroupTooltip({ active, payload, totalAssets }: any) {
 
 export default function Dashboard() {
     const navigate = useNavigate()
+    // ✅ 修正：改用 PriceContext，updatePrices 會同步更新全域，Holdings/Watchlist 等頁面一併反映
+    const { prices: ctxPrices, lastUpdated: ctxLastUpdated, priceLoading, updatePrices: ctxUpdatePrices } = usePrices()
+
     const [holdings, setHoldings] = useState<HoldingItem[]>([])
     const [totalCash, setTotalCash] = useState(0)
     const [realizedPnL, setRealizedPnL] = useState(0)
     const [loading, setLoading] = useState(true)
-    const [priceLoading, setPriceLoading] = useState(false)
     const [lastUpdated, setLastUpdated] = useState('')
     const [hasPrice, setHasPrice] = useState(false)
     const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
@@ -202,8 +204,12 @@ export default function Dashboard() {
             const activePositions = Object.values(positions).filter(pos => pos.shares > 0)
 
             const holdingList: HoldingItem[] = activePositions.map(pos => {
-                const rawPrice = savedPrices[pos.code]
-                const currentPrice = typeof rawPrice === 'number' && rawPrice > 0 ? rawPrice : null
+                // ✅ 修正：優先用 PriceContext（跨頁同步），再 fallback Firebase 快取
+                const ctxVal = ctxPrices[pos.code]
+                const fbVal = savedPrices[pos.code]
+                const currentPrice = (typeof ctxVal === 'number' && ctxVal > 0)
+                    ? ctxVal
+                    : (typeof fbVal === 'number' && fbVal > 0 ? fbVal : null)
                 if (currentPrice !== null) priceAvailable = true
                 const marketValue = currentPrice !== null ? currentPrice * pos.shares : pos.totalCost
                 const unrealizedPnL = currentPrice !== null ? marketValue - pos.totalCost : 0
@@ -222,7 +228,9 @@ export default function Dashboard() {
             setHoldings(holdingList)
             setTotalCash(calcAvailableCash(cashRecords, trades))
             setHasPrice(priceAvailable)
-            if (savedAt) setLastUpdated(savedAt)
+            // ✅ 修正：優先用 PriceContext 的最後更新時間，再 fallback Firebase savedAt
+            if (ctxLastUpdated) setLastUpdated(ctxLastUpdated)
+            else if (savedAt) setLastUpdated(savedAt)
 
             // ── 計算融資部位（按代號彙總，使用 isMargin 欄位）──
             const marginMap: Record<string, MarginPosition> = {}
@@ -262,46 +270,31 @@ export default function Dashboard() {
         } catch (err) { console.error(err) }
     }
 
+    // ✅ 修正：委託 PriceContext 更新，結果自動同步到 Holdings、Watchlist 等所有頁面
     const updatePrices = async () => {
-        setPriceLoading(true)
-        try {
-            const symbols = holdings.map(h => h.code)
-            if (symbols.length === 0) { setPriceLoading(false); return }
+        const symbols = holdings.map(h => h.code)
+        if (symbols.length === 0) return
+        const quotes = await ctxUpdatePrices(symbols)
 
-            const quotes = await getMultipleQuotes(symbols)
-            const now = new Date().toLocaleString('zh-TW')
-
-            const priceData: Record<string, number | string> = { _updatedAt: now }
-            symbols.forEach(s => { if (quotes[s] !== null) priceData[s] = quotes[s] as number })
-            // ✅ merge:true 避免覆蓋其他已快取的股票現價
-            await setDoc(userDocNested(investDB, 'settings', 'lastPrices'), priceData, { merge: true })
-
-            let totalMarketValue = 0
-            let priceAvailable = false
-
-            const updated: HoldingItem[] = holdings.map(h => {
-                const rawPrice = quotes[h.code]
-                const currentPrice = (typeof rawPrice === 'number' && rawPrice > 0) ? rawPrice : null
-                if (currentPrice !== null) priceAvailable = true
-                const marketValue = currentPrice !== null ? currentPrice * h.shares : h.totalCost
-                const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
-                const returnRate = (currentPrice !== null && h.totalCost > 0)
-                    ? (unrealizedPnL / h.totalCost) * 100
-                    : 0
-                totalMarketValue += marketValue
-                return { ...h, currentPrice, marketValue, unrealizedPnL, returnRate }
-            })
-
-            updated.forEach(h => {
-                h.ratio = totalMarketValue > 0 ? (h.marketValue / totalMarketValue) * 100 : 0
-            })
-            updated.sort((a, b) => b.marketValue - a.marketValue)
-
-            setHoldings(updated)
-            setHasPrice(priceAvailable)
-            setLastUpdated(now)
-        } catch (err) { console.error(err) }
-        setPriceLoading(false)
+        // 用 context 回傳的即時 quotes 同步更新本頁 holdings（不等 state 重渲染）
+        let totalMarketValue = 0
+        let priceAvailable = false
+        const updated: HoldingItem[] = holdings.map(h => {
+            const rawPrice = quotes[h.code]
+            const currentPrice = (typeof rawPrice === 'number' && rawPrice > 0) ? rawPrice : null
+            if (currentPrice !== null) priceAvailable = true
+            const marketValue = currentPrice !== null ? currentPrice * h.shares : h.totalCost
+            const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
+            const returnRate = (currentPrice !== null && h.totalCost > 0)
+                ? (unrealizedPnL / h.totalCost) * 100 : 0
+            totalMarketValue += marketValue
+            return { ...h, currentPrice, marketValue, unrealizedPnL, returnRate }
+        })
+        updated.forEach(h => { h.ratio = totalMarketValue > 0 ? (h.marketValue / totalMarketValue) * 100 : 0 })
+        updated.sort((a, b) => b.marketValue - a.marketValue)
+        setHoldings(updated)
+        setHasPrice(priceAvailable)
+        setLastUpdated(new Date().toLocaleString('zh-TW'))
     }
 
     // ✅ 優化：直接呼叫，移除不必要的 setTimeout 延遲

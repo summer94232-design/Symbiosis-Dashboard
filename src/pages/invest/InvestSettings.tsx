@@ -176,6 +176,7 @@ export default function InvestSettings() {
             const note = row['備註'] || row['備註/筆記'] || ''
 
             if (!date || !typeStr) { skipped++; continue }
+            // ✅ 接受：買入、買進（買入為 exportTrades 匯出格式）、賣出
             if (typeStr !== '買入' && typeStr !== '賣出' && typeStr !== '買進') { skipped++; continue }
             if (!code || !price || !shares) { failed++; continue }
 
@@ -394,6 +395,7 @@ export default function InvestSettings() {
         const snap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'desc')))
         const trades = snap.docs.map(d => d.data() as TradeRow)
         const header = ['日期', '類型', '代號', '名稱', '價格', '股數', '手續費', '交易稅', '收付金額', '備註']
+        // ✅ 修正：類型輸出改為「買入/賣出」，與 InvestSettings 匯入解析格式一致
         const rows = trades.map(t => [t.date, t.type === 'buy' ? '買入' : '賣出', t.code, t.name, t.price, t.shares, t.fee, t.tax, t.total, t.note ?? ''])
         downloadCSV([header, ...rows].map(r => r.join(',')).join('\n'), `買賣紀錄_${today()}.csv`)
         setExportLoading(false)
