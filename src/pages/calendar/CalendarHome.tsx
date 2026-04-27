@@ -200,7 +200,7 @@ export default function CalendarHome() {
                     console.log(`${code} 法說會日期（來源：${json.source}）:`, newDates)
 
                     // 名稱優先順序：持倉 > watchList > code
-                    const stockName = holdings[code]?.name || watchNameMap[code] || code
+                    const stockName = watchNameMap[code] || code
                     const docId = `${code}-${yearMonth}`
                     const docRef = userDoc(investDB, 'investorMeetings', docId)
 
