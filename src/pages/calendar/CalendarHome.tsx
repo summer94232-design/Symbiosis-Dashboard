@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { getDocs, addDoc, deleteDoc, orderBy, query, setDoc, getDoc, updateDoc } from 'firebase/firestore'
+import { getDocs, addDoc, deleteDoc, orderBy, query, where, setDoc, getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { calcPositions, type TradeRecord } from '../../lib/calc'
@@ -103,39 +103,29 @@ export default function CalendarHome() {
         if (loadingInvestor) return  // 手動更新進行中時不觸發
         const yearMonth = `${y}-${String(m).padStart(2, '0')}`
 
-        // ── 優化：不再讀整個 collection，改為只查詢當月關注股票的文件 ──
         try {
-            // 取得關注清單 + 持倉（用 watchListRef 已有的值，避免額外讀取）
-            const watchCodes = watchListRef.current.map(w => w.code)
+            // ✅ 修正：直接查詢當月所有文件（不限於關注清單），確保 xlsx 匯入的資料也能顯示
+            const q = query(userCol(investDB, 'investorMeetings'), where('yearMonth', '==', yearMonth))
+            const snap = await getDocs(q)
             const evtMap = new Map<string, CalendarEvent>()
 
-            // 並行讀取各股票的當月文件（getDoc 單筆，不讀整個 collection）
-            const docIds = watchCodes.length > 0 ? watchCodes : []
-            // 若關注清單尚未載入，先讀一次；否則直接取 ref 值
-            const allCodes = docIds.length > 0 ? docIds : []
-
-            await Promise.all(allCodes.map(async (code) => {
-                const docId = `${code}-${yearMonth}`
-                try {
-                    const snap = await getDoc(userDoc(investDB, 'investorMeetings', docId))
-                    if (!snap.exists()) return
-                    const data = snap.data()
-                    const dates: string[] = Array.isArray(data.dates) ? data.dates : []
-                    dates.forEach((isoDate: string) => {
-                        const id = `investor-${data.stockCode}-${isoDate}`
-                        if (!evtMap.has(id)) {
-                            evtMap.set(id, {
-                                id,
-                                date: isoDate,
-                                title: `${data.stockName || data.stockCode} 法說會`,
-                                type: 'investor',
-                                stockCode: data.stockCode,
-                                description: `${data.stockName || data.stockCode}（${data.stockCode}）法人說明會`
-                            })
-                        }
-                    })
-                } catch { /* 單筆文件不存在或讀取失敗，直接跳過 */ }
-            }))
+            snap.docs.forEach(docSnap => {
+                const data = docSnap.data()
+                const dates: string[] = Array.isArray(data.dates) ? data.dates : []
+                dates.forEach((isoDate: string) => {
+                    const id = `investor-${data.stockCode}-${isoDate}`
+                    if (!evtMap.has(id)) {
+                        evtMap.set(id, {
+                            id,
+                            date: isoDate,
+                            title: `${data.stockName || data.stockCode} 法說會`,
+                            type: 'investor',
+                            stockCode: data.stockCode,
+                            description: `${data.stockName || data.stockCode}（${data.stockCode}）法人說明會`
+                        })
+                    }
+                })
+            })
 
             setInvestorEvents([...evtMap.values()])
         } catch (err) {
@@ -200,7 +190,7 @@ export default function CalendarHome() {
                     console.log(`${code} 法說會日期（來源：${json.source}）:`, newDates)
 
                     // 名稱優先順序：持倉 > watchList > code
-                    const stockName = watchNameMap[code] || code
+                    const stockName = holdings[code]?.name || watchNameMap[code] || code
                     const docId = `${code}-${yearMonth}`
                     const docRef = userDoc(investDB, 'investorMeetings', docId)
 
