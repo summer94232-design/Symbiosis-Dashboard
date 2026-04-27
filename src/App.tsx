@@ -1,10 +1,11 @@
 import { useState, useEffect, lazy, Suspense, memo } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
 import { LayoutDashboard, ArrowLeftRight, TrendingUp, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard } from 'lucide-react'
-import { getDocs, orderBy, query } from 'firebase/firestore'
+import { getDocs, getDoc, orderBy, query } from 'firebase/firestore'
 import { kmsDB } from './lib/firebase'
-import { userCol } from './lib/userDB'
+import { userCol, userDocNested } from './lib/userDB'
 import { signOutAll } from './lib/auth'
+import { PriceProvider } from './PriceContext'
 
 const Dashboard = lazy(() => import('./pages/invest/Dashboard'))
 const Trades = lazy(() => import('./pages/invest/Trades'))
@@ -68,6 +69,33 @@ function buildTree(tags: string[]): Record<string, TreeNode> {
     return root
 }
 
+function sortTreeByOrder(
+    tree: Record<string, TreeNode>,
+    parentOrder: string[],
+    childOrder: Record<string, string[]>
+): Record<string, TreeNode> {
+    const allParents = Object.keys(tree)
+    const orderedParents = [
+        ...parentOrder.filter(p => allParents.includes(p)),
+        ...allParents.filter(p => !parentOrder.includes(p)).sort((a, b) => a.localeCompare(b, 'zh-TW')),
+    ]
+    const sorted: Record<string, TreeNode> = {}
+    orderedParents.forEach(pName => {
+        const node = tree[pName]
+        if (!node) return
+        const allChildren = Object.keys(node.children)
+        const order = childOrder[pName] || []
+        const orderedChildren = [
+            ...order.filter(c => allChildren.includes(c)),
+            ...allChildren.filter(c => !order.includes(c)).sort((a, b) => a.localeCompare(b, 'zh-TW')),
+        ]
+        const sortedChildren: Record<string, TreeNode> = {}
+        orderedChildren.forEach(cName => { sortedChildren[cName] = node.children[cName] })
+        sorted[pName] = { ...node, children: sortedChildren }
+    })
+    return sorted
+}
+
 function TreeNodeComponent({ node, depth, selectedTag, setSelectedTag, expandedNodes, toggleNode }: {
     node: TreeNode; depth: number; selectedTag: string
     setSelectedTag: (tag: string) => void; expandedNodes: Set<string>; toggleNode: (path: string) => void
@@ -95,7 +123,7 @@ function TreeNodeComponent({ node, depth, selectedTag, setSelectedTag, expandedN
                             {node.fullPath.split('/').join(' › ')}
                         </div>
                     )}
-                    {Object.values(node.children).sort((a, b) => a.name.localeCompare(b.name, 'zh-TW')).map(child => (
+                    {Object.values(node.children).map(child => (
                         <TreeNodeComponent key={child.fullPath} node={child} depth={depth + 1}
                             selectedTag={selectedTag} setSelectedTag={setSelectedTag}
                             expandedNodes={expandedNodes} toggleNode={toggleNode} />
@@ -202,7 +230,7 @@ const Sidebar = memo(({
                         </div>
                         {kmsExpanded && Object.keys(tagTree).length > 0 && (
                             <div style={{ marginBottom: '4px' }}>
-                                {Object.values(tagTree).sort((a, b) => a.name.localeCompare(b.name, 'zh-TW')).map(node => (
+                                {Object.values(tagTree).map(node => (
                                     <TreeNodeComponent key={node.fullPath} node={node} depth={0}
                                         selectedTag={selectedTag} setSelectedTag={setSelectedTag}
                                         expandedNodes={expandedNodes} toggleNode={toggleNode} />
@@ -234,7 +262,7 @@ const Sidebar = memo(({
                 <LogOut size={14} />登出
             </button>
             <div style={{ textAlign: 'center', marginTop: '8px' }}>
-                <span style={{ fontSize: '11px', color: '#8892a4' }}>v14.2.1</span>
+                <span style={{ fontSize: '11px', color: '#8892a4' }}>v14.3.0</span>
             </div>
         </div>
     </aside>
@@ -274,11 +302,16 @@ export default function App() {
     useEffect(() => {
         if (!isKMS) return
         const loadTags = async () => {
-            const q = query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc'))
-            const snap = await getDocs(q)
+            const [snap, orderSnap] = await Promise.all([
+                getDocs(query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc'))),
+                getDoc(userDocNested(kmsDB, 'settings', 'tagOrder')).catch(() => null),
+            ])
             const tags = new Set<string>()
             snap.docs.forEach(d => { d.data().hashtags?.forEach((t: string) => tags.add(t)) })
-            setTagTree(buildTree(Array.from(tags).sort()))
+            const rawTree = buildTree(Array.from(tags).sort())
+            const parentOrder: string[] = orderSnap?.data()?.parentOrder || []
+            const childOrder: Record<string, string[]> = orderSnap?.data()?.childOrder || {}
+            setTagTree(sortTreeByOrder(rawTree, parentOrder, childOrder))
         }
         loadTags()
     }, [isKMS]) // ← 移除了 location.pathname
@@ -306,6 +339,7 @@ export default function App() {
     }
 
     return (
+        <PriceProvider>
         <div style={{ display: 'flex', height: '100vh', backgroundColor: '#0f1117', overflow: 'hidden' }}>
             {!isMobile && <Sidebar {...sidebarProps} />}
             {isMobile && sidebarOpen && (
@@ -350,5 +384,6 @@ export default function App() {
                 </main>
             </div>
         </div>
+        </PriceProvider>
     )
 }

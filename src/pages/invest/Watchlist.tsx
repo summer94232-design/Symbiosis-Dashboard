@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react'
 import { getDocs, setDoc, deleteDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
-import { getMultipleQuotes } from '../../lib/fugle'
+import { getHistoricalCandles } from '../../lib/fugle'
 import {
     Plus, Trash2, RefreshCw, TrendingUp, Pencil, Check, X,
-    FileText, LayoutGrid, Table2, Tag, ChevronDown, ChevronRight, FolderPlus
+    FileText, LayoutGrid, Table2, Tag, ChevronDown, ChevronRight, Activity
 } from 'lucide-react'
+import { usePrices } from '../../PriceContext'
 
 interface WatchItem {
     code: string
@@ -16,50 +17,42 @@ interface WatchItem {
     note?: string
     currentPrice?: number
     addedAt: string
-    group?: string   // ← 新增族群欄位
+    group?: string
+}
+
+// MA 資料結構
+interface MAData {
+    ma5: number | null
+    ma10: number | null
+    ma20: number | null
 }
 
 const UNGROUPED = '未分類'
-
 const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
 const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
 const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
 const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
-// ── 距離目標的進度條顏色邏輯 ─────────────────────────────────────
-// ratio = currentPrice / targetHigh (或 targetLow)
-// 上標：ratio > 1 → 達標（綠），0.9~1 → 接近（黃），<0.9 → 偏遠（藍灰）
-// 下標：ratio < 1 → 達標（紅），1~1.1 → 接近（橘），>1.1 → 偏遠（藍灰）
+// 計算簡單移動平均
+function calcMA(closes: number[], period: number): number | null {
+    if (closes.length < period) return null
+    const slice = closes.slice(-period)
+    return slice.reduce((s, v) => s + v, 0) / period
+}
 
-function DistanceBar({
-    current, target, type
-}: { current: number; target: number; type: 'high' | 'low' }) {
+function DistanceBar({ current, target, type }: { current: number; target: number; type: 'high' | 'low' }) {
     const pct = ((target - current) / current * 100)
     const absPct = Math.abs(pct)
     const reached = type === 'high' ? current >= target : current <= target
     const near = !reached && absPct <= 10
-
-    const barColor = reached
-        ? (type === 'high' ? '#00c896' : '#ff5757')
-        : near ? '#f5a623' : '#4f8ef7'
-
-    // 進度條填滿度：以 current/target 比例表示，最大100%
-    const fill = Math.min(100, type === 'high'
-        ? (current / target) * 100
-        : (target / current) * 100)
-
+    const barColor = reached ? (type === 'high' ? '#00c896' : '#ff5757') : near ? '#f5a623' : '#4f8ef7'
+    const fill = Math.min(100, type === 'high' ? (current / target) * 100 : (target / current) * 100)
     const sign = pct > 0 ? '+' : ''
-
     return (
         <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                <span style={{ fontSize: '11px', color: '#8892a4' }}>
-                    {type === 'high' ? '上標' : '下標'} {target}
-                </span>
-                <span style={{
-                    fontSize: '11px', fontWeight: 600,
-                    color: reached ? barColor : near ? '#f5a623' : '#8892a4'
-                }}>
+                <span style={{ fontSize: '11px', color: '#8892a4' }}>{type === 'high' ? '上標' : '下標'} {target}</span>
+                <span style={{ fontSize: '11px', fontWeight: 600, color: reached ? barColor : near ? '#f5a623' : '#8892a4' }}>
                     {reached ? '✓ 達標' : `${sign}${pct.toFixed(1)}%`}
                 </span>
             </div>
@@ -70,7 +63,6 @@ function DistanceBar({
     )
 }
 
-// ── 目標欄：價格 + 距離% + 迷你進度條 合一 ───────────────────────
 function TargetCell({ current, target, type }: { current?: number; target: number; type: 'high' | 'low' }) {
     if (!current) return (
         <div>
@@ -99,11 +91,21 @@ function TargetCell({ current, target, type }: { current?: number; target: numbe
     )
 }
 
-// ── 一覽表視圖行 ──────────────────────────────────────────────────
-function TableRow({ item, onEdit, onDelete }: {
-    item: WatchItem
-    onEdit: (item: WatchItem) => void
-    onDelete: (code: string) => void
+// MA 標籤元件
+function MABadge({ label, value, currentPrice }: { label: string; value: number | null; currentPrice?: number }) {
+    if (value === null) return <span style={{ fontSize: '10px', color: '#3d4460' }}>{label}:—</span>
+    const above = currentPrice ? currentPrice > value : null
+    const color = above === null ? '#8892a4' : above ? '#00c896' : '#ff5757'
+    return (
+        <span style={{ fontSize: '10px', color, backgroundColor: `${color}15`, borderRadius: '4px', padding: '1px 5px', fontWeight: 600 }}>
+            {label}:{value.toFixed(1)}
+        </span>
+    )
+}
+
+function TableRow({ item, ma, onEdit, onDelete }: {
+    item: WatchItem; ma: MAData | null
+    onEdit: (item: WatchItem) => void; onDelete: (code: string) => void
 }) {
     const { code, name, currentPrice, targetHigh, targetLow, group } = item
     const reachedHigh = !!(currentPrice && targetHigh && currentPrice >= targetHigh)
@@ -113,7 +115,6 @@ function TableRow({ item, onEdit, onDelete }: {
 
     return (
         <tr style={{ backgroundColor: rowBg, borderBottom: '1px solid #1e2235' }}>
-            {/* 代號 + 名稱（同一行） */}
             <td style={{ padding: '6px 10px 6px 12px', whiteSpace: 'nowrap', borderLeft: leftBorder }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontWeight: 700, color: '#4f8ef7', fontSize: '13px' }}>{code}</span>
@@ -122,23 +123,25 @@ function TableRow({ item, onEdit, onDelete }: {
                         <span style={{ fontSize: '10px', backgroundColor: 'rgba(79,142,247,0.12)', color: '#4f8ef7', borderRadius: '6px', padding: '0px 5px' }}>{group}</span>}
                 </div>
             </td>
-            {/* 現價 */}
             <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700, fontSize: '13px', color: '#e2e8f0', whiteSpace: 'nowrap' }}>
                 {currentPrice ? currentPrice.toFixed(2) : <span style={{ color: '#3a4560' }}>—</span>}
             </td>
-            {/* 下標（買入）*/}
-            <td style={{ padding: '6px 10px' }}>
-                {targetLow
-                    ? <TargetCell current={currentPrice} target={targetLow} type="low" />
-                    : <span style={{ fontSize: '11px', color: '#3a4560' }}>—</span>}
+            {/* MA 欄 */}
+            <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                {ma ? (
+                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                        <MABadge label="5MA" value={ma.ma5} currentPrice={currentPrice} />
+                        <MABadge label="10MA" value={ma.ma10} currentPrice={currentPrice} />
+                        <MABadge label="20MA" value={ma.ma20} currentPrice={currentPrice} />
+                    </div>
+                ) : <span style={{ fontSize: '10px', color: '#3d4460' }}>—</span>}
             </td>
-            {/* 上標（賣出）*/}
             <td style={{ padding: '6px 10px' }}>
-                {targetHigh
-                    ? <TargetCell current={currentPrice} target={targetHigh} type="high" />
-                    : <span style={{ fontSize: '11px', color: '#3a4560' }}>—</span>}
+                {targetLow ? <TargetCell current={currentPrice} target={targetLow} type="low" /> : <span style={{ fontSize: '11px', color: '#3a4560' }}>—</span>}
             </td>
-            {/* 操作 */}
+            <td style={{ padding: '6px 10px' }}>
+                {targetHigh ? <TargetCell current={currentPrice} target={targetHigh} type="high" /> : <span style={{ fontSize: '11px', color: '#3a4560' }}>—</span>}
+            </td>
             <td style={{ padding: '6px 8px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                 <button onClick={() => onEdit(item)} style={{ background: 'none', border: 'none', color: '#3a4560', cursor: 'pointer', padding: '2px 3px' }}><Pencil size={11} /></button>
                 <button onClick={() => onDelete(code)} style={{ background: 'none', border: 'none', color: '#3a4560', cursor: 'pointer', padding: '2px 3px' }}><Trash2 size={11} /></button>
@@ -149,39 +152,48 @@ function TableRow({ item, onEdit, onDelete }: {
 
 // ── 主元件 ────────────────────────────────────────────────────────
 export default function Watchlist() {
+    // ── 全域現價 Context ──
+    const { prices, lastUpdated, priceLoading, updatePrices: ctxUpdatePrices } = usePrices()
+
     const [items, setItems] = useState<WatchItem[]>([])
     const [loading, setLoading] = useState(true)
-    const [priceLoading, setPriceLoading] = useState(false)
     const [showForm, setShowForm] = useState(false)
     const [editingCode, setEditingCode] = useState<string | null>(null)
     const [expandedNote, setExpandedNote] = useState<string | null>(null)
     const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
     const [stockDict, setStockDict] = useState<Record<string, string>>({})
-    const [lastUpdated, setLastUpdated] = useState('')
     const [viewMode, setViewMode] = useState<'card' | 'table'>('card')
     const [filterGroup, setFilterGroup] = useState<string>('all')
-    const [groupInput, setGroupInput] = useState('')   // 管理族群名稱輸入
+
+    // MA 相關
+    const [maData, setMaData] = useState<Record<string, MAData>>({})
+    const [maLoading, setMaLoading] = useState(false)
+    const [maUpdatedAt, setMaUpdatedAt] = useState('')
 
     const emptyForm = { code: '', name: '', targetHigh: '', targetLow: '', note: '', group: '' }
     const [form, setForm] = useState(emptyForm)
 
-    // 所有已使用的族群列表
     const allGroups = Array.from(new Set(items.map(i => i.group || UNGROUPED))).sort()
 
     const load = async () => {
         setLoading(true)
         const snap = await getDocs(userCol(investDB, 'watchlist'))
         const data = snap.docs.map(d => ({ code: d.id, ...d.data() } as WatchItem))
-        const priceSnap = await getDocs(userCol(investDB, 'settings'))
-        const priceData = priceSnap.docs.find(d => d.id === 'watchlistPrices')?.data() || {}
-        const savedAt = priceData._updatedAt || ''
-        if (savedAt) setLastUpdated(savedAt)
-        data.forEach(item => { item.currentPrice = priceData[item.code] ?? undefined })
+
+        // 用 Context prices 填充現價（若有的話）
+        data.forEach(item => {
+            const ctxPrice = prices[item.code]
+            if (ctxPrice !== null && ctxPrice !== undefined) {
+                item.currentPrice = ctxPrice
+            }
+        })
+
         setItems(data.sort((a, b) => {
             const gA = a.group || UNGROUPED
             const gB = b.group || UNGROUPED
             return gA !== gB ? gA.localeCompare(gB) : a.code.localeCompare(b.code)
         }))
+
         const dictSnap = await getDocs(userCol(investDB, 'stockDict'))
         const dict: Record<string, string> = {}
         dictSnap.docs.forEach(d => { dict[d.id] = d.data().name })
@@ -191,27 +203,63 @@ export default function Watchlist() {
 
     useEffect(() => { load() }, [])
 
-    const updatePrices = async () => {
-        if (items.length === 0) return
-        setPriceLoading(true)
+    // 當 Context prices 更新時，同步更新 items 現價
+    useEffect(() => {
+        if (Object.keys(prices).length === 0) return
+        setItems(prev => prev.map(item => {
+            const ctxPrice = prices[item.code]
+            if (ctxPrice !== null && ctxPrice !== undefined) {
+                return { ...item, currentPrice: ctxPrice }
+            }
+            return item
+        }))
+    }, [prices])
+
+    // ★ 更新現價：委託 Context
+    const handleUpdatePrices = async () => {
+        const codes = items.map(i => i.code)
+        if (codes.length === 0) return
+        const quotes = await ctxUpdatePrices(codes)
+        // items 會透過上面 useEffect 自動更新，也可以直接 setState
+        setItems(prev => prev.map(item => ({
+            ...item,
+            currentPrice: quotes[item.code] ?? item.currentPrice
+        })))
+    }
+
+    // ★ 更新 MA（5MA、10MA、20MA）
+    const handleUpdateMA = async () => {
+        const codes = items.map(i => i.code)
+        if (codes.length === 0) return
+        setMaLoading(true)
         try {
-            const codes = items.map(i => i.code)
-            const quotes = await getMultipleQuotes(codes)
-            const now = new Date().toLocaleString('zh-TW')
-            const watchlistPriceData: Record<string, any> = { _updatedAt: now }
-            codes.forEach(c => { if (quotes[c] !== null) watchlistPriceData[c] = quotes[c] })
-            const existingSnap = await getDocs(userCol(investDB, 'settings'))
-            const existingPrices = existingSnap.docs.find(d => d.id === 'lastPrices')?.data() || {}
-            const lastPriceData: Record<string, any> = { ...existingPrices, _updatedAt: now }
-            codes.forEach(c => { if (quotes[c] !== null) lastPriceData[c] = quotes[c] })
-            await Promise.all([
-                setDoc(userDocNested(investDB, 'settings', 'watchlistPrices'), watchlistPriceData),
-                setDoc(userDocNested(investDB, 'settings', 'lastPrices'), lastPriceData),
-            ])
-            setItems(prev => prev.map(item => ({ ...item, currentPrice: quotes[item.code] ?? item.currentPrice })))
-            setLastUpdated(now)
+            // 取最近 30 個交易日的歷史資料以計算 20MA
+            const to = new Date().toISOString().split('T')[0]
+            const from = new Date(Date.now() - 45 * 86400000).toISOString().split('T')[0]
+
+            const results: Record<string, MAData> = {}
+            await Promise.all(codes.map(async code => {
+                try {
+                    const data = await getHistoricalCandles(code, from, to)
+                    if (!data?.data?.length) { results[code] = { ma5: null, ma10: null, ma20: null }; return }
+                    // Fugle historical candles 回傳格式：data.data 陣列，每項含 close
+                    const closes: number[] = data.data
+                        .filter((d: any) => d.close != null)
+                        .map((d: any) => d.close)
+                        .sort(() => 0) // 保持原排序（舊→新）
+                    results[code] = {
+                        ma5: calcMA(closes, 5),
+                        ma10: calcMA(closes, 10),
+                        ma20: calcMA(closes, 20),
+                    }
+                } catch {
+                    results[code] = { ma5: null, ma10: null, ma20: null }
+                }
+            }))
+            setMaData(results)
+            setMaUpdatedAt(new Date().toLocaleString('zh-TW'))
         } catch (err) { console.error(err) }
-        setPriceLoading(false)
+        setMaLoading(false)
     }
 
     const handleAdd = async () => {
@@ -226,8 +274,7 @@ export default function Watchlist() {
             group: form.group.trim() || null,
             addedAt: new Date().toISOString()
         })
-        setForm(emptyForm)
-        setShowForm(false); load()
+        setForm(emptyForm); setShowForm(false); load()
     }
 
     const handleEdit = async (code: string) => {
@@ -250,13 +297,7 @@ export default function Watchlist() {
 
     const openEdit = (item: WatchItem) => {
         setEditingCode(item.code)
-        setForm({
-            code: item.code, name: item.name,
-            targetHigh: item.targetHigh?.toString() || '',
-            targetLow: item.targetLow?.toString() || '',
-            note: item.note || '',
-            group: item.group || ''
-        })
+        setForm({ code: item.code, name: item.name, targetHigh: item.targetHigh?.toString() || '', targetLow: item.targetLow?.toString() || '', note: item.note || '', group: item.group || '' })
     }
 
     const toggleGroup = (g: string) => {
@@ -274,7 +315,6 @@ export default function Watchlist() {
         return 'normal'
     }
 
-    // 依族群分組
     const grouped: Record<string, WatchItem[]> = {}
     const filtered = filterGroup === 'all' ? items : items.filter(i => (i.group || UNGROUPED) === filterGroup)
     filtered.forEach(item => {
@@ -283,8 +323,6 @@ export default function Watchlist() {
         grouped[g].push(item)
     })
     const groupKeys = Object.keys(grouped).sort()
-
-    // 達標提示數
     const alertCount = items.filter(i => getPriceStatus(i) !== 'normal').length
 
     return (
@@ -300,13 +338,11 @@ export default function Watchlist() {
                 .overview-table { width: 100%; border-collapse: collapse; }
                 .overview-table thead th { position: sticky; top: 0; background: #12151f; z-index: 1; padding: 6px 10px; text-align: left; font-size: 11px; color: #6b7690; font-weight: 600; border-bottom: 1px solid #2e3349; letter-spacing: 0.03em; text-transform: uppercase; }
                 .overview-table tbody tr:hover td { background-color: rgba(79,142,247,0.05) !important; }
-                .tab-btn { background: none; border: none; cursor: pointer; padding: '6px 12px'; border-radius: '6px'; font-size: 13px; }
-                .group-badge { font-size: 11px; border-radius: 10px; padding: 2px 8px; display: inline-block; }
             `}</style>
 
             <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1400px', margin: '0 auto' }}>
 
-                {/* ── 標題列 ── */}
+                {/* 標題列 */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                     <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -319,21 +355,22 @@ export default function Watchlist() {
                         </div>
                         <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>
                             {lastUpdated ? `現價更新：${lastUpdated}` : '點「更新現價」取得最新報價'}
+                            {maUpdatedAt && <span style={{ marginLeft: '8px', color: '#a78bfa' }}>· MA 更新：{maUpdatedAt}</span>}
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         {/* 視圖切換 */}
                         <div style={{ display: 'flex', backgroundColor: '#12151f', borderRadius: '8px', padding: '3px', border: '1px solid #2e3349' }}>
-                            <button onClick={() => setViewMode('card')} style={{
-                                ...btn(viewMode === 'card' ? '#2e3349' : 'transparent'),
-                                padding: '5px 10px', fontSize: '12px', borderRadius: '6px'
-                            }}><LayoutGrid size={13} />卡片</button>
-                            <button onClick={() => setViewMode('table')} style={{
-                                ...btn(viewMode === 'table' ? '#2e3349' : 'transparent'),
-                                padding: '5px 10px', fontSize: '12px', borderRadius: '6px'
-                            }}><Table2 size={13} />一覽表</button>
+                            <button onClick={() => setViewMode('card')} style={{ ...btn(viewMode === 'card' ? '#2e3349' : 'transparent'), padding: '5px 10px', fontSize: '12px', borderRadius: '6px' }}><LayoutGrid size={13} />卡片</button>
+                            <button onClick={() => setViewMode('table')} style={{ ...btn(viewMode === 'table' ? '#2e3349' : 'transparent'), padding: '5px 10px', fontSize: '12px', borderRadius: '6px' }}><Table2 size={13} />一覽表</button>
                         </div>
-                        <button onClick={updatePrices} disabled={priceLoading || items.length === 0} style={btn('#21253a')}>
+                        {/* 更新 MA */}
+                        <button onClick={handleUpdateMA} disabled={maLoading || items.length === 0} style={{ ...btn('#21253a'), border: '1px solid #2e3349' }}>
+                            <Activity size={14} style={{ animation: maLoading ? 'spin 1s linear infinite' : 'none' }} />
+                            {maLoading ? 'MA 計算中...' : '更新 MA'}
+                        </button>
+                        {/* 更新現價 */}
+                        <button onClick={handleUpdatePrices} disabled={priceLoading || items.length === 0} style={btn('#21253a')}>
                             <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {priceLoading ? '更新中...' : '更新現價'}
                         </button>
@@ -343,23 +380,19 @@ export default function Watchlist() {
                     </div>
                 </div>
 
-                {/* ── 族群篩選列 ── */}
+                {/* 族群篩選列 */}
                 {allGroups.length > 1 && (
                     <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
                         <Tag size={13} style={{ color: '#8892a4', flexShrink: 0 }} />
                         {['all', ...allGroups].map(g => (
-                            <button key={g} onClick={() => setFilterGroup(g)} style={{
-                                ...btn(filterGroup === g ? '#4f8ef7' : '#21253a'),
-                                padding: '4px 12px', fontSize: '12px', borderRadius: '20px',
-                                border: `1px solid ${filterGroup === g ? '#4f8ef7' : '#2e3349'}`
-                            }}>
+                            <button key={g} onClick={() => setFilterGroup(g)} style={{ ...btn(filterGroup === g ? '#4f8ef7' : '#21253a'), padding: '4px 12px', fontSize: '12px', borderRadius: '20px', border: `1px solid ${filterGroup === g ? '#4f8ef7' : '#2e3349'}` }}>
                                 {g === 'all' ? `全部 (${items.length})` : `${g} (${items.filter(i => (i.group || UNGROUPED) === g).length})`}
                             </button>
                         ))}
                     </div>
                 )}
 
-                {/* ── 新增表單 ── */}
+                {/* 新增表單 */}
                 {showForm && (
                     <div style={{ ...card, marginBottom: '20px' }}>
                         <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>新增自選股</div>
@@ -367,10 +400,7 @@ export default function Watchlist() {
                             <div>
                                 <label style={lbl}>股票代號 *</label>
                                 <input style={inp} placeholder="如：2330" value={form.code}
-                                    onChange={e => {
-                                        const code = e.target.value.toUpperCase()
-                                        setForm(f => ({ ...f, code, name: stockDict[code] || f.name }))
-                                    }} />
+                                    onChange={e => { const code = e.target.value.toUpperCase(); setForm(f => ({ ...f, code, name: stockDict[code] || f.name })) }} />
                             </div>
                             <div>
                                 <label style={lbl}>股票名稱</label>
@@ -392,11 +422,7 @@ export default function Watchlist() {
                                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
                                     {allGroups.filter(g => g !== UNGROUPED).map(g => (
                                         <button key={g} onClick={() => setForm(f => ({ ...f, group: f.group === g ? '' : g }))}
-                                            style={{
-                                                ...btn(form.group === g ? '#4f8ef7' : '#21253a'),
-                                                padding: '3px 10px', fontSize: '12px', borderRadius: '20px',
-                                                border: `1px solid ${form.group === g ? '#4f8ef7' : '#2e3349'}`
-                                            }}>{g}</button>
+                                            style={{ ...btn(form.group === g ? '#4f8ef7' : '#21253a'), padding: '3px 10px', fontSize: '12px', borderRadius: '20px', border: `1px solid ${form.group === g ? '#4f8ef7' : '#2e3349'}` }}>{g}</button>
                                     ))}
                                 </div>
                                 <input style={inp} placeholder="輸入新族群名稱，或選擇上方已有族群" value={form.group}
@@ -416,123 +442,55 @@ export default function Watchlist() {
                     </div>
                 )}
 
-                {/* ── 載入中 / 空狀態 ── */}
+                {/* 載入中 / 空狀態 */}
                 {loading ? (
-                    <div style={{ textAlign: 'center', padding: '64px', color: '#8892a4' }}>載入中...</div>
+                    <div style={{ textAlign: 'center', padding: '60px', color: '#8892a4' }}>
+                        <RefreshCw size={24} style={{ animation: 'spin 1s linear infinite', marginBottom: '12px' }} />
+                        <p>載入中...</p>
+                    </div>
                 ) : items.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '64px', color: '#8892a4' }}>
-                        <TrendingUp size={32} style={{ marginBottom: '12px', opacity: 0.4 }} />
-                        <p style={{ margin: 0 }}>還沒有自選股，點「新增自選股」開始追蹤</p>
+                    <div style={{ ...card, textAlign: 'center', padding: '60px' }}>
+                        <TrendingUp size={32} color="#2e3349" style={{ marginBottom: '16px' }} />
+                        <p style={{ color: '#8892a4', fontSize: '15px', margin: '0 0 8px' }}>尚無自選股</p>
+                        <p style={{ color: '#3d4460', fontSize: '13px', margin: 0 }}>點擊「新增自選股」開始追蹤</p>
                     </div>
                 ) : viewMode === 'table' ? (
-
-                    /* ════════════════════════════════════════════════
-                       一 覽 表 視 圖
-                    ════════════════════════════════════════════════ */
-                    <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
-                        {/* 摘要列 */}
-                        <div style={{ display: 'flex', gap: '1px', backgroundColor: '#2e3349' }}>
-                            {[
-                                { label: '全部', value: items.length, color: '#e2e8f0' },
-                                { label: '達上標', value: items.filter(i => i.currentPrice && i.targetHigh && i.currentPrice >= i.targetHigh).length, color: '#00c896' },
-                                { label: '達下標', value: items.filter(i => i.currentPrice && i.targetLow && i.currentPrice <= i.targetLow).length, color: '#ff5757' },
-                                {
-                                    label: '接近±10%', value: items.filter(i => {
-                                        if (!i.currentPrice) return false
-                                        const nearH = i.targetHigh && !(i.currentPrice >= i.targetHigh) && Math.abs((i.targetHigh - i.currentPrice) / i.currentPrice * 100) <= 10
-                                        const nearL = i.targetLow && !(i.currentPrice <= i.targetLow) && Math.abs((i.targetLow - i.currentPrice) / i.currentPrice * 100) <= 10
-                                        return nearH || nearL
-                                    }).length, color: '#f5a623'
-                                },
-                            ].map(({ label, value, color }) => (
-                                <div key={label} style={{ flex: 1, backgroundColor: '#1a1d27', padding: '10px 12px', textAlign: 'center' }}>
-                                    <div style={{ fontSize: '18px', fontWeight: 700, color, lineHeight: 1 }}>{value}</div>
-                                    <div style={{ fontSize: '10px', color: '#6b7690', marginTop: '3px' }}>{label}</div>
-                                </div>
-                            ))}
-                        </div>
-
-                        {/* 表格 */}
-                        <div style={{ overflowX: 'auto' }}>
+                    /* ── 一覽表視圖 ── */
+                    <div style={{ ...card, padding: '0', overflow: 'hidden' }}>
+                        <div style={{ overflowX: 'auto', maxHeight: '70vh', overflowY: 'auto' }}>
                             <table className="overview-table">
                                 <thead>
                                     <tr>
-                                        <th>股票</th>
+                                        <th>代號 / 名稱</th>
                                         <th style={{ textAlign: 'right' }}>現價</th>
-                                        <th>↓ 下標（買入）</th>
-                                        <th>↑ 上標（賣出）</th>
-                                        <th></th>
+                                        <th style={{ color: '#a78bfa' }}>均線 (5/10/20MA)</th>
+                                        <th>下標（買入）</th>
+                                        <th>上標（賣出）</th>
+                                        <th style={{ textAlign: 'center' }}>操作</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {/* 依族群分組顯示 */}
-                                    {groupKeys.map(g => {
-                                        const groupItems = grouped[g]
-                                        const isCollapsed = collapsedGroups.has(g)
-                                        const groupReached = groupItems.filter(i => getPriceStatus(i) !== 'normal').length
-                                        return (
-                                            <>
-                                                {/* 族群標題行 */}
-                                                {groupKeys.length > 1 && (
-                                                    <tr key={`header-${g}`} style={{ backgroundColor: '#12151f', cursor: 'pointer' }}
-                                                        onClick={() => toggleGroup(g)}>
-                                                        <td colSpan={5} style={{ padding: '5px 12px' }}>
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                {isCollapsed ? <ChevronRight size={13} color="#6b7690" /> : <ChevronDown size={13} color="#6b7690" />}
-                                                                <span style={{ fontSize: '12px', fontWeight: 600, color: '#e2e8f0' }}>{g}</span>
-                                                                <span style={{ fontSize: '10px', color: '#6b7690' }}>{groupItems.length} 檔</span>
-                                                                {groupReached > 0 && (
-                                                                    <span style={{ fontSize: '10px', backgroundColor: 'rgba(245,166,35,0.15)', color: '#f5a623', borderRadius: '8px', padding: '1px 6px' }}>
-                                                                        {groupReached} 達標
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                )}
-                                                {/* 股票行 */}
-                                                {!isCollapsed && groupItems.map(item => (
-                                                    <TableRow key={item.code} item={item}
-                                                        onEdit={openEdit}
-                                                        onDelete={handleDelete} />
-                                                ))}
-                                            </>
-                                        )
-                                    })}
+                                    {filtered.map(item => (
+                                        <TableRow key={item.code} item={item} ma={maData[item.code] || null} onEdit={openEdit} onDelete={handleDelete} />
+                                    ))}
                                 </tbody>
                             </table>
                         </div>
                     </div>
-
                 ) : (
-
-                    /* ════════════════════════════════════════════════
-                       卡 片 視 圖（依族群分組）
-                    ════════════════════════════════════════════════ */
+                    /* ── 卡片視圖（依族群分組） ── */
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                        {groupKeys.map(g => {
-                            const groupItems = grouped[g]
-                            const isCollapsed = collapsedGroups.has(g)
-                            const groupReached = groupItems.filter(i => getPriceStatus(i) !== 'normal').length
+                        {groupKeys.map(groupName => {
+                            const groupItems = grouped[groupName]
+                            const isCollapsed = collapsedGroups.has(groupName)
                             return (
-                                <div key={g}>
-                                    {/* 族群標頭 */}
-                                    {groupKeys.length > 1 || filterGroup !== 'all' ? (
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', cursor: 'pointer' }}
-                                            onClick={() => toggleGroup(g)}>
-                                            {isCollapsed ? <ChevronRight size={16} color="#8892a4" /> : <ChevronDown size={16} color="#8892a4" />}
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <span style={{ fontSize: '15px', fontWeight: 700, color: '#e2e8f0' }}>{g}</span>
-                                                <span style={{ fontSize: '12px', color: '#8892a4', backgroundColor: '#21253a', borderRadius: '10px', padding: '1px 8px' }}>{groupItems.length}</span>
-                                                {groupReached > 0 && (
-                                                    <span style={{ fontSize: '11px', backgroundColor: 'rgba(245,166,35,0.15)', color: '#f5a623', borderRadius: '10px', padding: '1px 8px' }}>
-                                                        🔔 {groupReached} 達標
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <div style={{ flex: 1, height: '1px', backgroundColor: '#2e3349' }} />
-                                        </div>
-                                    ) : null}
+                                <div key={groupName}>
+                                    {/* 族群標題 */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', cursor: 'pointer' }} onClick={() => toggleGroup(groupName)}>
+                                        {isCollapsed ? <ChevronRight size={14} color="#8892a4" /> : <ChevronDown size={14} color="#8892a4" />}
+                                        <span style={{ fontSize: '13px', fontWeight: 600, color: groupName === UNGROUPED ? '#8892a4' : '#4f8ef7' }}>{groupName}</span>
+                                        <span style={{ fontSize: '11px', color: '#3d4460' }}>{groupItems.length} 檔</span>
+                                    </div>
 
                                     {!isCollapsed && (
                                         <div className="watch-grid">
@@ -540,24 +498,30 @@ export default function Watchlist() {
                                                 const status = getPriceStatus(item)
                                                 const isEditing = editingCode === item.code
                                                 const borderColor = status === 'high' ? '#00c896' : status === 'low' ? '#ff5757' : '#2e3349'
+                                                const ma = maData[item.code] || null
 
                                                 return (
-                                                    <div key={item.code} className="watch-card"
-                                                        style={{ backgroundColor: '#1a1d27', border: `1px solid ${borderColor}`, borderRadius: '10px', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-
-                                                        {/* 第一行：代號 + 名稱 + 操作按鈕 */}
-                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
-                                                                <span style={{ fontSize: '14px', fontWeight: 700, color: '#4f8ef7', flexShrink: 0 }}>{item.code}</span>
-                                                                <span style={{ fontSize: '12px', color: '#8892a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-                                                                {status === 'high' && <span style={{ fontSize: '10px', backgroundColor: 'rgba(0,200,150,0.15)', color: '#00c896', borderRadius: '8px', padding: '1px 6px', flexShrink: 0 }}>🎯上標</span>}
-                                                                {status === 'low' && <span style={{ fontSize: '10px', backgroundColor: 'rgba(255,87,87,0.15)', color: '#ff5757', borderRadius: '8px', padding: '1px 6px', flexShrink: 0 }}>🎯下標</span>}
+                                                    <div key={item.code} className="watch-card" style={{ backgroundColor: '#1a1d27', border: `1px solid ${borderColor}`, borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                        {/* 第一行：代號 + 名稱 + 操作 */}
+                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: 0 }}>
+                                                                <span style={{ fontWeight: 700, color: '#4f8ef7', fontSize: '14px' }}>{item.code}</span>
+                                                                <span style={{ fontSize: '12px', color: '#6b7690', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
                                                             </div>
-                                                            <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
-                                                                <button onClick={() => openEdit(item)} style={{ background: 'none', border: 'none', color: '#4a5568', cursor: 'pointer', padding: '2px' }}><Pencil size={12} /></button>
-                                                                <button onClick={() => handleDelete(item.code)} style={{ background: 'none', border: 'none', color: '#4a5568', cursor: 'pointer', padding: '2px' }}><Trash2 size={12} /></button>
+                                                            <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                                                                <button onClick={() => openEdit(item)} style={{ background: 'none', border: 'none', color: '#3a4560', cursor: 'pointer', padding: '2px' }}><Pencil size={12} /></button>
+                                                                <button onClick={() => handleDelete(item.code)} style={{ background: 'none', border: 'none', color: '#3a4560', cursor: 'pointer', padding: '2px' }}><Trash2 size={12} /></button>
                                                             </div>
                                                         </div>
+
+                                                        {/* MA 行 */}
+                                                        {ma && (
+                                                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                                                <MABadge label="5MA" value={ma.ma5} currentPrice={item.currentPrice} />
+                                                                <MABadge label="10MA" value={ma.ma10} currentPrice={item.currentPrice} />
+                                                                <MABadge label="20MA" value={ma.ma20} currentPrice={item.currentPrice} />
+                                                            </div>
+                                                        )}
 
                                                         {/* 第二行：現價 + 目標價標籤 */}
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -580,7 +544,7 @@ export default function Watchlist() {
                                                             </div>
                                                         </div>
 
-                                                        {/* 第三行：進度條（只在有現價+目標時顯示） */}
+                                                        {/* 進度條 */}
                                                         {item.currentPrice && (item.targetHigh || item.targetLow) && (
                                                             <div style={{ display: 'flex', gap: '6px' }}>
                                                                 {item.targetHigh && <DistanceBar current={item.currentPrice} target={item.targetHigh} type="high" />}
@@ -614,11 +578,7 @@ export default function Watchlist() {
                                                                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
                                                                         {allGroups.filter(g => g !== UNGROUPED).map(g => (
                                                                             <button key={g} onClick={() => setForm(f => ({ ...f, group: f.group === g ? '' : g }))}
-                                                                                style={{
-                                                                                    ...btn(form.group === g ? '#4f8ef7' : '#21253a'),
-                                                                                    padding: '2px 8px', fontSize: '11px', borderRadius: '20px',
-                                                                                    border: `1px solid ${form.group === g ? '#4f8ef7' : '#2e3349'}`
-                                                                                }}>{g}</button>
+                                                                                style={{ ...btn(form.group === g ? '#4f8ef7' : '#21253a'), padding: '2px 8px', fontSize: '11px', borderRadius: '20px', border: `1px solid ${form.group === g ? '#4f8ef7' : '#2e3349'}` }}>{g}</button>
                                                                         ))}
                                                                     </div>
                                                                     <input style={inp} placeholder="族群名稱" value={form.group}
@@ -636,7 +596,6 @@ export default function Watchlist() {
                                                             </div>
                                                         ) : (
                                                             <>
-                                                                {/* 評估筆記（收折式） */}
                                                                 {item.note && (
                                                                     <div style={{ borderTop: '1px solid #2e3349', paddingTop: '6px', marginTop: '2px' }}>
                                                                         <button onClick={() => setExpandedNote(expandedNote === item.code ? null : item.code)}

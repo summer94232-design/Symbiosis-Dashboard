@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { collection, getDocs, orderBy, query, doc, getDoc, setDoc } from 'firebase/firestore'
+import { getDocs, orderBy, query, getDoc, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { calcPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
-import { getMultipleQuotes } from '../../lib/fugle'
 import { RefreshCw, TrendingUp, TrendingDown, Tag, Check, X } from 'lucide-react'
+import { usePrices } from '../../PriceContext'
 
 interface DisplayHolding {
     code: string
@@ -18,37 +18,21 @@ interface DisplayHolding {
     returnRate: number
 }
 
-// 族群編輯 cell
 function GroupCell({
-    code,
-    group,
-    allGroups,
-    onSave,
+    code, group, allGroups, onSave,
 }: {
-    code: string
-    group: string
-    allGroups: string[]
-    onSave: (code: string, group: string) => void
+    code: string; group: string; allGroups: string[]; onSave: (code: string, group: string) => void
 }) {
     const [editing, setEditing] = useState(false)
     const [value, setValue] = useState(group)
     const inputRef = useRef<HTMLInputElement>(null)
-
-    // 已使用的族群名稱（含用者自訂）
     const suggestions = Array.from(new Set([...allGroups, value].filter(Boolean)))
 
     useEffect(() => {
-        if (editing) {
-            setValue(group)
-            setTimeout(() => inputRef.current?.focus(), 50)
-        }
+        if (editing) { setValue(group); setTimeout(() => inputRef.current?.focus(), 50) }
     }, [editing, group])
 
-    const handleSave = () => {
-        onSave(code, value.trim())
-        setEditing(false)
-    }
-
+    const handleSave = () => { onSave(code, value.trim()); setEditing(false) }
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') handleSave()
         if (e.key === 'Escape') setEditing(false)
@@ -56,24 +40,14 @@ function GroupCell({
 
     if (!editing) {
         return (
-            <div
-                onClick={() => setEditing(true)}
-                title="點擊編輯族群"
-                style={{
-                    display: 'inline-flex', alignItems: 'center', gap: '5px',
-                    cursor: 'pointer', padding: '3px 8px', borderRadius: '20px',
-                    backgroundColor: group ? 'rgba(167,139,250,0.15)' : 'rgba(79,142,247,0.07)',
-                    border: `1px solid ${group ? 'rgba(167,139,250,0.35)' : 'rgba(79,142,247,0.2)'}`,
-                    color: group ? '#a78bfa' : '#8892a4',
-                    fontSize: '12px', fontWeight: group ? 600 : 400,
-                    transition: 'all 0.15s',
-                    whiteSpace: 'nowrap',
-                    minWidth: '60px',
-                    justifyContent: 'center',
-                }}
-            >
-                <Tag size={10} />
-                {group || '未設定'}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }} onClick={() => setEditing(true)} title="點擊編輯族群">
+                {group ? (
+                    <span style={{ fontSize: '12px', color: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.12)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
+                        {group}
+                    </span>
+                ) : (
+                    <span style={{ fontSize: '12px', color: '#3d4460' }}>+ 設定族群</span>
+                )}
             </div>
         )
     }
@@ -88,28 +62,16 @@ function GroupCell({
                     onKeyDown={handleKeyDown}
                     list={`group-list-${code}`}
                     placeholder="輸入或選擇族群"
-                    style={{
-                        backgroundColor: '#0f1117', border: '1px solid #4f8ef7',
-                        borderRadius: '6px', padding: '4px 8px', color: '#e2e8f0',
-                        fontSize: '12px', width: '100%', outline: 'none',
-                    }}
+                    style={{ backgroundColor: '#0f1117', border: '1px solid #4f8ef7', borderRadius: '6px', padding: '4px 8px', color: '#e2e8f0', fontSize: '12px', width: '100%', outline: 'none' }}
                 />
                 <datalist id={`group-list-${code}`}>
                     {suggestions.map(s => <option key={s} value={s} />)}
                 </datalist>
             </div>
-            <button
-                onClick={handleSave}
-                style={{ background: '#00c896', border: 'none', borderRadius: '4px', padding: '4px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                title="儲存"
-            >
+            <button onClick={handleSave} style={{ background: '#00c896', border: 'none', borderRadius: '4px', padding: '4px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="儲存">
                 <Check size={12} color="#fff" />
             </button>
-            <button
-                onClick={() => setEditing(false)}
-                style={{ background: '#2e3349', border: 'none', borderRadius: '4px', padding: '4px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                title="取消"
-            >
+            <button onClick={() => setEditing(false)} style={{ background: '#2e3349', border: 'none', borderRadius: '4px', padding: '4px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="取消">
                 <X size={12} color="#8892a4" />
             </button>
         </div>
@@ -117,11 +79,11 @@ function GroupCell({
 }
 
 export default function Holdings() {
+    // ── 全域現價 Context ──
+    const { prices, lastUpdated, priceLoading, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
+
     const [holdings, setHoldings] = useState<DisplayHolding[]>([])
     const [loading, setLoading] = useState(true)
-    const [priceLoading, setPriceLoading] = useState(false)
-    const [lastUpdated, setLastUpdated] = useState('')
-    // 族群 map: code -> groupName
     const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
     const [groupSaving, setGroupSaving] = useState(false)
 
@@ -135,33 +97,28 @@ export default function Holdings() {
             const trades = snap.docs.map(d => d.data() as TradeRecord)
             const dividends = divSnap.docs.map(d => d.data() as DividendRecord)
             const { holdings: positions } = calcPositions(trades, dividends)
+            const activePositions = Object.values(positions).filter((pos: any) => pos.shares > 0)
 
-            // ✅ 修正 Bug 2：過濾掉已平倉（shares <= 0）的部位
-            const activePositions = Object.values(positions).filter(pos => pos.shares > 0)
-
-            // 讀取現價
             const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
             const savedPrices: Record<string, any> = priceDoc.exists() ? priceDoc.data() : {}
             const savedAt = savedPrices._updatedAt || ''
-            if (savedAt) setLastUpdated(savedAt)
 
-            // 讀取族群
+            // ★ 把 Firebase 快取匯入全域 Context
+            loadCachedPrices(savedPrices, savedAt)
+
             const groupDoc = await getDoc(userDocNested(investDB, 'settings', 'stockGroups'))
             const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
             setStockGroups(groups)
 
-            const list: DisplayHolding[] = activePositions.map(pos => {
-                // ✅ 修正 Bug 1：與 Dashboard 一致，用 typeof 確保拿到的是 number
-                const rawPrice = savedPrices[pos.code]
-                const currentPrice = typeof rawPrice === 'number' && rawPrice > 0 ? rawPrice : null
+            const list: DisplayHolding[] = activePositions.map((pos: any) => {
+                // 優先用 Context 現價（可能其他頁面已更新），fallback 到 Firebase 快取
+                const ctxVal = prices[pos.code]
+                const fbVal = savedPrices[pos.code]
+                const currentPrice = ctxVal ?? (typeof fbVal === 'number' && fbVal > 0 ? fbVal : null)
                 const marketValue = currentPrice !== null ? currentPrice * pos.shares : pos.totalCost
                 const unrealizedPnL = currentPrice !== null ? marketValue - pos.totalCost : 0
                 const returnRate = pos.totalCost > 0 ? (unrealizedPnL / pos.totalCost) * 100 : 0
-                return {
-                    code: pos.code, name: pos.name, shares: pos.shares,
-                    avgCost: pos.avgCost, currentPrice, marketValue,
-                    totalCost: pos.totalCost, unrealizedPnL, returnRate
-                }
+                return { code: pos.code, name: pos.name, shares: pos.shares, avgCost: pos.avgCost, currentPrice, marketValue, totalCost: pos.totalCost, unrealizedPnL, returnRate }
             }).sort((a, b) => b.marketValue - a.marketValue)
 
             setHoldings(list)
@@ -169,41 +126,24 @@ export default function Holdings() {
         setLoading(false)
     }
 
-    const updatePrices = async () => {
-        setPriceLoading(true)
-        try {
-            const symbols = holdings.map(h => h.code)
-            if (symbols.length === 0) { setPriceLoading(false); return }
+    // ★ 更新現價：委託 Context，用回傳的 quotes 同步更新本頁 holdings
+    const handleUpdatePrices = async () => {
+        const symbols = holdings.map(h => h.code)
+        if (symbols.length === 0) return
+        const quotes = await ctxUpdatePrices(symbols)
 
-            const quotes = await getMultipleQuotes(symbols)
-            const now = new Date().toLocaleString('zh-TW')
-
-            // ✅ 修正：使用 merge: true 避免覆蓋其他股票的現價快取
-            const priceData: Record<string, number | string> = { _updatedAt: now }
-            symbols.forEach(s => { if (quotes[s] !== null) priceData[s] = quotes[s] as number })
-            await setDoc(userDocNested(investDB, 'settings', 'lastPrices'), priceData, { merge: true })
-
-            const updated: DisplayHolding[] = holdings.map(h => {
-                const rawPrice = quotes[h.code]
-                const currentPrice = (typeof rawPrice === 'number' && rawPrice > 0) ? rawPrice : null
-                const marketValue = currentPrice !== null ? currentPrice * h.shares : h.totalCost
-                const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
-                const returnRate = (currentPrice !== null && h.totalCost > 0)
-                    ? (unrealizedPnL / h.totalCost) * 100
-                    : 0
-                return { ...h, currentPrice, marketValue, unrealizedPnL, returnRate }
-            }).sort((a, b) => b.marketValue - a.marketValue)
-
-            setHoldings(updated)
-            setLastUpdated(now)
-        } catch (err) { console.error(err) }
-        setPriceLoading(false)
+        setHoldings(prev => prev.map(h => {
+            const currentPrice = quotes[h.code] ?? null
+            const marketValue = currentPrice !== null ? currentPrice * h.shares : h.totalCost
+            const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
+            const returnRate = (currentPrice !== null && h.totalCost > 0)
+                ? (unrealizedPnL / h.totalCost) * 100 : 0
+            return { ...h, currentPrice, marketValue, unrealizedPnL, returnRate }
+        }).sort((a, b) => b.marketValue - a.marketValue))
     }
 
-    // 儲存族群標籤到 Firestore
     const handleSaveGroup = async (code: string, group: string) => {
         const updated = { ...stockGroups, [code]: group }
-        // 若空字串則移除
         if (!group) delete updated[code]
         setStockGroups(updated)
         setGroupSaving(true)
@@ -222,8 +162,6 @@ export default function Holdings() {
     const hasPrice = holdings.some(h => h.currentPrice !== null)
     const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
     const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
-
-    // 所有已使用的族群名稱（autocomplete 用）
     const allGroups = Array.from(new Set(Object.values(stockGroups).filter(Boolean)))
 
     return (
@@ -255,7 +193,7 @@ export default function Holdings() {
                             <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
                             {loading ? '載入中...' : '重新載入'}
                         </button>
-                        <button onClick={updatePrices} disabled={priceLoading || loading} style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '8px 14px', color: '#fff', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <button onClick={handleUpdatePrices} disabled={priceLoading || loading} style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '8px 14px', color: '#fff', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {priceLoading ? '更新中...' : '更新現價'}
                         </button>
@@ -324,12 +262,7 @@ export default function Holdings() {
                                                 )}
                                             </td>
                                             <td>
-                                                <GroupCell
-                                                    code={h.code}
-                                                    group={stockGroups[h.code] || ''}
-                                                    allGroups={allGroups}
-                                                    onSave={handleSaveGroup}
-                                                />
+                                                <GroupCell code={h.code} group={stockGroups[h.code] || ''} allGroups={allGroups} onSave={handleSaveGroup} />
                                             </td>
                                         </tr>
                                     ))}

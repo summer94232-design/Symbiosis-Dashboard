@@ -463,7 +463,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                             )}
                             <div style={{ gridColumn: 'span 2' }}>
                                 <label style={lbl}>內容 / 備註</label>
-                                <textarea style={{ ...inp, minHeight: '120px', resize: 'vertical', fontFamily: 'sans-serif', lineHeight: 1.6 }}
+                                <textarea style={{ ...inp, minHeight: '240px', resize: 'vertical', fontFamily: 'sans-serif', lineHeight: 1.6 }}
                                     placeholder="輸入內容、心得或備註..." value={form.content}
                                     onChange={e => setForm(f => ({ ...f, content: e.target.value }))} />
                             </div>

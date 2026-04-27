@@ -1,0 +1,111 @@
+/**
+ * PriceContext.tsx
+ * 全域現價管理 Context — v1.0
+ *
+ * 放置位置：src/PriceContext.tsx（與 App.tsx 同層）
+ *
+ * 設計原則：
+ * - updatePrices 除了更新全域 state，也直接回傳本次取得的 quotes
+ *   讓各頁面 wrapper 可以同步拿到最新值，避免非同步 state 讀到舊值
+ * - loadCachedPrices 供頁面 load() 初始化時呼叫，不打 Fugle API
+ * - Firebase 寫入仍保持 merge:true，各頁面互不覆蓋
+ */
+
+import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { setDoc } from 'firebase/firestore'
+import { investDB } from './lib/firebase'
+import { userDocNested } from './lib/userDB'
+import { getMultipleQuotes } from './lib/fugle'
+
+// ── Types ──────────────────────────────────────────────────────
+
+export type PriceMap = Record<string, number | null>
+
+interface PriceContextValue {
+    /** 所有已知股票現價，null = 無資料 */
+    prices: PriceMap
+    /** 最後更新時間（zh-TW 字串），空字串表示尚未更新 */
+    lastUpdated: string
+    /** 是否正在拉取報價 */
+    priceLoading: boolean
+    /**
+     * 更新指定代號的現價。
+     * - 呼叫 Fugle API
+     * - merge 寫入 Firebase settings/lastPrices
+     * - 更新全域 prices state
+     * @returns 本次取得的 quotes（供呼叫端同步使用，不需等 state 更新）
+     */
+    updatePrices: (codes: string[]) => Promise<PriceMap>
+    /**
+     * 從 Firebase lastPrices 快取初始化（不打 Fugle API）。
+     * 各頁面 load() 讀完 Firebase 後呼叫此方法。
+     */
+    loadCachedPrices: (savedPrices: Record<string, any>, savedAt: string) => void
+}
+
+// ── Context ────────────────────────────────────────────────────
+
+const PriceContext = createContext<PriceContextValue | null>(null)
+
+// ── Provider ───────────────────────────────────────────────────
+
+export function PriceProvider({ children }: { children: ReactNode }) {
+    const [prices, setPrices] = useState<PriceMap>({})
+    const [lastUpdated, setLastUpdated] = useState('')
+    const [priceLoading, setPriceLoading] = useState(false)
+
+    const loadCachedPrices = useCallback((savedPrices: Record<string, any>, savedAt: string) => {
+        const parsed: PriceMap = {}
+        Object.entries(savedPrices).forEach(([k, v]) => {
+            if (k !== '_updatedAt' && typeof v === 'number' && v > 0) {
+                parsed[k] = v
+            }
+        })
+        setPrices(prev => ({ ...prev, ...parsed }))
+        if (savedAt) setLastUpdated(prev => (savedAt > prev ? savedAt : prev))
+    }, [])
+
+    const updatePrices = useCallback(async (codes: string[]): Promise<PriceMap> => {
+        if (codes.length === 0) return {}
+        setPriceLoading(true)
+
+        const result: PriceMap = {}
+        try {
+            const quotes = await getMultipleQuotes(codes)
+            const now = new Date().toLocaleString('zh-TW')
+
+            // 寫入 Firebase（merge 避免蓋掉其他頁面快取的股票）
+            const priceData: Record<string, number | string> = { _updatedAt: now }
+            codes.forEach(c => {
+                const raw = quotes[c]
+                const val = (typeof raw === 'number' && raw > 0) ? raw : null
+                result[c] = val
+                if (val !== null) priceData[c] = val
+            })
+            await setDoc(userDocNested(investDB, 'settings', 'lastPrices'), priceData, { merge: true })
+
+            // 更新全域 state → 所有訂閱頁面重渲染
+            setPrices(prev => ({ ...prev, ...result }))
+            setLastUpdated(now)
+        } catch (err) {
+            console.error('[PriceContext] updatePrices error:', err)
+        }
+
+        setPriceLoading(false)
+        return result   // ← 直接回傳本次結果，供頁面 wrapper 同步套用
+    }, [])
+
+    return (
+        <PriceContext.Provider value={{ prices, lastUpdated, priceLoading, updatePrices, loadCachedPrices }}>
+            {children}
+        </PriceContext.Provider>
+    )
+}
+
+// ── Hook ───────────────────────────────────────────────────────
+
+export function usePrices(): PriceContextValue {
+    const ctx = useContext(PriceContext)
+    if (!ctx) throw new Error('usePrices must be used within <PriceProvider>')
+    return ctx
+}

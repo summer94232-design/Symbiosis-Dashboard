@@ -323,70 +323,7 @@ export default function YearReview() {
         }
     }, [calcMonthlyForYear])
 
-    // 保留舊 load（供首次掛載）── 切換年份改用 handleYearChange
-    const _load_unused = useCallback(async () => {
-        setLoading(true)
-        try {
-            const [tradesSnap, dividendsSnap, snapshotsSnap] = await Promise.all([
-                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc'))),
-                getDocs(query(userCol(investDB, 'assetSnapshots'), orderBy('date', 'asc')))
-            ])
-
-            const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
-
-            interface DividendRecord { date: string; cashDividend: number }
-            const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
-
-            const snapshots: Record<string, number> = {}
-            snapshotsSnap.docs.forEach(d => { snapshots[d.data().date as string] = d.data().totalAssets as number })
-            setAssetSnapshots(snapshots)
-
-            allTradesRef.current = trades
-            allDividendsRef.current = dividends
-
-            const allDates = [...trades.map(t => t.date), ...dividends.map(d => d.date)]
-            const allYears = [...new Set(allDates.map(d => parseInt(d.slice(0, 4))))].sort()
-            if (allYears.length > 0) {
-                setYears(allYears)
-                setCustomStart(prev => prev || `${allYears[0]}-01-01`)
-                setCustomEnd(prev => prev || new Date().toISOString().split('T')[0])
-            }
-
-            const pos: Record<string, { shares: number; avgCost: number; totalCost: number }> = {}
-            const monthlyRealized: Record<string, number> = {}
-            const monthlyCost: Record<string, number> = {}
-            const monthlyDividend: Record<string, number> = {}
-
-            for (const t of trades) {
-                const { code, type, price, shares, fee, tax, date } = t
-                if (!pos[code]) pos[code] = { shares: 0, avgCost: 0, totalCost: 0 }
-                const p = pos[code]
-                if (type === 'buy') {
-                    const bc = price * shares + fee
-                    p.totalCost += bc; p.shares += shares
-                    p.avgCost = p.shares > 0 ? p.totalCost / p.shares : 0
-                } else {
-                    const cb = p.avgCost * shares
-                    const pnl = price * shares - fee - tax - cb
-                    if (date.slice(0, 4) === String(selectedYear)) {
-                        const mo = date.slice(0, 7)
-                        monthlyRealized[mo] = (monthlyRealized[mo] || 0) + pnl
-                        monthlyCost[mo] = (monthlyCost[mo] || 0) + cb
-                    }
-                    p.shares -= shares; p.totalCost = p.avgCost * p.shares
-                    if (p.shares <= 0) { p.shares = 0; p.totalCost = 0; p.avgCost = 0 }
-                }
-            }
-
-            dividends.forEach(d => {
-                if (d.date.slice(0, 4) === String(selectedYear)) {
-                    const mo = d.date.slice(0, 7)
-                    monthlyDividend[mo] = (monthlyDividend[mo] || 0) + d.cashDividend
-                }
-            })
-
-            const calcCustomCAGR = () => {
+    const calcCustomCAGR = useCallback(() => {
                 if (!customStart || !customEnd || customStart >= customEnd) return
                 setPerfLoading(true)
 
@@ -474,10 +411,10 @@ export default function YearReview() {
 
                 setCustomCAGR(calcCAGR(startValue, endValue, yrs))
                 setPerfLoading(false)
-            }
+    }, [customStart, customEnd, perfConfig])
 
-            // ── 計算 XIRR 區間 ──
-            const calcXirrRange = () => {
+    // ── 計算 XIRR 區間 ──
+    const calcXirrRange = useCallback(() => {
                 if (!xirrRangeStart || !xirrRangeEnd) return
                 if (xirrRangeStart >= xirrRangeEnd) return
                 setXirrRangeLoading(true)
@@ -530,9 +467,9 @@ export default function YearReview() {
                 const result = sorted.length >= 2 ? calcXIRR(sorted) : null
                 setXirrRange(result)
                 setXirrRangeLoading(false)
-            }
+    }, [xirrRangeStart, xirrRangeEnd])
 
-            const loadPerformance = useCallback(async () => {
+    const loadPerformance = useCallback(async () => {
                 setXirrLoading(true)
                 try {
                     const tradesSnap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc')))
@@ -693,65 +630,65 @@ export default function YearReview() {
                     setHeatmapData(heat)
                 } catch (err) { console.error(err) }
                 setXirrLoading(false)
-            }, [])
+    }, [])
 
-            // 初始載入 + selectedYear 變動時重新載入
-            useEffect(() => {
-                let cancelled = false
-                const run = async () => {
-                    await load()
-                }
-                if (!cancelled) void run()
-                return () => { cancelled = true }
-            }, [load])
+    // 初始載入 + selectedYear 變動時重新載入
+    useEffect(() => {
+        let cancelled = false
+        const run = async () => {
+            await load()
+        }
+        if (!cancelled) void run()
+        return () => { cancelled = true }
+    }, [load])
 
-            // ✅ tab 切換時載入進階績效
-            const prevTab = useRef<string>('')
-            useEffect(() => {
-                if (tab !== 'performance' || prevTab.current === 'performance') return
-                prevTab.current = tab
-                const timer = setTimeout(() => { void loadPerformance() }, 0)
-                return () => clearTimeout(timer)
-                // eslint-disable-next-line react-hooks/exhaustive-deps
-            }, [tab])
+    // ✅ tab 切換時載入進階績效
+    const prevTab = useRef<string>('')
+    useEffect(() => {
+        if (tab !== 'performance' || prevTab.current === 'performance') return
+        prevTab.current = tab
+        const timer = setTimeout(() => { void loadPerformance() }, 0)
+        return () => clearTimeout(timer)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tab])
 
-            const filtered = monthlyData.slice(startMonth - 1, endMonth)
-            const totalRealized = filtered.reduce((s, m) => s + m.realized, 0)
-            const totalDividend = filtered.reduce((s, m) => s + m.dividend, 0)
-            const totalPnL = totalRealized + totalDividend
-            const totalCostBasis = filtered.reduce((s, m) => s + m.costBasis, 0)
-            const realizedReturnRate = totalCostBasis > 0 ? (totalRealized / totalCostBasis) * 100 : null
-            const months = Array.from({ length: 12 }, (_, i) => i + 1)
+    const filtered = monthlyData.slice(startMonth - 1, endMonth)
+    const totalRealized = filtered.reduce((s, m) => s + m.realized, 0)
+    const totalDividend = filtered.reduce((s, m) => s + m.dividend, 0)
+    const totalPnL = totalRealized + totalDividend
+    const totalCostBasis = filtered.reduce((s, m) => s + m.costBasis, 0)
+    const realizedReturnRate = totalCostBasis > 0 ? (totalRealized / totalCostBasis) * 100 : null
+    const months = Array.from({ length: 12 }, (_, i) => i + 1)
 
-            const overallCAGR = (() => {
-                const dates = Object.keys(assetSnapshots).sort()
-                if (dates.length < 2) return null
-                const yrs = (new Date(dates[dates.length - 1]).getTime() - new Date(dates[0]).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
-                return calcCAGR(assetSnapshots[dates[0]], assetSnapshots[dates[dates.length - 1]], yrs)
-            })()
+    const overallCAGR = (() => {
+        const dates = Object.keys(assetSnapshots).sort()
+        if (dates.length < 2) return null
+        const yrs = (new Date(dates[dates.length - 1]).getTime() - new Date(dates[0]).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
+        return calcCAGR(assetSnapshots[dates[0]], assetSnapshots[dates[dates.length - 1]], yrs)
+    })()
 
-            const perfChartData: BarChartEntry[] = yearlyPerf.map(p => ({
-                year: `${p.year}`,
-                '年度報酬率%': parseFloat(p.totalReturn.toFixed(2)),
-                '年末資產': p.endValue,
-                fill: p.totalReturn >= 0 ? '#00c896' : '#ff5757'
-            }))
+    const perfChartData: BarChartEntry[] = yearlyPerf.map(p => ({
+        year: `${p.year}`,
+        '年度報酬率%': parseFloat(p.totalReturn.toFixed(2)),
+        '年末資產': p.endValue,
+        fill: p.totalReturn >= 0 ? '#00c896' : '#ff5757'
+    }))
 
-            const filteredWithFill: MonthlyBarEntry[] = filtered.map(m => ({
-                ...m,
-                realizedFill: m.realized >= 0 ? '#00c896' : '#ff5757'
-            }))
+    const filteredWithFill: MonthlyBarEntry[] = filtered.map(m => ({
+        ...m,
+        realizedFill: m.realized >= 0 ? '#00c896' : '#ff5757'
+    }))
 
-            const heatYears = [...new Set(Object.keys(heatmapData).map(k => k.slice(0, 4)))].sort()
-            const heatMax = Math.max(...Object.values(heatmapData).map(Math.abs), 1)
+    const heatYears = [...new Set(Object.keys(heatmapData).map(k => k.slice(0, 4)))].sort()
+    const heatMax = Math.max(...Object.values(heatmapData).map(Math.abs), 1)
 
-            const tabBtn = (active: boolean): React.CSSProperties => ({
-                backgroundColor: active ? '#1a1d27' : 'transparent', border: 'none', borderRadius: '6px',
-                padding: '6px 18px', color: active ? '#e2e8f0' : '#8892a4', fontSize: '14px', cursor: 'pointer', fontWeight: active ? 600 : 400,
-            })
+    const tabBtn = (active: boolean): React.CSSProperties => ({
+        backgroundColor: active ? '#1a1d27' : 'transparent', border: 'none', borderRadius: '6px',
+        padding: '6px 18px', color: active ? '#e2e8f0' : '#8892a4', fontSize: '14px', cursor: 'pointer', fontWeight: active ? 600 : 400,
+    })
 
-            return (
-                <>
+    return (
+        <>
                     <style>{`
         .review-stats { display: grid; gap: 16px; grid-template-columns: repeat(4, 1fr); margin-bottom: 20px; }
         .perf-stats   { display: grid; gap: 16px; grid-template-columns: repeat(4, 1fr); margin-bottom: 20px; }
