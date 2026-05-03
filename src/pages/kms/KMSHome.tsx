@@ -50,6 +50,11 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     const [search, setSearch] = useState('')
     const [expandedId, setExpandedId] = useState<string | null>(null)
     const [newTag, setNewTag] = useState('')
+    // ── Autocomplete state ──────────────────────────────────────────────
+    const [tagSuggestions, setTagSuggestions] = useState<string[]>([])
+    const [suggestionIdx, setSuggestionIdx] = useState(-1)
+    const tagInputRef = useRef<HTMLInputElement>(null)
+    // ───────────────────────────────────────────────────────────────────
     const [uploading, setUploading] = useState(false)
     const [allTags, setAllTags] = useState<string[]>([])
     const [sortBy, setSortBy] = useState<'createdAt' | 'updatedAt' | 'title'>('createdAt')
@@ -233,6 +238,56 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         setNotes(prev => prev.filter(n => n.id !== id))
     }
 
+    // ── Autocomplete helpers ────────────────────────────────────────────
+    const addTag = (tag: string) => {
+        const t = tag.trim()
+        if (!t || form.hashtags.includes(t)) return
+        setForm(f => ({ ...f, hashtags: [...f.hashtags, t] }))
+        setNewTag('')
+        setTagSuggestions([])
+        setSuggestionIdx(-1)
+    }
+
+    const handleTagInput = (val: string) => {
+        setNewTag(val)
+        setSuggestionIdx(-1)
+        if (val.trim()) {
+            const q = val.trim().toLowerCase()
+            const matched = allTags
+                .filter(t => !form.hashtags.includes(t) && t.toLowerCase().includes(q))
+                .slice(0, 8)
+            setTagSuggestions(matched)
+        } else {
+            setTagSuggestions([])
+        }
+    }
+
+    const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (tagSuggestions.length > 0) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setSuggestionIdx(i => Math.min(i + 1, tagSuggestions.length - 1))
+                return
+            }
+            if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                setSuggestionIdx(i => Math.max(i - 1, -1))
+                return
+            }
+            if (e.key === 'Escape') {
+                setTagSuggestions([])
+                setSuggestionIdx(-1)
+                return
+            }
+        }
+        if (e.key === 'Enter') {
+            e.preventDefault()
+            const selected = suggestionIdx >= 0 ? tagSuggestions[suggestionIdx] : newTag
+            addTag(selected)
+        }
+    }
+    // ───────────────────────────────────────────────────────────────────
+
     // ── 批次匯入筆記（JSON / CSV） ────────────────────────────────────────
     // ✅ 修正：CSV 解析改用支援引號包裹欄位的 parser，避免 content 含逗號時斷行
     function parseCSVLine(line: string): string[] {
@@ -362,6 +417,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         .sort-btn { display: flex; align-items: center; gap: 4px; border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; transition: all 0.15s; }
         .link-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: background 0.15s; }
         .link-item:hover { background: rgba(79,142,247,0.08); }
+        .tag-suggestion-item:hover { background: rgba(79,142,247,0.12) !important; color: #4f8ef7 !important; }
       `}</style>
 
             <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1400px', margin: '0 auto' }}>
@@ -498,6 +554,8 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                                     </button>
                                 </div>
                                 <p style={{ fontSize: '11px', color: '#8892a4', margin: '0 0 8px' }}>支援母子標籤，用 / 分隔，例如：投資/台股</p>
+
+                                {/* 已加入的標籤 */}
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
                                     {form.hashtags.map(tag => (
                                         <span key={tag} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', backgroundColor: 'rgba(79,142,247,0.12)', color: '#4f8ef7', borderRadius: '20px', padding: '3px 10px', fontSize: '12px' }}>
@@ -505,15 +563,66 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                                         </span>
                                     ))}
                                 </div>
-                                <div style={{ display: 'flex', gap: '8px' }}>
-                                    <input style={{ ...inp, flex: 1 }} placeholder="新增標籤（支援 投資/台股 格式）" value={newTag}
-                                        onChange={e => setNewTag(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { if (!newTag.trim() || form.hashtags.includes(newTag.trim())) return; setForm(f => ({ ...f, hashtags: [...f.hashtags, newTag.trim()] })); setNewTag('') } }} />
-                                    <button style={btn('#2e3349')} onClick={() => { if (!newTag.trim() || form.hashtags.includes(newTag.trim())) return; setForm(f => ({ ...f, hashtags: [...f.hashtags, newTag.trim()] })); setNewTag('') }}><Plus size={14} /></button>
+
+                                {/* 輸入框 + Autocomplete 下拉 */}
+                                <div style={{ position: 'relative' }}>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                        <input
+                                            ref={tagInputRef}
+                                            style={{ ...inp, flex: 1 }}
+                                            placeholder="輸入標籤名稱快速搜尋，Enter 確認新增"
+                                            value={newTag}
+                                            onChange={e => handleTagInput(e.target.value)}
+                                            onKeyDown={handleTagKeyDown}
+                                            onBlur={() => setTimeout(() => setTagSuggestions([]), 150)}
+                                            autoComplete="off"
+                                        />
+                                        <button style={btn('#2e3349')} onClick={() => addTag(newTag)}><Plus size={14} /></button>
+                                    </div>
+
+                                    {/* Autocomplete 下拉選單 */}
+                                    {tagSuggestions.length > 0 && (
+                                        <div style={{
+                                            position: 'absolute', top: '100%', left: 0, right: '48px',
+                                            backgroundColor: '#1e2235',
+                                            border: '1px solid #2e3349',
+                                            borderRadius: '8px',
+                                            marginTop: '4px',
+                                            zIndex: 200,
+                                            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                                            overflow: 'hidden'
+                                        }}>
+                                            {tagSuggestions.map((tag, i) => (
+                                                <div
+                                                    key={tag}
+                                                    className="tag-suggestion-item"
+                                                    onMouseDown={() => addTag(tag)}
+                                                    onMouseEnter={() => setSuggestionIdx(i)}
+                                                    style={{
+                                                        padding: '9px 14px',
+                                                        fontSize: '13px',
+                                                        cursor: 'pointer',
+                                                        color: i === suggestionIdx ? '#4f8ef7' : '#c8d0e0',
+                                                        backgroundColor: i === suggestionIdx ? 'rgba(79,142,247,0.12)' : 'transparent',
+                                                        transition: 'background 0.1s, color 0.1s',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '6px'
+                                                    }}
+                                                >
+                                                    <span style={{ color: i === suggestionIdx ? '#4f8ef7' : '#4a5270', fontSize: '11px' }}>#</span>
+                                                    {tag}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
+
+                                {/* 快速選擇：現有標籤（未選的前 12 個） */}
                                 {allTags.length > 0 && (
                                     <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                                         {allTags.filter(t => !form.hashtags.includes(t)).slice(0, 12).map(tag => (
-                                            <button key={tag} onClick={() => setForm(f => ({ ...f, hashtags: [...f.hashtags, tag] }))}
+                                            <button key={tag} onClick={() => addTag(tag)}
                                                 style={{ backgroundColor: 'rgba(79,142,247,0.06)', color: '#8892a4', border: '1px solid #2e3349', borderRadius: '20px', padding: '2px 8px', fontSize: '11px', cursor: 'pointer' }}>
                                                 +{tag}
                                             </button>
