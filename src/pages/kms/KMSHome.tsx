@@ -5,7 +5,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { kmsDB, kmsStorage } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { generateHashtags, findRelatedNotes } from '../../lib/gemini'
-import { Plus, Search, Pencil, Trash2, X, Check, Link, FileText, Image, Sparkles, ChevronDown, ChevronUp, ArrowUpDown, Link2, Upload } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, X, Check, Link, FileText, Image, Sparkles, ChevronDown, ChevronUp, ArrowUpDown, Link2, Upload, ClipboardList } from 'lucide-react'
 import * as mammoth from 'mammoth'
 
 interface Note {
@@ -38,6 +38,47 @@ const TYPE_ICONS: Record<string, any> = { note: FileText, url: Link, image: Imag
 const TYPE_LABELS: Record<string, string> = { note: '文字筆記', url: '網址收藏', image: '圖片', file: '文件' }
 const TYPE_COLORS: Record<string, string> = { note: '#4f8ef7', url: '#00c896', image: '#f5a623', file: '#a78bfa' }
 
+// ── 筆記模板定義 ──────────────────────────────────────────
+interface NoteTemplate {
+    id: string
+    label: string
+    emoji: string
+    titlePrefix: string
+    hashtags: string[]
+    content: (date: string) => string
+}
+
+const NOTE_TEMPLATES: NoteTemplate[] = [
+    {
+        id: 'trading-journal',
+        label: '交易日誌',
+        emoji: '📋',
+        titlePrefix: '交易日誌',
+        hashtags: ['交易日誌'],
+        content: (date) =>
+            `日期：${date}\n\n市場快照：\n\n\n今日觀察：\n\n\n今日思路：\n\n\n操作計畫：\n\n\n收盤覆盤：\n\n\n情緒狀態：\n\n\n明日重點：\n`,
+    },
+    {
+        id: 'stock-analysis',
+        label: '選股分析',
+        emoji: '🔍',
+        titlePrefix: '選股分析',
+        hashtags: ['選股分析'],
+        content: (date) =>
+            `日期：${date}\n\n股票代號／名稱：\n\n產業／類股：\n\n基本面摘要：\n\n\n技術面觀察：\n\n\n潛在風險：\n\n\n目標價／停損點：\n\n結論：\n`,
+    },
+    {
+        id: 'earnings-note',
+        label: '法說會筆記',
+        emoji: '📢',
+        titlePrefix: '法說會',
+        hashtags: ['法說會'],
+        content: (date) =>
+            `日期：${date}\n\n公司名稱：\n\n本期營收／獲利重點：\n\n\n管理層展望：\n\n\nQ&A 重點：\n\n\n我的解讀：\n\n\n後續追蹤：\n`,
+    },
+]
+// ────────────────────────────────────────────────────────
+
 export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     const [searchParams] = useSearchParams()
     const [notes, setNotes] = useState<Note[]>([])
@@ -64,6 +105,9 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     const [showImport, setShowImport] = useState(false)
     const [importMsg, setImportMsg] = useState('')
     const [importing, setImporting] = useState(false)
+    // ── 模板下拉 ─────────────────────────────────────────────────────────
+    const [showTemplateMenu, setShowTemplateMenu] = useState(false)
+    // ────────────────────────────────────────────────────────────────────
     const fileRef = useRef<HTMLInputElement>(null)
     const imgRef = useRef<HTMLInputElement>(null)
     const importFileRef = useRef<HTMLInputElement>(null)
@@ -91,6 +135,21 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
             }, 300)
         }
     }, [searchParams])
+
+    // ── 套用模板 ──────────────────────────────────────────────────────────
+    const applyTemplate = (template: NoteTemplate) => {
+        const today = new Date().toLocaleDateString('zh-TW', {
+            year: 'numeric', month: '2-digit', day: '2-digit'
+        })
+        setForm(f => ({
+            ...f,
+            title: f.title || `${template.titlePrefix} ${today}`,
+            content: template.content(today),
+            hashtags: [...new Set([...f.hashtags, ...template.hashtags])],
+        }))
+        setShowTemplateMenu(false)
+    }
+    // ─────────────────────────────────────────────────────────────────────
 
     const handleAutoTag = async () => {
         if (!form.content && !form.title && !form.url) return
@@ -388,8 +447,12 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
 
     const filtered = notes
         .filter(n => {
-            const matchSearch = !search || n.title.includes(search) || n.content.includes(search) ||
-                n.hashtags?.some(t => t.includes(search)) || n.url?.includes(search)
+            const q = search.toLowerCase()
+            const matchSearch = !search ||
+                n.title.toLowerCase().includes(q) ||
+                n.content.toLowerCase().includes(q) ||
+                n.hashtags?.some(t => t.toLowerCase().includes(q)) ||
+                (n.url?.toLowerCase().includes(q) ?? false)
             const matchTag = !selectedTag || n.hashtags?.some(t => t === selectedTag || t.startsWith(selectedTag + '/'))
             return matchSearch && matchTag
         })
@@ -418,6 +481,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         .link-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: background 0.15s; }
         .link-item:hover { background: rgba(79,142,247,0.08); }
         .tag-suggestion-item:hover { background: rgba(79,142,247,0.12) !important; color: #4f8ef7 !important; }
+        .template-menu-item:hover { background: rgba(79,142,247,0.1); }
       `}</style>
 
             <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1400px', margin: '0 auto' }}>
@@ -489,9 +553,66 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                 {/* 表單 */}
                 {showForm && (
                     <div style={{ ...card, marginBottom: '24px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                        {/* ── 表單 Header ── */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
                             <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>{editingId ? '✏️ 編輯筆記' : '➕ 新增筆記'}</span>
-                            <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
+
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                {/* 帶入格式按鈕：只在新增模式顯示 */}
+                                {!editingId && (
+                                    <div style={{ position: 'relative' }}>
+                                        <button
+                                            onClick={() => setShowTemplateMenu(v => !v)}
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: '6px',
+                                                padding: '6px 12px', borderRadius: '7px',
+                                                border: '1px solid #f5a623',
+                                                backgroundColor: showTemplateMenu ? 'rgba(245,166,35,0.15)' : 'rgba(245,166,35,0.08)',
+                                                color: '#f5a623', fontSize: '13px', cursor: 'pointer',
+                                            }}
+                                        >
+                                            <ClipboardList size={14} />
+                                            帶入格式
+                                            <ChevronDown size={13} style={{ transform: showTemplateMenu ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                                        </button>
+
+                                        {/* 下拉選單 */}
+                                        {showTemplateMenu && (
+                                            <div style={{
+                                                position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+                                                backgroundColor: '#1a1d27', border: '1px solid #2e3349',
+                                                borderRadius: '10px', padding: '6px', zIndex: 100,
+                                                minWidth: '200px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                                            }}>
+                                                {NOTE_TEMPLATES.map(tmpl => (
+                                                    <button
+                                                        key={tmpl.id}
+                                                        className="template-menu-item"
+                                                        onClick={() => applyTemplate(tmpl)}
+                                                        style={{
+                                                            display: 'flex', alignItems: 'center', gap: '8px',
+                                                            width: '100%', padding: '9px 12px', borderRadius: '7px',
+                                                            border: 'none', backgroundColor: 'transparent',
+                                                            color: '#e2e8f0', fontSize: '13px', cursor: 'pointer',
+                                                            textAlign: 'left',
+                                                        }}
+                                                    >
+                                                        <span style={{ fontSize: '16px' }}>{tmpl.emoji}</span>
+                                                        {tmpl.label}
+                                                        <span style={{ marginLeft: 'auto', fontSize: '11px', color: '#4f8ef7', backgroundColor: 'rgba(79,142,247,0.12)', borderRadius: '4px', padding: '1px 6px' }}>
+                                                            #{tmpl.hashtags[0]}
+                                                        </span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                <button onClick={() => { setShowForm(false); setShowTemplateMenu(false) }} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}>
+                                    <X size={18} />
+                                </button>
+                            </div>
                         </div>
 
                         {/* 類型 */}
@@ -694,7 +815,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                         </div>
 
                         <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
-                            <button style={btn('#2e3349')} onClick={() => setShowForm(false)}><X size={14} />取消</button>
+                            <button style={btn('#2e3349')} onClick={() => { setShowForm(false); setShowTemplateMenu(false) }}><X size={14} />取消</button>
                             <button style={btn('#4f8ef7')} onClick={handleSave} disabled={loading}>
                                 <Check size={14} />{loading ? '儲存中...' : editingId ? '確認更新' : '確認新增'}
                             </button>
