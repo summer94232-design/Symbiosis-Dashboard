@@ -1,17 +1,19 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { getDocs, setDoc, deleteDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc, userDocNested } from '../../lib/userDB'
+import { userCol, userDoc } from '../../lib/userDB'
 import { getHistoricalCandles } from '../../lib/fugle'
+import { getForeignQuotes } from '../../lib/foreignQuote'
 import {
     Plus, Trash2, RefreshCw, TrendingUp, Pencil, Check, X,
-    FileText, LayoutGrid, Table2, Tag, ChevronDown, ChevronRight, Activity
+    FileText, LayoutGrid, Table2, Tag, ChevronDown, ChevronRight, Activity, BarChart2
 } from 'lucide-react'
 import { usePrices } from '../../PriceContext'
 
 interface WatchItem {
     code: string
     name: string
+    market: 'tw' | 'jp' | 'us'
     targetHigh?: number
     targetLow?: number
     note?: string
@@ -20,11 +22,16 @@ interface WatchItem {
     group?: string
 }
 
-// MA 資料結構
 interface MAData {
     ma5: number | null
     ma10: number | null
     ma20: number | null
+}
+
+interface ChartBar {
+    date: string
+    close: number
+    volume: number
 }
 
 const UNGROUPED = '未分類'
@@ -33,11 +40,191 @@ const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px soli
 const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
 const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
-// 計算簡單移動平均
+const MARKETS = {
+    tw: { label: '台股 TW', color: '#4f8ef7', bg: 'rgba(79,142,247,0.12)', activeColor: '#4f8ef7' },
+    jp: { label: '日股 JP', color: '#f5a623', bg: 'rgba(245,166,35,0.12)', activeColor: '#f5a623' },
+    us: { label: '美股 US', color: '#60a5fa', bg: 'rgba(96,165,250,0.12)', activeColor: '#60a5fa' },
+} as const
+
+type MarketKey = keyof typeof MARKETS
+
+function toYahooSymbol(code: string, market: MarketKey): string {
+    if (market === 'jp') return `${code}.T`
+    return code
+}
+
 function calcMA(closes: number[], period: number): number | null {
     if (closes.length < period) return null
     const slice = closes.slice(-period)
     return slice.reduce((s, v) => s + v, 0) / period
+}
+
+function MarketBadge({ market }: { market: MarketKey }) {
+    const m = MARKETS[market] || MARKETS.tw
+    return (
+        <span style={{ fontSize: '10px', fontWeight: 700, color: m.color, backgroundColor: m.bg, borderRadius: '4px', padding: '1px 5px', flexShrink: 0 }}>
+            {market.toUpperCase()}
+        </span>
+    )
+}
+
+// ── 小線圖元件 ────────────────────────────────────────────────────
+function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
+    const [tooltip, setTooltip] = useState<{ i: number; x: number; y: number } | null>(null)
+    const svgRef = useRef<SVGSVGElement>(null)
+
+    if (!data || data.length < 2) {
+        return (
+            <div style={{ height: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ fontSize: '11px', color: '#3d4460' }}>無圖表資料</span>
+            </div>
+        )
+    }
+
+    const W = 220, H = 80
+    const PRICE_H = 52   // 折線區高度
+    const VOL_H = 18     // 成交量區高度
+    const GAP = 6        // 中間間距
+    const PAD_X = 4
+
+    const closes = data.map(d => d.close)
+    const minC = Math.min(...closes)
+    const maxC = Math.max(...closes)
+    const rangeC = maxC - minC || 1
+
+    const volumes = data.map(d => d.volume)
+    const maxV = Math.max(...volumes) || 1
+
+    const n = data.length
+    const step = (W - PAD_X * 2) / (n - 1)
+
+    // 收盤價折線座標
+    const pts = closes.map((c, i) => ({
+        x: PAD_X + i * step,
+        y: PRICE_H - ((c - minC) / rangeC) * (PRICE_H - 8) - 4,
+    }))
+
+    const polyline = pts.map(p => `${p.x},${p.y}`).join(' ')
+
+    // 是否上漲（首→末）
+    const isUp = closes[closes.length - 1] >= closes[0]
+    const lineColor = isUp ? '#00c896' : '#ff5757'
+    const fillColor = isUp ? 'rgba(0,200,150,0.08)' : 'rgba(255,87,87,0.08)'
+
+    // 填色路徑
+    const fillPath = `M${pts[0].x},${PRICE_H} ` +
+        pts.map(p => `L${p.x},${p.y}`).join(' ') +
+        ` L${pts[pts.length - 1].x},${PRICE_H} Z`
+
+    // 成交量柱狀
+    const barW = Math.max(2, step * 0.6)
+    const volBars = data.map((d, i) => ({
+        x: PAD_X + i * step - barW / 2,
+        h: (d.volume / maxV) * VOL_H,
+        vol: d.volume,
+    }))
+
+    const volY = PRICE_H + GAP
+
+    // tooltip 目標點
+    const hovered = tooltip !== null ? data[tooltip.i] : null
+
+    const formatPrice = (v: number) =>
+        market === 'jp' ? Math.round(v).toLocaleString() : v.toFixed(2)
+
+    const formatVol = (v: number) => {
+        if (v >= 1e8) return `${(v / 1e8).toFixed(1)}億`
+        if (v >= 1e4) return `${(v / 1e4).toFixed(0)}萬`
+        return v.toLocaleString()
+    }
+
+    return (
+        <div style={{ position: 'relative', userSelect: 'none' }}>
+            {/* tooltip */}
+            {hovered && (
+                <div style={{
+                    position: 'absolute',
+                    top: -2,
+                    left: tooltip!.x < W / 2 ? tooltip!.x + 8 : undefined,
+                    right: tooltip!.x >= W / 2 ? W - tooltip!.x + 8 : undefined,
+                    backgroundColor: '#0d1017',
+                    border: '1px solid #2e3349',
+                    borderRadius: '6px',
+                    padding: '5px 8px',
+                    fontSize: '10px',
+                    color: '#c8d0e0',
+                    pointerEvents: 'none',
+                    whiteSpace: 'nowrap',
+                    zIndex: 10,
+                    lineHeight: 1.7,
+                }}>
+                    <div style={{ color: '#8892a4' }}>{hovered.date}</div>
+                    <div>收盤 <span style={{ color: lineColor, fontWeight: 700 }}>{formatPrice(hovered.close)}</span></div>
+                    <div>量 <span style={{ color: '#a78bfa' }}>{formatVol(hovered.volume)}</span></div>
+                </div>
+            )}
+
+            <svg
+                ref={svgRef}
+                width="100%"
+                viewBox={`0 0 ${W} ${H}`}
+                style={{ display: 'block', overflow: 'visible' }}
+                onMouseLeave={() => setTooltip(null)}
+                onMouseMove={e => {
+                    const rect = svgRef.current?.getBoundingClientRect()
+                    if (!rect) return
+                    const ratio = W / rect.width
+                    const mx = (e.clientX - rect.left) * ratio
+                    const i = Math.max(0, Math.min(n - 1, Math.round((mx - PAD_X) / step)))
+                    setTooltip({ i, x: pts[i].x / ratio * (rect.width / W), y: pts[i].y })
+                }}
+            >
+                {/* 填色背景 */}
+                <path d={fillPath} fill={fillColor} />
+
+                {/* 折線 */}
+                <polyline points={polyline} fill="none" stroke={lineColor} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+
+                {/* 成交量柱狀 */}
+                {volBars.map((b, i) => (
+                    <rect
+                        key={i}
+                        x={b.x}
+                        y={volY + (VOL_H - b.h)}
+                        width={barW}
+                        height={b.h}
+                        fill={tooltip?.i === i ? '#a78bfa' : 'rgba(167,139,250,0.35)'}
+                        rx="1"
+                    />
+                ))}
+
+                {/* hover 垂直線 + 圓點 */}
+                {tooltip !== null && (
+                    <>
+                        <line
+                            x1={pts[tooltip.i].x} y1={0}
+                            x2={pts[tooltip.i].x} y2={H}
+                            stroke="#3d4460" strokeWidth="1" strokeDasharray="3,2"
+                        />
+                        <circle
+                            cx={pts[tooltip.i].x}
+                            cy={pts[tooltip.i].y}
+                            r="3"
+                            fill={lineColor}
+                            stroke="#1a1d27"
+                            strokeWidth="1.5"
+                        />
+                    </>
+                )}
+            </svg>
+
+            {/* 首尾價格標示 */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
+                <span style={{ fontSize: '9px', color: '#4a5568' }}>{data[0]?.date?.slice(5)}</span>
+                <span style={{ fontSize: '9px', color: '#4a5568' }}>{data[data.length - 1]?.date?.slice(5)}</span>
+            </div>
+        </div>
+    )
 }
 
 function DistanceBar({ current, target, type }: { current: number; target: number; type: 'high' | 'low' }) {
@@ -91,7 +278,6 @@ function TargetCell({ current, target, type }: { current?: number; target: numbe
     )
 }
 
-// MA 標籤元件
 function MABadge({ label, value, currentPrice }: { label: string; value: number | null; currentPrice?: number }) {
     if (value === null) return <span style={{ fontSize: '10px', color: '#3d4460' }}>{label}:—</span>
     const above = currentPrice ? currentPrice > value : null
@@ -107,16 +293,18 @@ function TableRow({ item, ma, onEdit, onDelete }: {
     item: WatchItem; ma: MAData | null
     onEdit: (item: WatchItem) => void; onDelete: (code: string) => void
 }) {
-    const { code, name, currentPrice, targetHigh, targetLow, group } = item
+    const { code, name, currentPrice, targetHigh, targetLow, group, market } = item
     const reachedHigh = !!(currentPrice && targetHigh && currentPrice >= targetHigh)
     const reachedLow = !!(currentPrice && targetLow && currentPrice <= targetLow)
     const rowBg = reachedHigh ? 'rgba(0,200,150,0.06)' : reachedLow ? 'rgba(255,87,87,0.06)' : 'transparent'
     const leftBorder = reachedHigh ? '2px solid #00c896' : reachedLow ? '2px solid #ff5757' : '2px solid transparent'
+    const isTW = market === 'tw'
 
     return (
         <tr style={{ backgroundColor: rowBg, borderBottom: '1px solid #1e2235' }}>
             <td style={{ padding: '6px 10px 6px 12px', whiteSpace: 'nowrap', borderLeft: leftBorder }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <MarketBadge market={market || 'tw'} />
                     <span style={{ fontWeight: 700, color: '#4f8ef7', fontSize: '13px' }}>{code}</span>
                     <span style={{ fontSize: '11px', color: '#6b7690' }}>{name}</span>
                     {group && group !== UNGROUPED &&
@@ -124,17 +312,19 @@ function TableRow({ item, ma, onEdit, onDelete }: {
                 </div>
             </td>
             <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700, fontSize: '13px', color: '#e2e8f0', whiteSpace: 'nowrap' }}>
-                {currentPrice ? currentPrice.toFixed(2) : <span style={{ color: '#3a4560' }}>—</span>}
+                {currentPrice
+                    ? (market === 'jp' ? <span>{Math.round(currentPrice).toLocaleString()} <span style={{ fontSize: '10px', color: '#4a5568' }}>円</span></span> : currentPrice.toFixed(2))
+                    : <span style={{ color: '#3a4560' }}>—</span>}
             </td>
-            {/* MA 欄 */}
             <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
-                {ma ? (
-                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                        <MABadge label="5 MA " value={ma.ma5} currentPrice={currentPrice} />
-                        <MABadge label="10 MA " value={ma.ma10} currentPrice={currentPrice} />
-                        <MABadge label="20 MA " value={ma.ma20} currentPrice={currentPrice} />
-                    </div>
-                ) : <span style={{ fontSize: '10px', color: '#3d4460' }}>—</span>}
+                {!isTW ? <span style={{ fontSize: '10px', color: '#3d4460' }}>不支援</span>
+                    : ma ? (
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                            <MABadge label="5MA" value={ma.ma5} currentPrice={currentPrice} />
+                            <MABadge label="10MA" value={ma.ma10} currentPrice={currentPrice} />
+                            <MABadge label="20MA" value={ma.ma20} currentPrice={currentPrice} />
+                        </div>
+                    ) : <span style={{ fontSize: '10px', color: '#3d4460' }}>—</span>}
             </td>
             <td style={{ padding: '6px 10px' }}>
                 {targetLow ? <TargetCell current={currentPrice} target={targetLow} type="low" /> : <span style={{ fontSize: '11px', color: '#3a4560' }}>—</span>}
@@ -152,7 +342,6 @@ function TableRow({ item, ma, onEdit, onDelete }: {
 
 // ── 主元件 ────────────────────────────────────────────────────────
 export default function Watchlist() {
-    // ── 全域現價 Context ──
     const { prices, lastUpdated, priceLoading, updatePrices: ctxUpdatePrices } = usePrices()
 
     const [items, setItems] = useState<WatchItem[]>([])
@@ -165,35 +354,38 @@ export default function Watchlist() {
     const [viewMode, setViewMode] = useState<'card' | 'table'>('card')
     const [filterGroup, setFilterGroup] = useState<string>('all')
 
-    // MA 相關
     const [maData, setMaData] = useState<Record<string, MAData>>({})
     const [maLoading, setMaLoading] = useState(false)
     const [maUpdatedAt, setMaUpdatedAt] = useState('')
 
-    const emptyForm = { code: '', name: '', targetHigh: '', targetLow: '', note: '', group: '' }
+    // 小線圖資料
+    const [chartData, setChartData] = useState<Record<string, ChartBar[]>>({})
+    const [chartLoading, setChartLoading] = useState(false)
+    const [chartUpdatedAt, setChartUpdatedAt] = useState('')
+
+    const emptyForm = { code: '', name: '', market: 'tw' as MarketKey, targetHigh: '', targetLow: '', note: '', group: '' }
     const [form, setForm] = useState(emptyForm)
 
     const allGroups = Array.from(new Set(items.map(i => i.group || UNGROUPED))).sort()
+    const MARKET_ORDER: MarketKey[] = ['tw', 'jp', 'us']
 
     const load = async () => {
         setLoading(true)
         const snap = await getDocs(userCol(investDB, 'watchlist'))
-        const data = snap.docs.map(d => ({ code: d.id, ...d.data() } as WatchItem))
-
-        // 用 Context prices 填充現價（若有的話）
+        const data = snap.docs.map(d => {
+            const raw = d.data()
+            return { code: d.id, market: 'tw' as MarketKey, ...raw } as WatchItem
+        })
         data.forEach(item => {
-            const ctxPrice = prices[item.code]
-            if (ctxPrice !== null && ctxPrice !== undefined) {
-                item.currentPrice = ctxPrice
+            if (item.market === 'tw') {
+                const ctxPrice = prices[item.code]
+                if (ctxPrice !== null && ctxPrice !== undefined) item.currentPrice = ctxPrice
             }
         })
-
         setItems(data.sort((a, b) => {
-            const gA = a.group || UNGROUPED
-            const gB = b.group || UNGROUPED
+            const gA = a.group || UNGROUPED; const gB = b.group || UNGROUPED
             return gA !== gB ? gA.localeCompare(gB) : a.code.localeCompare(b.code)
         }))
-
         const dictSnap = await getDocs(userCol(investDB, 'stockDict'))
         const dict: Record<string, string> = {}
         dictSnap.docs.forEach(d => { dict[d.id] = d.data().name })
@@ -203,58 +395,49 @@ export default function Watchlist() {
 
     useEffect(() => { load() }, [])
 
-    // 當 Context prices 更新時，同步更新 items 現價
     useEffect(() => {
         if (Object.keys(prices).length === 0) return
         setItems(prev => prev.map(item => {
+            if (item.market !== 'tw') return item
             const ctxPrice = prices[item.code]
-            if (ctxPrice !== null && ctxPrice !== undefined) {
-                return { ...item, currentPrice: ctxPrice }
-            }
+            if (ctxPrice !== null && ctxPrice !== undefined) return { ...item, currentPrice: ctxPrice }
             return item
         }))
     }, [prices])
 
-    // ★ 更新現價：委託 Context
+    // ★ 更新現價
     const handleUpdatePrices = async () => {
-        const codes = items.map(i => i.code)
-        if (codes.length === 0) return
-        const quotes = await ctxUpdatePrices(codes)
-        // items 會透過上面 useEffect 自動更新，也可以直接 setState
-        setItems(prev => prev.map(item => ({
-            ...item,
-            currentPrice: quotes[item.code] ?? item.currentPrice
-        })))
+        if (items.length === 0) return
+        const twCodes = items.filter(i => i.market === 'tw').map(i => i.code)
+        const foreignItems = items.filter(i => i.market !== 'tw')
+        if (twCodes.length > 0) await ctxUpdatePrices(twCodes)
+        if (foreignItems.length > 0) {
+            const yahooSymbols = foreignItems.map(i => toYahooSymbol(i.code, i.market))
+            const quotes = await getForeignQuotes(yahooSymbols)
+            setItems(prev => prev.map(item => {
+                if (item.market === 'tw') return item
+                const price = quotes[toYahooSymbol(item.code, item.market)]
+                return price != null ? { ...item, currentPrice: price } : item
+            }))
+        }
     }
 
-    // ★ 更新 MA（5MA、10MA、20MA）
+    // ★ 更新 MA（台股）
     const handleUpdateMA = async () => {
-        const codes = items.map(i => i.code)
-        if (codes.length === 0) return
+        const twItems = items.filter(i => i.market === 'tw')
+        if (twItems.length === 0) return
         setMaLoading(true)
         try {
-            // 取最近 30 個交易日的歷史資料以計算 20MA
             const to = new Date().toISOString().split('T')[0]
             const from = new Date(Date.now() - 45 * 86400000).toISOString().split('T')[0]
-
             const results: Record<string, MAData> = {}
-            await Promise.all(codes.map(async code => {
+            await Promise.all(twItems.map(async item => {
                 try {
-                    const data = await getHistoricalCandles(code, from, to)
-                    if (!data?.data?.length) { results[code] = { ma5: null, ma10: null, ma20: null }; return }
-                    // Fugle historical candles 回傳格式：data.data 陣列，每項含 close
-                    const closes: number[] = data.data
-                        .filter((d: any) => d.close != null)
-                        .map((d: any) => d.close)
-                        .sort(() => 0) // 保持原排序（舊→新）
-                    results[code] = {
-                        ma5: calcMA(closes, 5),
-                        ma10: calcMA(closes, 10),
-                        ma20: calcMA(closes, 20),
-                    }
-                } catch {
-                    results[code] = { ma5: null, ma10: null, ma20: null }
-                }
+                    const data = await getHistoricalCandles(item.code, from, to)
+                    if (!data?.data?.length) { results[item.code] = { ma5: null, ma10: null, ma20: null }; return }
+                    const closes: number[] = data.data.filter((d: any) => d.close != null).map((d: any) => d.close)
+                    results[item.code] = { ma5: calcMA(closes, 5), ma10: calcMA(closes, 10), ma20: calcMA(closes, 20) }
+                } catch { results[item.code] = { ma5: null, ma10: null, ma20: null } }
             }))
             setMaData(results)
             setMaUpdatedAt(new Date().toLocaleString('zh-TW'))
@@ -262,12 +445,52 @@ export default function Watchlist() {
         setMaLoading(false)
     }
 
+    // ★ 更新小線圖（10日歷史）
+    const handleUpdateChart = async () => {
+        if (items.length === 0) return
+        setChartLoading(true)
+        const results: Record<string, ChartBar[]> = {}
+
+        const to = new Date().toISOString().split('T')[0]
+        const from = new Date(Date.now() - 20 * 86400000).toISOString().split('T')[0] // 多抓幾天保證有10個交易日
+
+        await Promise.all(items.map(async item => {
+            try {
+                if (item.market === 'tw') {
+                    // 台股：Fugle 歷史資料
+                    const data = await getHistoricalCandles(item.code, from, to)
+                    if (!data?.data?.length) return
+                    const bars: ChartBar[] = data.data
+                        .filter((d: any) => d.close != null && d.date != null)
+                        .map((d: any) => ({ date: d.date, close: d.close, volume: d.volume ?? 0 }))
+                        .slice(-10)
+                    results[item.code] = bars
+                } else {
+                    // 外股：透過 Netlify Function 避免 CORS
+                    const symbol = toYahooSymbol(item.code, item.market)
+                    const res = await fetch(
+                        `/.netlify/functions/foreign-quote?type=chart&symbol=${encodeURIComponent(symbol)}`
+                    )
+                    if (!res.ok) return
+                    const json = await res.json()
+                    if (json.bars?.length) results[item.code] = json.bars
+                }
+            } catch (err) {
+                console.error(`[chart] ${item.code}`, err)
+            }
+        }))
+
+        setChartData(results)
+        setChartUpdatedAt(new Date().toLocaleString('zh-TW'))
+        setChartLoading(false)
+    }
+
     const handleAdd = async () => {
         if (!form.code.trim()) return
-        const code = form.code.trim()
-        const name = form.name.trim() || stockDict[code] || code
+        const code = form.code.trim().toUpperCase()
+        const name = form.name.trim() || (form.market === 'tw' ? (stockDict[code] || code) : code)
         await setDoc(userDoc(investDB, 'watchlist', code), {
-            name,
+            name, market: form.market,
             targetHigh: form.targetHigh ? parseFloat(form.targetHigh) : null,
             targetLow: form.targetLow ? parseFloat(form.targetLow) : null,
             note: form.note || null,
@@ -283,8 +506,7 @@ export default function Watchlist() {
         await updateDoc(userDoc(investDB, 'watchlist', code), {
             targetHigh: form.targetHigh ? parseFloat(form.targetHigh) : null,
             targetLow: form.targetLow ? parseFloat(form.targetLow) : null,
-            note: form.note || null,
-            name: form.name || item.name,
+            note: form.note || null, name: form.name || item.name,
             group: form.group.trim() || null,
         })
         setEditingCode(null); load()
@@ -297,15 +519,11 @@ export default function Watchlist() {
 
     const openEdit = (item: WatchItem) => {
         setEditingCode(item.code)
-        setForm({ code: item.code, name: item.name, targetHigh: item.targetHigh?.toString() || '', targetLow: item.targetLow?.toString() || '', note: item.note || '', group: item.group || '' })
+        setForm({ code: item.code, name: item.name, market: item.market || 'tw', targetHigh: item.targetHigh?.toString() || '', targetLow: item.targetLow?.toString() || '', note: item.note || '', group: item.group || '' })
     }
 
     const toggleGroup = (g: string) => {
-        setCollapsedGroups(prev => {
-            const next = new Set(prev)
-            next.has(g) ? next.delete(g) : next.add(g)
-            return next
-        })
+        setCollapsedGroups(prev => { const next = new Set(prev); next.has(g) ? next.delete(g) : next.add(g); return next })
     }
 
     const getPriceStatus = (item: WatchItem) => {
@@ -317,18 +535,14 @@ export default function Watchlist() {
 
     const grouped: Record<string, WatchItem[]> = {}
     const filtered = filterGroup === 'all' ? items : items.filter(i => (i.group || UNGROUPED) === filterGroup)
-    filtered.forEach(item => {
-        const g = item.group || UNGROUPED
-        if (!grouped[g]) grouped[g] = []
-        grouped[g].push(item)
-    })
+    filtered.forEach(item => { const g = item.group || UNGROUPED; if (!grouped[g]) grouped[g] = []; grouped[g].push(item) })
     const groupKeys = Object.keys(grouped).sort()
     const alertCount = items.filter(i => getPriceStatus(i) !== 'normal').length
 
     return (
         <>
             <style>{`
-                .watch-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+                .watch-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
                 @media (max-width: 700px) { .watch-grid { grid-template-columns: 1fr; } }
                 .form-grid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
                 @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
@@ -338,6 +552,8 @@ export default function Watchlist() {
                 .overview-table { width: 100%; border-collapse: collapse; }
                 .overview-table thead th { position: sticky; top: 0; background: #12151f; z-index: 1; padding: 6px 10px; text-align: left; font-size: 11px; color: #6b7690; font-weight: 600; border-bottom: 1px solid #2e3349; letter-spacing: 0.03em; text-transform: uppercase; }
                 .overview-table tbody tr:hover td { background-color: rgba(79,142,247,0.05) !important; }
+                .market-toggle { display: flex; border-radius: 8px; overflow: hidden; border: 1px solid #2e3349; max-width: 280px; }
+                .market-toggle button { flex: 1; padding: 8px 0; border: none; cursor: pointer; font-size: 12px; font-weight: 700; transition: background 0.15s, color 0.15s; }
             `}</style>
 
             <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1400px', margin: '0 auto' }}>
@@ -355,21 +571,23 @@ export default function Watchlist() {
                         </div>
                         <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>
                             {lastUpdated ? `現價更新：${lastUpdated}` : '點「更新現價」取得最新報價'}
-                            {maUpdatedAt && <span style={{ marginLeft: '8px', color: '#a78bfa' }}>· MA 更新：{maUpdatedAt}</span>}
+                            {maUpdatedAt && <span style={{ marginLeft: '8px', color: '#a78bfa' }}>· MA：{maUpdatedAt}</span>}
+                            {chartUpdatedAt && <span style={{ marginLeft: '8px', color: '#00c896' }}>· 線圖：{chartUpdatedAt}</span>}
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        {/* 視圖切換 */}
                         <div style={{ display: 'flex', backgroundColor: '#12151f', borderRadius: '8px', padding: '3px', border: '1px solid #2e3349' }}>
                             <button onClick={() => setViewMode('card')} style={{ ...btn(viewMode === 'card' ? '#2e3349' : 'transparent'), padding: '5px 10px', fontSize: '12px', borderRadius: '6px' }}><LayoutGrid size={13} />卡片</button>
                             <button onClick={() => setViewMode('table')} style={{ ...btn(viewMode === 'table' ? '#2e3349' : 'transparent'), padding: '5px 10px', fontSize: '12px', borderRadius: '6px' }}><Table2 size={13} />一覽表</button>
                         </div>
-                        {/* 更新 MA */}
+                        <button onClick={handleUpdateChart} disabled={chartLoading || items.length === 0} style={{ ...btn('#21253a'), border: '1px solid #2e3349' }}>
+                            <BarChart2 size={14} style={{ animation: chartLoading ? 'spin 1s linear infinite' : 'none' }} />
+                            {chartLoading ? '載入中...' : '更新線圖'}
+                        </button>
                         <button onClick={handleUpdateMA} disabled={maLoading || items.length === 0} style={{ ...btn('#21253a'), border: '1px solid #2e3349' }}>
                             <Activity size={14} style={{ animation: maLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {maLoading ? 'MA 計算中...' : '更新 MA'}
                         </button>
-                        {/* 更新現價 */}
                         <button onClick={handleUpdatePrices} disabled={priceLoading || items.length === 0} style={btn('#21253a')}>
                             <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {priceLoading ? '更新中...' : '更新現價'}
@@ -396,16 +614,36 @@ export default function Watchlist() {
                 {showForm && (
                     <div style={{ ...card, marginBottom: '20px' }}>
                         <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>新增自選股</div>
+                        <div style={{ marginBottom: '16px' }}>
+                            <label style={lbl}>市場</label>
+                            <div className="market-toggle">
+                                {MARKET_ORDER.map(m => (
+                                    <button key={m} onClick={() => setForm(f => ({ ...f, market: m, code: '', name: '' }))}
+                                        style={{ background: form.market === m ? MARKETS[m].activeColor : '#0f1117', color: form.market === m ? '#fff' : '#8892a4' }}>
+                                        {MARKETS[m].label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
                         <div className="form-grid">
                             <div>
-                                <label style={lbl}>股票代號 *</label>
-                                <input style={inp} placeholder="如：2330" value={form.code}
-                                    onChange={e => { const code = e.target.value.toUpperCase(); setForm(f => ({ ...f, code, name: stockDict[code] || f.name })) }} />
+                                <label style={lbl}>
+                                    股票代號 *
+                                    <span style={{ color: '#4a5568', marginLeft: '6px', fontWeight: 400 }}>
+                                        {form.market === 'tw' && '（如：2330）'}
+                                        {form.market === 'jp' && '（如：7203，不需加 .T）'}
+                                        {form.market === 'us' && '（如：AAPL）'}
+                                    </span>
+                                </label>
+                                <input style={inp}
+                                    placeholder={form.market === 'tw' ? '如：2330' : form.market === 'jp' ? '如：7203（豐田）' : '如：AAPL'}
+                                    value={form.code}
+                                    onChange={e => { const code = e.target.value.toUpperCase(); setForm(f => ({ ...f, code, name: f.market === 'tw' ? (stockDict[code] || f.name) : f.name })) }} />
                             </div>
                             <div>
                                 <label style={lbl}>股票名稱</label>
-                                <input style={inp} placeholder="自動帶入或手動輸入" value={form.name}
-                                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+                                <input style={inp} placeholder={form.market === 'tw' ? '自動帶入或手動輸入' : '請手動輸入（如：豐田）'}
+                                    value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
                             </div>
                             <div>
                                 <label style={lbl}>上標價（賣出參考）</label>
@@ -431,13 +669,12 @@ export default function Watchlist() {
                             <div style={{ gridColumn: 'span 2' }}>
                                 <label style={lbl}>評估筆記</label>
                                 <textarea style={{ ...inp, minHeight: '60px', resize: 'vertical', fontFamily: 'sans-serif' }}
-                                    placeholder="選填" value={form.note}
-                                    onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
+                                    placeholder="選填" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
                             </div>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
                             <button style={btn('#2e3349')} onClick={() => { setShowForm(false); setForm(emptyForm) }}><X size={14} />取消</button>
-                            <button style={btn('#4f8ef7')} onClick={handleAdd}><Check size={14} />新增</button>
+                            <button style={btn(MARKETS[form.market].activeColor)} onClick={handleAdd}><Check size={14} />新增</button>
                         </div>
                     </div>
                 )}
@@ -455,7 +692,6 @@ export default function Watchlist() {
                         <p style={{ color: '#3d4460', fontSize: '13px', margin: 0 }}>點擊「新增自選股」開始追蹤</p>
                     </div>
                 ) : viewMode === 'table' ? (
-                    /* ── 一覽表視圖 ── */
                     <div style={{ ...card, padding: '0', overflow: 'hidden' }}>
                         <div style={{ overflowX: 'auto', maxHeight: '70vh', overflowY: 'auto' }}>
                             <table className="overview-table">
@@ -478,14 +714,12 @@ export default function Watchlist() {
                         </div>
                     </div>
                 ) : (
-                    /* ── 卡片視圖（依族群分組） ── */
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                         {groupKeys.map(groupName => {
                             const groupItems = grouped[groupName]
                             const isCollapsed = collapsedGroups.has(groupName)
                             return (
                                 <div key={groupName}>
-                                    {/* 族群標題 */}
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', cursor: 'pointer' }} onClick={() => toggleGroup(groupName)}>
                                         {isCollapsed ? <ChevronRight size={14} color="#8892a4" /> : <ChevronDown size={14} color="#8892a4" />}
                                         <span style={{ fontSize: '13px', fontWeight: 600, color: groupName === UNGROUPED ? '#8892a4' : '#4f8ef7' }}>{groupName}</span>
@@ -499,12 +733,16 @@ export default function Watchlist() {
                                                 const isEditing = editingCode === item.code
                                                 const borderColor = status === 'high' ? '#00c896' : status === 'low' ? '#ff5757' : '#2e3349'
                                                 const ma = maData[item.code] || null
+                                                const isTW = item.market === 'tw'
+                                                const chart = chartData[item.code] || null
 
                                                 return (
                                                     <div key={item.code} className="watch-card" style={{ backgroundColor: '#1a1d27', border: `1px solid ${borderColor}`, borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                                        {/* 第一行：代號 + 名稱 + 操作 */}
+
+                                                        {/* 第一行：市場 + 代號 + 名稱 + 操作 */}
                                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: 0 }}>
+                                                                <MarketBadge market={item.market || 'tw'} />
                                                                 <span style={{ fontWeight: 700, color: '#4f8ef7', fontSize: '14px' }}>{item.code}</span>
                                                                 <span style={{ fontSize: '12px', color: '#6b7690', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
                                                             </div>
@@ -514,8 +752,32 @@ export default function Watchlist() {
                                                             </div>
                                                         </div>
 
-                                                        {/* MA 行 */}
-                                                        {ma && (
+                                                        {/* 現價 + 漲跌（與線圖連動顯示） */}
+                                                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                                                            <span style={{ fontSize: '20px', fontWeight: 700, color: '#e2e8f0', lineHeight: 1 }}>
+                                                                {item.currentPrice
+                                                                    ? (item.market === 'jp'
+                                                                        ? <span>{Math.round(item.currentPrice).toLocaleString()} <span style={{ fontSize: '11px', color: '#4a5568' }}>円</span></span>
+                                                                        : item.currentPrice.toFixed(2))
+                                                                    : <span style={{ fontSize: '13px', color: '#4a5568' }}>—</span>}
+                                                            </span>
+                                                            {/* 10日漲跌幅 */}
+                                                            {chart && chart.length >= 2 && (() => {
+                                                                const chg = (chart[chart.length - 1].close - chart[0].close) / chart[0].close * 100
+                                                                const color = chg >= 0 ? '#00c896' : '#ff5757'
+                                                                return <span style={{ fontSize: '11px', color, fontWeight: 600 }}>{chg >= 0 ? '+' : ''}{chg.toFixed(2)}% <span style={{ color: '#4a5568', fontWeight: 400 }}>10日</span></span>
+                                                            })()}
+                                                        </div>
+
+                                                        {/* 小線圖 */}
+                                                        {chart && (
+                                                            <div style={{ borderRadius: '6px', overflow: 'hidden' }}>
+                                                                <MiniChart data={chart} market={item.market || 'tw'} />
+                                                            </div>
+                                                        )}
+
+                                                        {/* MA（台股） */}
+                                                        {isTW && ma && (
                                                             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                                                                 <MABadge label="5MA" value={ma.ma5} currentPrice={item.currentPrice} />
                                                                 <MABadge label="10MA" value={ma.ma10} currentPrice={item.currentPrice} />
@@ -523,25 +785,20 @@ export default function Watchlist() {
                                                             </div>
                                                         )}
 
-                                                        {/* 第二行：現價 + 目標價標籤 */}
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                            <span style={{ fontSize: '18px', fontWeight: 700, color: '#e2e8f0', lineHeight: 1 }}>
-                                                                {item.currentPrice ? item.currentPrice.toFixed(2) : <span style={{ fontSize: '13px', color: '#4a5568' }}>—</span>}
-                                                            </span>
-                                                            <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto' }}>
-                                                                {item.targetLow && (
-                                                                    <span style={{ fontSize: '11px', color: '#ff5757', backgroundColor: 'rgba(255,87,87,0.08)', borderRadius: '6px', padding: '1px 6px' }}>
-                                                                        ↓{item.targetLow}
-                                                                        {item.currentPrice && <span style={{ color: '#8892a4', marginLeft: '2px' }}>({((item.targetLow - item.currentPrice) / item.currentPrice * 100).toFixed(1)}%)</span>}
-                                                                    </span>
-                                                                )}
-                                                                {item.targetHigh && (
-                                                                    <span style={{ fontSize: '11px', color: '#00c896', backgroundColor: 'rgba(0,200,150,0.08)', borderRadius: '6px', padding: '1px 6px' }}>
-                                                                        ↑{item.targetHigh}
-                                                                        {item.currentPrice && <span style={{ color: '#8892a4', marginLeft: '2px' }}>({((item.targetHigh - item.currentPrice) / item.currentPrice * 100).toFixed(1)}%)</span>}
-                                                                    </span>
-                                                                )}
-                                                            </div>
+                                                        {/* 目標標籤 */}
+                                                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                                            {item.targetLow && (
+                                                                <span style={{ fontSize: '11px', color: '#ff5757', backgroundColor: 'rgba(255,87,87,0.08)', borderRadius: '6px', padding: '1px 6px' }}>
+                                                                    ↓{item.targetLow}
+                                                                    {item.currentPrice && <span style={{ color: '#8892a4', marginLeft: '2px' }}>({((item.targetLow - item.currentPrice) / item.currentPrice * 100).toFixed(1)}%)</span>}
+                                                                </span>
+                                                            )}
+                                                            {item.targetHigh && (
+                                                                <span style={{ fontSize: '11px', color: '#00c896', backgroundColor: 'rgba(0,200,150,0.08)', borderRadius: '6px', padding: '1px 6px' }}>
+                                                                    ↑{item.targetHigh}
+                                                                    {item.currentPrice && <span style={{ color: '#8892a4', marginLeft: '2px' }}>({((item.targetHigh - item.currentPrice) / item.currentPrice * 100).toFixed(1)}%)</span>}
+                                                                </span>
+                                                            )}
                                                         </div>
 
                                                         {/* 進度條 */}
@@ -555,22 +812,18 @@ export default function Watchlist() {
                                                         {/* 編輯模式 */}
                                                         {isEditing ? (
                                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                                                <div style={{ display: 'flex', gap: '8px' }}>
-                                                                    <div style={{ flex: 1 }}>
-                                                                        <label style={lbl}>名稱</label>
-                                                                        <input style={inp} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
-                                                                    </div>
+                                                                <div style={{ flex: 1 }}>
+                                                                    <label style={lbl}>名稱</label>
+                                                                    <input style={inp} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
                                                                 </div>
                                                                 <div style={{ display: 'flex', gap: '8px' }}>
                                                                     <div style={{ flex: 1 }}>
                                                                         <label style={lbl}>上標價</label>
-                                                                        <input type="number" style={inp} placeholder="賣出參考" value={form.targetHigh}
-                                                                            onChange={e => setForm(f => ({ ...f, targetHigh: e.target.value }))} />
+                                                                        <input type="number" style={inp} placeholder="賣出參考" value={form.targetHigh} onChange={e => setForm(f => ({ ...f, targetHigh: e.target.value }))} />
                                                                     </div>
                                                                     <div style={{ flex: 1 }}>
                                                                         <label style={lbl}>下標價</label>
-                                                                        <input type="number" style={inp} placeholder="買入參考" value={form.targetLow}
-                                                                            onChange={e => setForm(f => ({ ...f, targetLow: e.target.value }))} />
+                                                                        <input type="number" style={inp} placeholder="買入參考" value={form.targetLow} onChange={e => setForm(f => ({ ...f, targetLow: e.target.value }))} />
                                                                     </div>
                                                                 </div>
                                                                 <div>
@@ -581,8 +834,7 @@ export default function Watchlist() {
                                                                                 style={{ ...btn(form.group === g ? '#4f8ef7' : '#21253a'), padding: '2px 8px', fontSize: '11px', borderRadius: '20px', border: `1px solid ${form.group === g ? '#4f8ef7' : '#2e3349'}` }}>{g}</button>
                                                                         ))}
                                                                     </div>
-                                                                    <input style={inp} placeholder="族群名稱" value={form.group}
-                                                                        onChange={e => setForm(f => ({ ...f, group: e.target.value }))} />
+                                                                    <input style={inp} placeholder="族群名稱" value={form.group} onChange={e => setForm(f => ({ ...f, group: e.target.value }))} />
                                                                 </div>
                                                                 <div>
                                                                     <label style={lbl}>評估筆記</label>
