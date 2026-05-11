@@ -14,6 +14,16 @@ const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, b
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 
+// Excel 序列日期 → YYYY-MM-DD
+const excelSerialToDate = (serial: number): string => {
+    const utc_days = Math.floor(serial - 25569)
+    const date = new Date(utc_days * 86400 * 1000)
+    const y = date.getUTCFullYear()
+    const m = String(date.getUTCMonth() + 1).padStart(2, '0')
+    const d = String(date.getUTCDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+}
+
 export default function CalendarHome() {
     const today = new Date()
     const [year, setYear] = useState(today.getFullYear())
@@ -249,17 +259,28 @@ export default function CalendarHome() {
         reader.onload = async (evt) => {
             try {
                 const data = new Uint8Array(evt.target!.result as ArrayBuffer)
-                const wb = XLSX.read(data, { type: 'array', cellDates: false, dateNF: 'yyyy-mm-dd' })
+                // raw: true 保留原始值（含 Excel 序列數字），不讓 SheetJS 自動轉換
+                const wb = XLSX.read(data, { type: 'array', cellDates: false })
                 const sheet = wb.Sheets[wb.SheetNames[0]]
-                const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: '', raw: false })
+                const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: '', raw: true })
 
                 const byDoc: Record<string, { stockCode: string; stockName: string; yearMonth: string; dates: Set<string> }> = {}
 
                 for (const row of rows) {
                     const code = String(row['股票代號'] || row['代號'] || row['code'] || '').trim()
                     const name = String(row['股票名稱'] || row['名稱'] || row['name'] || code).trim()
-                    const rawDate = String(row['法說會日期'] || row['日期'] || row['date'] || '').trim()
-                    const isoDate = rawDate.slice(0, 10).replace(/\//g, '-')
+                    const rawDate = row['法說會日期'] || row['日期'] || row['date'] || ''
+
+                    // ✅ 同時支援 Excel 序列數字 和 文字日期
+                    let isoDate = ''
+                    const num = Number(rawDate)
+                    if (!isNaN(num) && num > 40000) {
+                        // Excel 序列日期（如 46175）
+                        isoDate = excelSerialToDate(num)
+                    } else {
+                        // 文字日期（如 2026-05-18 或 2026/05/18）
+                        isoDate = String(rawDate).slice(0, 10).replace(/\//g, '-')
+                    }
 
                     if (!code || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) continue
 
@@ -575,7 +596,7 @@ export default function CalendarHome() {
                             <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', border: '1px solid #2e3349', fontSize: '12px', color: '#8892a4', lineHeight: 1.8 }}>
                                 <span style={{ color: '#4f8ef7', fontWeight: 600 }}>支援 .xlsx / .xls 格式，必要欄位（順序不限）：</span><br />
                                 <span style={{ color: '#e2e8f0' }}>股票代號</span>、<span style={{ color: '#e2e8f0' }}>股票名稱</span>、<span style={{ color: '#e2e8f0' }}>法說會日期</span><br />
-                                日期格式：<span style={{ color: '#00c896' }}>YYYY-MM-DD</span> 或 <span style={{ color: '#00c896' }}>YYYY/MM/DD</span>（Excel 日期格式亦可）<br />
+                                日期格式：<span style={{ color: '#00c896' }}>YYYY-MM-DD</span>、<span style={{ color: '#00c896' }}>YYYY/MM/DD</span> 或 <span style={{ color: '#00c896' }}>Excel 日期格式</span> 皆可<br />
                                 <span style={{ color: '#f5a623' }}>※ 匯入的日期會與 Firestore 既有資料合併（不覆蓋）</span>
                             </div>
                             <label style={{ ...btn('#00c896'), width: 'fit-content', cursor: 'pointer', opacity: xlsxImporting ? 0.6 : 1 }}>
