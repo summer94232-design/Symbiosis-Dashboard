@@ -58,6 +58,7 @@ export default function DailyBrief() {
     const [holdings, setHoldings] = useState<HoldingItem[]>([])
     const [dataLoading, setDataLoading] = useState(true)
     const [lastNewsTime, setLastNewsTime] = useState('')
+    const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set())
 
     const loadData = async () => {
         setDataLoading(true)
@@ -142,6 +143,7 @@ export default function DailyBrief() {
                 const todayDate = new Date().toISOString().split('T')[0]
                 setNews(result)
                 setLastNewsTime(time)
+                setSelectedSources(new Set())
                 sessionStorage.setItem('newsDate', todayDate)
                 sessionStorage.setItem('newsData', JSON.stringify(result))
                 sessionStorage.setItem('newsTime', time)
@@ -166,6 +168,21 @@ export default function DailyBrief() {
             loadNews()
         }
     }, [])
+
+    // 來源篩選邏輯
+    const allSources = Array.from(new Set(news.map(n => n.source).filter(Boolean)))
+    const filteredNews = selectedSources.size === 0
+        ? news
+        : news.filter(n => selectedSources.has(n.source))
+
+    const toggleSource = (src: string) => {
+        setSelectedSources(prev => {
+            const next = new Set(prev)
+            if (next.has(src)) next.delete(src)
+            else next.add(src)
+            return next
+        })
+    }
 
     return (
         <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1200px', margin: '0 auto' }}>
@@ -302,7 +319,8 @@ export default function DailyBrief() {
 
                 {/* 市場新聞 */}
                 <div style={{ ...card, gridColumn: 'span 2' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+                    {/* 標題列 */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <Newspaper size={16} color="#4f8ef7" />
                             <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>市場新聞</span>
@@ -315,6 +333,41 @@ export default function DailyBrief() {
                         </button>
                     </div>
 
+                    {/* 來源篩選 tabs */}
+                    {allSources.length > 0 && (
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                            <button
+                                onClick={() => setSelectedSources(new Set())}
+                                style={{
+                                    fontSize: '12px', padding: '4px 14px', borderRadius: '20px',
+                                    border: '1px solid', cursor: 'pointer', transition: 'all 0.15s',
+                                    backgroundColor: selectedSources.size === 0 ? '#4f8ef7' : 'transparent',
+                                    borderColor: selectedSources.size === 0 ? '#4f8ef7' : '#2e3349',
+                                    color: selectedSources.size === 0 ? '#fff' : '#8892a4',
+                                }}>
+                                全部 {selectedSources.size === 0 && <span style={{ opacity: 0.75 }}>({news.length})</span>}
+                            </button>
+                            {allSources.map(src => {
+                                const active = selectedSources.has(src)
+                                const count = news.filter(n => n.source === src).length
+                                return (
+                                    <button
+                                        key={src}
+                                        onClick={() => toggleSource(src)}
+                                        style={{
+                                            fontSize: '12px', padding: '4px 14px', borderRadius: '20px',
+                                            border: '1px solid', cursor: 'pointer', transition: 'all 0.15s',
+                                            backgroundColor: active ? '#4f8ef7' : 'transparent',
+                                            borderColor: active ? '#4f8ef7' : '#2e3349',
+                                            color: active ? '#fff' : '#8892a4',
+                                        }}>
+                                        {src} <span style={{ opacity: 0.75 }}>({count})</span>
+                                    </button>
+                                )
+                            })}
+                        </div>
+                    )}
+
                     {newsError ? (
                         <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4' }}>
                             <AlertCircle size={24} style={{ marginBottom: '8px', color: '#ff5757' }} />
@@ -324,9 +377,13 @@ export default function DailyBrief() {
                         <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4', fontSize: '14px' }}>
                             正在搜尋最新市場資訊...
                         </div>
+                    ) : filteredNews.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4', fontSize: '14px' }}>
+                            此來源目前沒有新聞
+                        </div>
                     ) : (
                         <div style={{ display: 'grid', gap: '10px', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-                            {news.map((item, i) => (
+                            {filteredNews.map((item, i) => (
                                 <a
                                     key={i}
                                     href={item.url}
