@@ -191,7 +191,9 @@ export default function CalendarHome() {
 
                     const stockName = watchNameMap[code] || code
                     const docId = `${code}-${yearMonth}`
-                    const docRef = userDoc(investDB, 'investorMeetings', docId)
+
+                    // ✅ 修正 Bug 2：寫入改為 root collection（與讀取一致）
+                    const docRef = doc(collection(investDB, 'investorMeetings'), docId)
 
                     const existing = await getDoc(docRef)
                     const oldDates: string[] = existing.exists() ? (existing.data().dates || []) : []
@@ -326,14 +328,16 @@ export default function CalendarHome() {
         reader.readAsArrayBuffer(file)
     }
 
+    // ✅ 修正 Bug 1：mount 時只載入一次靜態資料，不再重複呼叫 loadInvestorFromFirestore
     useEffect(() => {
         loadPersonal()
         loadDividends()
         loadTasks()
-        loadWatchList().then(() => loadInvestorFromFirestore(year, month))
+        loadWatchList()
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
+    // ✅ year/month 變動時（含初始 mount）統一由這個 useEffect 負責載入法說會
     useEffect(() => {
         loadInvestorFromFirestore(year, month)
         // eslint-disable-next-line react-hooks/exhaustive-deps
