@@ -463,6 +463,8 @@ export default function Watchlist() {
                     const bars: ChartBar[] = data.data
                         .filter((d: any) => d.close != null && d.date != null)
                         .map((d: any) => ({ date: d.date, close: d.close, volume: d.volume ?? 0 }))
+                        // ✅ 修正：確保資料由舊到新排序（左=最舊，右=最新）
+                        .sort((a: ChartBar, b: ChartBar) => a.date.localeCompare(b.date))
                         .slice(-10)
                     results[item.code] = bars
                 } else {
@@ -473,7 +475,12 @@ export default function Watchlist() {
                     )
                     if (!res.ok) return
                     const json = await res.json()
-                    if (json.bars?.length) results[item.code] = json.bars
+                    if (json.bars?.length) {
+                        // ✅ 修正：確保資料由舊到新排序（左=最舊，右=最新）
+                        results[item.code] = [...json.bars].sort(
+                            (a: ChartBar, b: ChartBar) => a.date.localeCompare(b.date)
+                        )
+                    }
                 }
             } catch (err) {
                 console.error(`[chart] ${item.code}`, err)
