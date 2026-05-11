@@ -1,0 +1,25 @@
+name: Sync Investor Meetings
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 每天 UTC 00:00（台灣時間早上 8:00）
+  workflow_dispatch:       # 也可以手動觸發
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 firebase-admin
+
+      - name: Run sync script
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: python scripts/sync_investor_meetings.py
