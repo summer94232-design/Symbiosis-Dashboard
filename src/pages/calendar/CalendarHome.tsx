@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { getDocs, addDoc, deleteDoc, orderBy, query, where, setDoc, getDoc, updateDoc } from 'firebase/firestore'
+import { getDocs, addDoc, deleteDoc, orderBy, query, where, setDoc, getDoc, updateDoc, collection, doc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { calcPositions, type TradeRecord } from '../../lib/calc'
@@ -30,7 +30,6 @@ export default function CalendarHome() {
     const [investorError, setInvestorError] = useState<string | null>(null)
     const [investorInfo, setInvestorInfo] = useState<string | null>(null)
     const [xlsxImporting, setXlsxImporting] = useState(false)
-    // 用 ref 保存最新 watchList，避免 closure 捕捉到舊值
     const watchListRef = useRef<{ code: string; name: string }[]>([])
     const [filterTypes, setFilterTypes] = useState<Set<string>>(new Set(['fomc', 'futures', 'tech', 'investor', 'personal', 'dividend']))
     const [myStocksOnly, setMyStocksOnly] = useState(true)
@@ -52,12 +51,10 @@ export default function CalendarHome() {
             name: d.data().name || d.data().code || d.id
         }))
         watchListRef.current = list
-        // ✅ 修正：trades 已在此處讀取，直接傳入，不重複查詢
         const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
         refreshMyStockCodes(trades, list.map(w => w.code))
     }
 
-    // ✅ 修正：接收已讀取的 trades，不再重複查詢 Firestore
     const refreshMyStockCodes = (trades: TradeRecord[], watchCodes?: string[]) => {
         try {
             const { holdings } = calcPositions(trades)
@@ -98,14 +95,16 @@ export default function CalendarHome() {
         setTaskEvents(taskEvts)
     }
 
-    // 從 Firestore 讀取已儲存的法說會資料（進入頁面或切換月份時呼叫）
+    // 從 root collection 讀取法說會（GitHub Actions 寫入的位置）
     const loadInvestorFromFirestore = async (y: number, m: number) => {
-        if (loadingInvestor) return  // 手動更新進行中時不觸發
+        if (loadingInvestor) return
         const yearMonth = `${y}-${String(m).padStart(2, '0')}`
 
         try {
-            // ✅ 修正：直接查詢當月所有文件（不限於關注清單），確保 xlsx 匯入的資料也能顯示
-            const q = query(userCol(investDB, 'investorMeetings'), where('yearMonth', '==', yearMonth))
+            const q = query(
+                collection(investDB, 'investorMeetings'),
+                where('yearMonth', '==', yearMonth)
+            )
             const snap = await getDocs(q)
             const evtMap = new Map<string, CalendarEvent>()
 
@@ -140,21 +139,14 @@ export default function CalendarHome() {
         setInvestorInfo(null)
 
         try {
-            // ✅ 修正：loadWatchList 內部已讀取 trades 並計算 myStockCodes
-            //    這裡只需重新讀取 watchList（trades 已在 loadWatchList 中處理）
             await loadWatchList()
             const currentWatchList = watchListRef.current
             const watchCodes = currentWatchList.map(w => w.code)
             const watchNameMap: Record<string, string> = {}
             currentWatchList.forEach(w => { watchNameMap[w.code] = w.name })
 
-            // myStockCodes 已被 loadWatchList 更新，取出持倉代號
             const holdingCodes = [...myStockCodes].filter(c => !watchCodes.includes(c))
-
-            // 查詢清單 = 持倉 + 關注清單（去重）
             const allCodes = [...new Set([...holdingCodes, ...watchCodes])]
-
-            console.log('法說會查詢股票清單：', allCodes)
 
             if (allCodes.length === 0) {
                 setInvestorEvents([])
@@ -187,9 +179,6 @@ export default function CalendarHome() {
                         return parseInt(y) === year && parseInt(m) === month
                     })
 
-                    console.log(`${code} 法說會日期（來源：${json.source}）:`, newDates)
-
-                    // 名稱優先順序：持倉 > watchList > code
                     const stockName = watchNameMap[code] || code
                     const docId = `${code}-${yearMonth}`
                     const docRef = userDoc(investDB, 'investorMeetings', docId)
@@ -250,7 +239,7 @@ export default function CalendarHome() {
         setLoadingInvestor(false)
     }
 
-    // ── xlsx 手動匯入法說會 ──────────────────────────────────────────────
+    // ── xlsx 手動匯入法說會（寫入 root collection）──────────────────────
     const handleXlsxImport = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
         if (!file) return
@@ -260,8 +249,6 @@ export default function CalendarHome() {
         reader.onload = async (evt) => {
             try {
                 const data = new Uint8Array(evt.target!.result as ArrayBuffer)
-                // ⚠️ 不使用 cellDates:true，避免 UTC 轉換在 UTC+8 時區造成日期差一天
-                // 改用 dateNF 格式字串，讓 SheetJS 直接輸出 YYYY-MM-DD 文字
                 const wb = XLSX.read(data, { type: 'array', cellDates: false, dateNF: 'yyyy-mm-dd' })
                 const sheet = wb.Sheets[wb.SheetNames[0]]
                 const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: '', raw: false })
@@ -271,8 +258,6 @@ export default function CalendarHome() {
                 for (const row of rows) {
                     const code = String(row['股票代號'] || row['代號'] || row['code'] || '').trim()
                     const name = String(row['股票名稱'] || row['名稱'] || row['name'] || code).trim()
-
-                    // raw:false 讓日期以格式字串輸出，取前 10 碼即為 YYYY-MM-DD
                     const rawDate = String(row['法說會日期'] || row['日期'] || row['date'] || '').trim()
                     const isoDate = rawDate.slice(0, 10).replace(/\//g, '-')
 
@@ -291,10 +276,10 @@ export default function CalendarHome() {
                 let written = 0
                 for (const [, info] of Object.entries(byDoc)) {
                     const docId = `${info.stockCode}-${info.yearMonth}`
-                    const docRef = userDoc(investDB, 'investorMeetings', docId)
+                    // ✅ 寫入 root collection（與 GitHub Actions 一致）
+                    const docRef = doc(collection(investDB, 'investorMeetings'), docId)
                     const existing = await getDoc(docRef)
                     const oldDates: string[] = existing.exists() ? (existing.data().dates || []) : []
-                    // 合併並去重：用 Set 確保同一股票同一日期不重複
                     const mergedDates = [...new Set([...oldDates, ...info.dates])].sort()
 
                     await setDoc(docRef, {
@@ -324,20 +309,17 @@ export default function CalendarHome() {
         loadPersonal()
         loadDividends()
         loadTasks()
-        // 先載入關注清單，再載入法說會（確保 watchListRef 有值）
         loadWatchList().then(() => loadInvestorFromFirestore(year, month))
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     useEffect(() => {
-        // 切換月份時重新載入法說會（watchListRef 此時已有值）
         loadInvestorFromFirestore(year, month)
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [year, month])
 
     useEffect(() => {
         const futuresDates = getFuturesSettlementDates(year, month)
-        // 法說會依「只顯示我的股票」篩選
         const filteredInvestor = myStocksOnly
             ? investorEvents.filter(e => e.stockCode && myStockCodes.has(e.stockCode))
             : investorEvents
@@ -379,21 +361,20 @@ export default function CalendarHome() {
         loadPersonal()
     }
 
-    // 刪除單筆法說會日期（從 investorMeetings.dates[] 移除）
+    // 刪除單筆法說會日期（從 root collection 操作）
     const handleDeleteInvestorDate = async (stockCode: string, isoDate: string) => {
         if (!confirm(`確定要刪除 ${stockCode} 在 ${isoDate} 的法說會？`)) return
         const yearMonth = `${year}-${String(month).padStart(2, '0')}`
-        const docRef = userDoc(investDB, 'investorMeetings', `${stockCode}-${yearMonth}`)
+        const docId = `${stockCode}-${yearMonth}`
+        const docRef = doc(collection(investDB, 'investorMeetings'), docId)
         const snap = await getDoc(docRef)
         if (!snap.exists()) return
         const oldDates: string[] = snap.data().dates || []
         const newDates = oldDates.filter(d => d !== isoDate)
         await updateDoc(docRef, { dates: newDates, updatedAt: new Date().toISOString() })
-        // 重新載入
         await loadInvestorFromFirestore(year, month)
     }
 
-    // 刪除除權息事件（找到對應 dividends 文件刪除）
     const handleDeleteDividend = async (ev: CalendarEvent) => {
         if (!confirm(`確定要刪除 ${ev.title}？`)) return
         const snap = await getDocs(userCol(investDB, 'dividends'))
@@ -468,13 +449,13 @@ export default function CalendarHome() {
                         </button>
                     ))}
                 </div>
+
                 {/* 法說會篩選：只顯示我的股票 */}
                 {filterTypes.has('investor') && (
                     <div style={{ marginBottom: '16px' }}>
                         <button
                             onClick={() => setMyStocksOnly(v => !v)}
                             style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 14px', borderRadius: '20px', border: `1px solid ${myStocksOnly ? '#00c896' : '#2e3349'}`, backgroundColor: myStocksOnly ? 'rgba(0,200,150,0.12)' : 'transparent', color: myStocksOnly ? '#00c896' : '#8892a4', fontSize: '12px', cursor: 'pointer' }}>
-                            {/* 自製 toggle */}
                             <span style={{ width: '28px', height: '15px', borderRadius: '8px', backgroundColor: myStocksOnly ? '#00c896' : '#2e3349', display: 'inline-flex', alignItems: 'center', padding: '2px', transition: 'background 0.2s', flexShrink: 0 }}>
                                 <span style={{ width: '11px', height: '11px', borderRadius: '50%', backgroundColor: '#fff', transform: myStocksOnly ? 'translateX(13px)' : 'translateX(0)', transition: 'transform 0.2s', display: 'block' }} />
                             </span>
