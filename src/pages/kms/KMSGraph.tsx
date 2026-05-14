@@ -29,7 +29,7 @@ interface GraphEdge {
   target: string
 }
 
-const NODE_COLORS = { note: '#4f8ef7', tag: '#00c896' }
+const NODE_COLORS = { note: 'var(--c-accent)', tag: 'var(--c-positive)' }
 
 export default function KMSGraph() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -194,7 +194,7 @@ export default function KMSGraph() {
         ctx.beginPath()
         ctx.roundRect(n.x - metrics.width / 2 - padding, labelY - 1, metrics.width + padding * 2, fontSize + 4, 3)
         ctx.fill()
-        ctx.fillStyle = '#e2e8f0'; ctx.fillText(n.label, n.x, labelY)
+        ctx.fillStyle = 'var(--c-text)'; ctx.fillText(n.label, n.x, labelY)
       })
 
       animRef.current = requestAnimationFrame(simulate)
@@ -281,20 +281,20 @@ export default function KMSGraph() {
     ? notes.filter(n => n.hashtags?.includes(selectedNode.label.replace('#', '').split('/').join('/')))
     : notes.filter(n => n.id === selectedNode?.id.replace('note-', ''))
 
-  const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '16px' }
+  const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '16px' }
 
   return (
     <div style={{ padding: 'clamp(12px, 2vw, 24px)' }}>
       <div style={{ marginBottom: '14px' }}>
-        <h1 style={{ fontSize: 'clamp(16px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>知識圖譜</h1>
-        <p style={{ fontSize: '12px', color: '#8892a4', margin: '4px 0 0', display: 'flex', gap: '14px' }}>
+        <h1 style={{ fontSize: 'clamp(16px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>知識圖譜</h1>
+        <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '4px 0 0', display: 'flex', gap: '14px' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-            <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#4f8ef7', display: 'inline-block' }} />藍色 = 筆記
+            <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: 'var(--c-accent)', display: 'inline-block' }} />藍色 = 筆記
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-            <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#00c896', display: 'inline-block' }} />綠色 = 標籤
+            <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: 'var(--c-positive)', display: 'inline-block' }} />綠色 = 標籤
           </span>
-          {isMobile && <span style={{ color: '#8892a4' }}>點擊節點查看詳情</span>}
+          {isMobile && <span style={{ color: 'var(--c-muted)' }}>點擊節點查看詳情</span>}
         </p>
       </div>
 
@@ -302,9 +302,9 @@ export default function KMSGraph() {
       <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: '14px', alignItems: 'flex-start' }}>
         <div ref={containerRef} style={{ ...card, flex: 1, width: '100%', minWidth: 0, padding: '12px' }}>
           {loading ? (
-            <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div>
+            <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>載入中...</div>
           ) : nodes.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>
+            <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>
               <p style={{ fontSize: '14px' }}>還沒有筆記</p>
             </div>
           ) : (
@@ -325,30 +325,30 @@ export default function KMSGraph() {
         {selectedNode && (
           <div style={{ ...card, width: isMobile ? '100%' : '240px', minWidth: isMobile ? 'unset' : '240px', flexShrink: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <span style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>
+              <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--c-text)' }}>
                 {selectedNode.type === 'tag' ? '標籤詳情' : '筆記詳情'}
               </span>
               <button onClick={() => setSelectedNode(null)}
-                style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', fontSize: '16px', lineHeight: 1 }}>×</button>
+                style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer', fontSize: '16px', lineHeight: 1 }}>×</button>
             </div>
 
-            <p style={{ fontSize: '14px', fontWeight: 600, color: selectedNode.type === 'tag' ? '#00c896' : '#4f8ef7', margin: '0 0 10px', wordBreak: 'break-all' }}>
+            <p style={{ fontSize: '14px', fontWeight: 600, color: selectedNode.type === 'tag' ? 'var(--c-positive)' : 'var(--c-accent)', margin: '0 0 10px', wordBreak: 'break-all' }}>
               {selectedNode.label}
             </p>
 
-            <p style={{ fontSize: '11px', color: '#8892a4', margin: '0 0 8px' }}>相關筆記 ({relatedNotes.length})</p>
+            <p style={{ fontSize: '11px', color: 'var(--c-muted)', margin: '0 0 8px' }}>相關筆記 ({relatedNotes.length})</p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: isMobile ? '240px' : '380px', overflowY: 'auto' }}>
               {relatedNotes.map(n => (
                 <div key={n.id}
-                  style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '9px 11px', fontSize: '12px', color: '#e2e8f0', cursor: 'pointer', border: '1px solid #2e3349' }}
+                  style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '9px 11px', fontSize: '12px', color: 'var(--c-text)', cursor: 'pointer', border: '1px solid var(--c-border)' }}
                   onClick={() => handleGoToNote(n.id)}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
                     <span style={{ flex: 1, lineHeight: 1.4, fontSize: '13px' }}>{n.title}</span>
-                    <ExternalLink size={12} style={{ color: '#4f8ef7', flexShrink: 0, marginTop: '2px' }} />
+                    <ExternalLink size={12} style={{ color: 'var(--c-accent)', flexShrink: 0, marginTop: '2px' }} />
                   </div>
                   {n.content && (
-                    <p style={{ margin: '5px 0 0', fontSize: '11px', color: '#8892a4', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                    <p style={{ margin: '5px 0 0', fontSize: '11px', color: 'var(--c-muted)', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                       {n.content}
                     </p>
                   )}

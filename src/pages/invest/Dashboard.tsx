@@ -8,11 +8,11 @@ import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { usePrices } from '../../PriceContext'
 
-const COLORS = ['#4f8ef7', '#00c896', '#f5a623', '#ff5757', '#a78bfa', '#34d399', '#fb923c', '#60a5fa', '#f472b6', '#facc15', '#38bdf8', '#4ade80']
-const CASH_COLOR = '#8892a4'
-const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
+const COLORS = ['var(--c-accent)', 'var(--c-positive)', 'var(--c-warning)', 'var(--c-danger)', '#a78bfa', '#34d399', '#fb923c', '#60a5fa', '#f472b6', '#facc15', '#38bdf8', '#4ade80']
+const CASH_COLOR = 'var(--c-muted)'
+const pnlColor = (v: number) => v >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
 const card: React.CSSProperties = {
-    backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px'
+    backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px'
 }
 
 interface HoldingItem {
@@ -55,7 +55,7 @@ interface Task {
     order: number
 }
 
-const PRIORITY_COLORS = { high: '#ff5757', medium: '#f5a623', low: '#00c896' }
+const PRIORITY_COLORS = { high: 'var(--c-danger)', medium: 'var(--c-warning)', low: 'var(--c-positive)' }
 const PRIORITY_LABELS = { high: '高', medium: '中', low: '低' }
 
 // 族群圓餅圖 active label
@@ -78,18 +78,18 @@ function AssetTooltip({ active, payload, totalAssets }: any) {
     const { name, value, payload: { fill } } = payload[0]
     const pct = totalAssets > 0 ? ((value / totalAssets) * 100).toFixed(1) : '0.0'
     return (
-        <div style={{ backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '10px', padding: '10px 14px', minWidth: '160px', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>
+        <div style={{ backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '10px', padding: '10px 14px', minWidth: '160px', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '8px' }}>
                 <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: fill, flexShrink: 0 }} />
-                <span style={{ fontSize: '13px', fontWeight: 700, color: '#e2e8f0' }}>{name}</span>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--c-text)' }}>{name}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', fontSize: '12px' }}>
-                <span style={{ color: '#8892a4' }}>市值</span>
-                <span style={{ color: '#e2e8f0', fontWeight: 600 }}>${value.toLocaleString()}</span>
+                <span style={{ color: 'var(--c-muted)' }}>市值</span>
+                <span style={{ color: 'var(--c-text)', fontWeight: 600 }}>${value.toLocaleString()}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', fontSize: '12px', marginTop: '4px' }}>
-                <span style={{ color: '#8892a4' }}>佔比</span>
-                <span style={{ color: '#4f8ef7', fontWeight: 600 }}>{pct}%</span>
+                <span style={{ color: 'var(--c-muted)' }}>佔比</span>
+                <span style={{ color: 'var(--c-accent)', fontWeight: 600 }}>{pct}%</span>
             </div>
         </div>
     )
@@ -101,17 +101,17 @@ function GroupTooltip({ active, payload, totalAssets }: any) {
     const { name, value, payload: { fill } } = payload[0]
     const pct = totalAssets > 0 ? ((value / totalAssets) * 100).toFixed(1) : '0.0'
     return (
-        <div style={{ backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '10px', padding: '10px 14px', minWidth: '160px', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>
+        <div style={{ backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '10px', padding: '10px 14px', minWidth: '160px', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '8px' }}>
                 <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: fill, flexShrink: 0 }} />
-                <span style={{ fontSize: '13px', fontWeight: 700, color: '#e2e8f0' }}>{name}</span>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--c-text)' }}>{name}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', fontSize: '12px' }}>
-                <span style={{ color: '#8892a4' }}>市值</span>
-                <span style={{ color: '#e2e8f0', fontWeight: 600 }}>${value.toLocaleString()}</span>
+                <span style={{ color: 'var(--c-muted)' }}>市值</span>
+                <span style={{ color: 'var(--c-text)', fontWeight: 600 }}>${value.toLocaleString()}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', fontSize: '12px', marginTop: '4px' }}>
-                <span style={{ color: '#8892a4' }}>佔比</span>
+                <span style={{ color: 'var(--c-muted)' }}>佔比</span>
                 <span style={{ color: '#a78bfa', fontWeight: 600 }}>{pct}%</span>
             </div>
         </div>
@@ -345,10 +345,10 @@ export default function Dashboard() {
     const hasMargin = marginPositions.length > 0
 
     // 維持率顏色：>160% 綠，130~160% 橙，<130% 紅
-    const marginRatioColor = marginRatioValue === null ? '#8892a4'
-        : marginRatioValue >= 160 ? '#00c896'
-            : marginRatioValue >= 130 ? '#f5a623'
-                : '#ff5757'
+    const marginRatioColor = marginRatioValue === null ? 'var(--c-muted)'
+        : marginRatioValue >= 160 ? 'var(--c-positive)'
+            : marginRatioValue >= 130 ? 'var(--c-warning)'
+                : 'var(--c-danger)'
 
     // 融資加碼試算結果（即時計算，純前端）
     const simPriceNum = parseFloat(simPrice)
@@ -357,10 +357,10 @@ export default function Dashboard() {
     const simResult = (simOpen && simPriceNum > 0 && simSharesNum > 0 && simRatioNum > 0)
         ? simulateMarginBuy(marginStockMarketValue, totalMarginDebt, simPriceNum, simSharesNum, simRatioNum)
         : null
-    const simRatioColor = simResult === null ? '#8892a4'
-        : simResult.newMarginRatio >= 160 ? '#00c896'
-            : simResult.newMarginRatio >= 130 ? '#f5a623'
-                : '#ff5757'
+    const simRatioColor = simResult === null ? 'var(--c-muted)'
+        : simResult.newMarginRatio >= 160 ? 'var(--c-positive)'
+            : simResult.newMarginRatio >= 130 ? 'var(--c-warning)'
+                : 'var(--c-danger)'
 
     // 個股圓餅圖
     const pieData: PieEntry[] = [
@@ -428,21 +428,21 @@ export default function Dashboard() {
         .dash-extra { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; margin-top: 16px; }
         @media (max-width: 700px) { .dash-extra { grid-template-columns: 1fr; } }
         .h-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .h-table th { padding: 8px 10px; text-align: left; color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; white-space: nowrap; }
-        .h-table td { padding: 10px; border-bottom: 1px solid #2e3349; color: #e2e8f0; white-space: nowrap; }
+        .h-table th { padding: 8px 10px; text-align: left; color: var(--c-muted); font-weight: 500; border-bottom: 1px solid var(--c-border); white-space: nowrap; }
+        .h-table td { padding: 10px; border-bottom: 1px solid var(--c-border); color: var(--c-text); white-space: nowrap; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .task-row:hover { background-color: rgba(79,142,247,0.06) !important; }
         .pie-legend { max-height: 160px; overflow-y: auto; }
         .pie-legend::-webkit-scrollbar { width: 4px; }
         .pie-legend::-webkit-scrollbar-track { background: transparent; }
-        .pie-legend::-webkit-scrollbar-thumb { background: #2e3349; border-radius: 2px; }
+        .pie-legend::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 2px; }
       `}</style>
 
             <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '8px' }}>
                     <div>
-                        <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>儀表板</h1>
-                        <p style={{ fontSize: '12px', color: '#8892a4', margin: '4px 0 0' }}>
+                        <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>儀表板</h1>
+                        <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
                             {lastUpdated ? `現價更新：${lastUpdated}` : '尚未更新現價，點「更新現價」取得最新報價'}
                         </p>
                     </div>
@@ -451,7 +451,7 @@ export default function Dashboard() {
                             onClick={handleReload}
                             disabled={loading || reloadCooldown > 0}
                             title={reloadCooldown > 0 ? `請稍候 ${reloadCooldown} 秒後再試` : '重新載入資料'}
-                            style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 14px', color: reloadCooldown > 0 ? '#8892a4' : '#e2e8f0', fontSize: '13px', cursor: reloadCooldown > 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', opacity: reloadCooldown > 0 ? 0.6 : 1 }}
+                            style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 14px', color: reloadCooldown > 0 ? 'var(--c-muted)' : 'var(--c-text)', fontSize: '13px', cursor: reloadCooldown > 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', opacity: reloadCooldown > 0 ? 0.6 : 1 }}
                         >
                             <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
                             {reloadCooldown > 0 ? `${reloadCooldown}s` : '重新載入'}
@@ -459,7 +459,7 @@ export default function Dashboard() {
                         <button
                             onClick={() => void updatePrices()}
                             disabled={priceLoading || loading}
-                            style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '8px 14px', color: '#fff', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                            style={{ backgroundColor: 'var(--c-accent)', border: 'none', borderRadius: '8px', padding: '8px 14px', color: '#fff', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
                         >
                             <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {priceLoading ? '更新中...' : '更新現價'}
@@ -468,19 +468,19 @@ export default function Dashboard() {
                 </div>
 
                 {loading ? (
-                    <div style={{ textAlign: 'center', padding: '80px', color: '#8892a4' }}>載入中...</div>
+                    <div style={{ textAlign: 'center', padding: '80px', color: 'var(--c-muted)' }}>載入中...</div>
                 ) : (
                     <>
                         <div className="dash-stats">
                             {[
-                                { label: '總資產', value: `$${totalAssets.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#4f8ef7', icon: DollarSign },
-                                { label: '股票總市值', value: `$${totalMarketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#4f8ef7', icon: BarChart2 },
-                                { label: '可用現金', value: `$${totalCash.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#f5a623', icon: DollarSign },
+                                { label: '總資產', value: `$${totalAssets.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: DollarSign },
+                                { label: '股票總市值', value: `$${totalMarketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: BarChart2 },
+                                { label: '可用現金', value: `$${totalCash.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-warning)', icon: DollarSign },
                             ].map(({ label, value, color, icon: Icon }) => (
                                 <div key={label} style={card}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                         <div>
-                                            <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>{label}</div>
+                                            <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}</div>
                                             <div style={{ fontSize: 'clamp(16px, 2vw, 22px)', fontWeight: 700, color }}>{value}</div>
                                         </div>
                                         <Icon size={18} color={color} style={{ opacity: 0.5 }} />
@@ -491,7 +491,7 @@ export default function Dashboard() {
 
                         <div className="dash-stats">
                             {[
-                                { label: '股票總成本', value: `$${totalCost.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#8892a4' },
+                                { label: '股票總成本', value: `$${totalCost.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-muted)' },
                                 {
                                     label: unrealizedLabel,
                                     value: hasPrice
@@ -506,7 +506,7 @@ export default function Dashboard() {
                                 },
                             ].map(({ label, value, color }) => (
                                 <div key={label} style={card}>
-                                    <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>{label}</div>
+                                    <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}</div>
                                     <div style={{ fontSize: 'clamp(16px, 2vw, 20px)', fontWeight: 700, color }}>{value}</div>
                                 </div>
                             ))}
@@ -519,10 +519,10 @@ export default function Dashboard() {
                                     ...card,
                                     borderColor: marginRatioValue !== null && marginRatioValue < 130 ? 'rgba(255,87,87,0.5)'
                                         : marginRatioValue !== null && marginRatioValue < 160 ? 'rgba(245,166,35,0.4)'
-                                            : '#2e3349',
-                                    background: marginRatioValue !== null && marginRatioValue < 130 ? 'linear-gradient(135deg, #1a1d27 0%, rgba(255,87,87,0.06) 100%)'
-                                        : marginRatioValue !== null && marginRatioValue < 160 ? 'linear-gradient(135deg, #1a1d27 0%, rgba(245,166,35,0.05) 100%)'
-                                            : '#1a1d27'
+                                            : 'var(--c-border)',
+                                    background: marginRatioValue !== null && marginRatioValue < 130 ? 'linear-gradient(135deg, var(--c-sidebar) 0%, color-mix(in srgb, var(--c-danger) 6%, transparent) 100%)'
+                                        : marginRatioValue !== null && marginRatioValue < 160 ? 'linear-gradient(135deg, var(--c-sidebar) 0%, color-mix(in srgb, var(--c-warning) 5%, transparent) 100%)'
+                                            : 'var(--c-sidebar)'
                                 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
                                         {/* 左：主要數字 */}
@@ -531,7 +531,7 @@ export default function Dashboard() {
                                                 <TrendingDown size={20} color={marginRatioColor} />
                                             </div>
                                             <div>
-                                                <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>融資維持率</div>
+                                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '4px' }}>融資維持率</div>
                                                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
                                                     <span style={{ fontSize: 'clamp(22px, 3vw, 30px)', fontWeight: 700, color: marginRatioColor, letterSpacing: '-0.5px' }}>
                                                         {marginRatioValue !== null ? `${marginRatioValue.toFixed(1)}%` : '—'}
@@ -539,14 +539,14 @@ export default function Dashboard() {
                                                     {marginRatioValue !== null && (
                                                         <span style={{
                                                             fontSize: '12px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px',
-                                                            backgroundColor: marginRatioValue >= 160 ? 'rgba(0,200,150,0.12)' : marginRatioValue >= 130 ? 'rgba(245,166,35,0.12)' : 'rgba(255,87,87,0.12)',
+                                                            backgroundColor: marginRatioValue >= 160 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : marginRatioValue >= 130 ? 'color-mix(in srgb, var(--c-warning) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)',
                                                             color: marginRatioColor
                                                         }}>
                                                             {marginRatioValue >= 160 ? '✓ 安全' : marginRatioValue >= 130 ? '⚠ 留意' : '⚠ 危險'}
                                                         </span>
                                                     )}
                                                 </div>
-                                                <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '2px' }}>
+                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginTop: '2px' }}>
                                                     {!hasPrice ? '尚未更新現價，以買入成本估算' : '以最新現價計算'}
                                                 </div>
                                             </div>
@@ -555,15 +555,15 @@ export default function Dashboard() {
                                         {/* 右：融資明細 */}
                                         <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
                                             <div>
-                                                <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>融資股票市值</div>
-                                                <div style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>${marginStockMarketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>融資股票市值</div>
+                                                <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)' }}>${marginStockMarketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
                                             </div>
                                             <div>
-                                                <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>融資借款金額</div>
-                                                <div style={{ fontSize: '15px', fontWeight: 600, color: '#f5a623' }}>${totalMarginDebt.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>融資借款金額</div>
+                                                <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-warning)' }}>${totalMarginDebt.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
                                             </div>
                                             <div>
-                                                <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>融資部位數</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>融資部位數</div>
                                                 <div style={{ fontSize: '15px', fontWeight: 600, color: '#a78bfa' }}>{marginPositions.length} 檔</div>
                                             </div>
                                         </div>
@@ -572,13 +572,13 @@ export default function Dashboard() {
                                     {/* 進度條 */}
                                     {marginRatioValue !== null && (
                                         <div style={{ marginTop: '16px' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#8892a4', marginBottom: '4px' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--c-muted)', marginBottom: '4px' }}>
                                                 <span>斷頭線 120%</span>
                                                 <span>追繳線 130%</span>
                                                 <span>安全線 160%</span>
                                                 <span>目前 {marginRatioValue.toFixed(1)}%</span>
                                             </div>
-                                            <div style={{ height: '6px', backgroundColor: '#0f1117', borderRadius: '3px', overflow: 'hidden', position: 'relative' }}>
+                                            <div style={{ height: '6px', backgroundColor: 'var(--c-bg)', borderRadius: '3px', overflow: 'hidden', position: 'relative' }}>
                                                 {/* 底層色帶 */}
                                                 <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, rgba(255,87,87,0.3) 0%, rgba(255,87,87,0.3) 20%, rgba(245,166,35,0.3) 20%, rgba(245,166,35,0.3) 40%, rgba(0,200,150,0.2) 40%, rgba(0,200,150,0.2) 100%)' }} />
                                                 {/* 當前值指示 */}
@@ -594,14 +594,14 @@ export default function Dashboard() {
                                                 const h = holdings.find(h => h.code === m.code)
                                                 const mv = h ? (h.currentPrice !== null ? h.currentPrice * m.shares : m.marginCost) : m.marginCost
                                                 const ratio = m.marginAmount > 0 ? (mv / m.marginAmount) * 100 : 0
-                                                const rColor = ratio >= 160 ? '#00c896' : ratio >= 130 ? '#f5a623' : '#ff5757'
+                                                const rColor = ratio >= 160 ? 'var(--c-positive)' : ratio >= 130 ? 'var(--c-warning)' : 'var(--c-danger)'
                                                 return (
-                                                    <div key={m.code} style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '8px 12px', border: `1px solid ${rColor}28`, minWidth: '120px' }}>
+                                                    <div key={m.code} style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '8px 12px', border: `1px solid ${rColor}28`, minWidth: '120px' }}>
                                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                                                            <span style={{ color: '#4f8ef7', fontWeight: 700, fontSize: '13px' }}>{m.code}</span>
+                                                            <span style={{ color: 'var(--c-accent)', fontWeight: 700, fontSize: '13px' }}>{m.code}</span>
                                                             <span style={{ color: rColor, fontWeight: 600, fontSize: '12px' }}>{ratio.toFixed(0)}%</span>
                                                         </div>
-                                                        <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '2px' }}>{m.shares.toLocaleString()} 股</div>
+                                                        <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginTop: '2px' }}>{m.shares.toLocaleString()} 股</div>
                                                     </div>
                                                 )
                                             })}
@@ -610,16 +610,16 @@ export default function Dashboard() {
 
                                     {/* 危險警示 */}
                                     {marginRatioValue !== null && marginRatioValue < 130 && (
-                                        <div style={{ marginTop: '12px', padding: '8px 12px', backgroundColor: 'rgba(255,87,87,0.08)', border: '1px solid rgba(255,87,87,0.25)', borderRadius: '8px', fontSize: '12px', color: '#ff5757' }}>
+                                        <div style={{ marginTop: '12px', padding: '8px 12px', backgroundColor: 'rgba(255,87,87,0.08)', border: '1px solid rgba(255,87,87,0.25)', borderRadius: '8px', fontSize: '12px', color: 'var(--c-danger)' }}>
                                             ⚠️ 維持率低於 130%，請留意追繳風險！強制斷頭線為 120%。
                                         </div>
                                     )}
 
                                     {/* ── 加碼試算區塊 ── */}
-                                    <div style={{ marginTop: '14px', borderTop: '1px solid #2e3349', paddingTop: '14px' }}>
+                                    <div style={{ marginTop: '14px', borderTop: '1px solid var(--c-border)', paddingTop: '14px' }}>
                                         <button
                                             onClick={() => setSimOpen(v => !v)}
-                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#4f8ef7', fontSize: '12px', fontWeight: 600, padding: 0, display: 'flex', alignItems: 'center', gap: '5px' }}
+                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-accent)', fontSize: '12px', fontWeight: 600, padding: 0, display: 'flex', alignItems: 'center', gap: '5px' }}
                                         >
                                             <span style={{ fontSize: '14px' }}>{simOpen ? '▾' : '▸'}</span>
                                             加碼試算
@@ -634,57 +634,57 @@ export default function Dashboard() {
                                                         { label: '融資成數', value: simRatio, setter: setSimRatio, placeholder: '0.6', unit: '' },
                                                     ].map(({ label, value, setter, placeholder, unit }) => (
                                                         <div key={label}>
-                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>{label}</div>
+                                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>{label}</div>
                                                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                                 <input
                                                                     type="number"
                                                                     value={value}
                                                                     onChange={e => setter(e.target.value)}
                                                                     placeholder={placeholder}
-                                                                    style={{ width: '90px', padding: '6px 8px', backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '6px', color: '#e2e8f0', fontSize: '13px', outline: 'none' }}
+                                                                    style={{ width: '90px', padding: '6px 8px', backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '6px', color: 'var(--c-text)', fontSize: '13px', outline: 'none' }}
                                                                 />
-                                                                {unit && <span style={{ fontSize: '12px', color: '#8892a4' }}>{unit}</span>}
+                                                                {unit && <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>{unit}</span>}
                                                             </div>
                                                         </div>
                                                     ))}
                                                     <button
                                                         onClick={() => { setSimPrice(''); setSimShares(''); setSimRatio('0.6') }}
-                                                        style={{ padding: '6px 10px', backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '6px', color: '#8892a4', fontSize: '12px', cursor: 'pointer' }}
+                                                        style={{ padding: '6px 10px', backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '6px', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}
                                                     >清除</button>
                                                 </div>
 
                                                 {simResult ? (
                                                     <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '8px' }}>
-                                                        <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 12px', border: `1px solid ${simRatioColor}30` }}>
-                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>加碼後維持率</div>
+                                                        <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '10px 12px', border: `1px solid ${simRatioColor}30` }}>
+                                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>加碼後維持率</div>
                                                             <div style={{ fontSize: '18px', fontWeight: 700, color: simRatioColor }}>{simResult.newMarginRatio.toFixed(1)}%</div>
                                                             <div style={{ fontSize: '11px', marginTop: '3px', color: simRatioColor, fontWeight: 600 }}>
                                                                 {simResult.newMarginRatio >= 160 ? '✓ 安全' : simResult.newMarginRatio >= 130 ? '⚠ 留意' : '⚠ 危險'}
                                                             </div>
                                                         </div>
-                                                        <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 12px' }}>
-                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>較現在變化</div>
-                                                            <div style={{ fontSize: '16px', fontWeight: 700, color: simResult.newMarginRatio >= (marginRatioValue ?? 0) ? '#00c896' : '#ff5757' }}>
+                                                        <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '10px 12px' }}>
+                                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>較現在變化</div>
+                                                            <div style={{ fontSize: '16px', fontWeight: 700, color: simResult.newMarginRatio >= (marginRatioValue ?? 0) ? 'var(--c-positive)' : 'var(--c-danger)' }}>
                                                                 {simResult.newMarginRatio >= (marginRatioValue ?? 0) ? '+' : ''}{(simResult.newMarginRatio - (marginRatioValue ?? 0)).toFixed(1)}%
                                                             </div>
                                                         </div>
-                                                        <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 12px' }}>
-                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>新增借款</div>
-                                                            <div style={{ fontSize: '14px', fontWeight: 600, color: '#f5a623' }}>${simResult.addedDebt.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
+                                                        <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '10px 12px' }}>
+                                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>新增借款</div>
+                                                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-warning)' }}>${simResult.addedDebt.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
                                                         </div>
-                                                        <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 12px' }}>
-                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>需自備款</div>
-                                                            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>${simResult.addedEquity.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
+                                                        <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '10px 12px' }}>
+                                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>需自備款</div>
+                                                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>${simResult.addedEquity.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
                                                         </div>
-                                                        <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 12px' }}>
-                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>距追繳線(130%)緩衝</div>
-                                                            <div style={{ fontSize: '14px', fontWeight: 600, color: simResult.bufferTo130 >= 0 ? '#00c896' : '#ff5757' }}>
+                                                        <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '10px 12px' }}>
+                                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>距追繳線(130%)緩衝</div>
+                                                            <div style={{ fontSize: '14px', fontWeight: 600, color: simResult.bufferTo130 >= 0 ? 'var(--c-positive)' : 'var(--c-danger)' }}>
                                                                 {simResult.bufferTo130 >= 0 ? '+' : ''}${simResult.bufferTo130.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
                                                             </div>
                                                         </div>
-                                                        <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '10px 12px' }}>
-                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '4px' }}>距斷頭線(120%)緩衝</div>
-                                                            <div style={{ fontSize: '14px', fontWeight: 600, color: simResult.bufferTo120 >= 0 ? '#00c896' : '#ff5757' }}>
+                                                        <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '10px 12px' }}>
+                                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>距斷頭線(120%)緩衝</div>
+                                                            <div style={{ fontSize: '14px', fontWeight: 600, color: simResult.bufferTo120 >= 0 ? 'var(--c-positive)' : 'var(--c-danger)' }}>
                                                                 {simResult.bufferTo120 >= 0 ? '+' : ''}${simResult.bufferTo120.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
                                                             </div>
                                                         </div>
@@ -700,7 +700,7 @@ export default function Dashboard() {
                         )}
 
                         {hasPrice && holdingsWithoutPrice.length > 0 && (
-                            <div style={{ marginBottom: '12px', padding: '10px 14px', backgroundColor: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.25)', borderRadius: '8px', fontSize: '12px', color: '#f5a623' }}>
+                            <div style={{ marginBottom: '12px', padding: '10px 14px', backgroundColor: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.25)', borderRadius: '8px', fontSize: '12px', color: 'var(--c-warning)' }}>
                                 ⚠️ {holdingsWithoutPrice.length} 檔持倉（{holdingsWithoutPrice.map(h => h.code).join('、')}）尚未更新現價，市值以成本計算，未實現損益僅計算已有現價的持倉。
                             </div>
                         )}
@@ -709,9 +709,9 @@ export default function Dashboard() {
                         <div className="dash-pies">
                             {/* 個股分布 */}
                             <div style={card}>
-                                <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>資產分布（個股）</div>
+                                <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>資產分布（個股）</div>
                                 {pieData.length === 0 ? (
-                                    <div style={{ textAlign: 'center', padding: '40px', color: '#8892a4', fontSize: '13px' }}>尚無持倉</div>
+                                    <div style={{ textAlign: 'center', padding: '40px', color: 'var(--c-muted)', fontSize: '13px' }}>尚無持倉</div>
                                 ) : (
                                     <>
                                         <ResponsiveContainer width="100%" height={180}>
@@ -729,9 +729,9 @@ export default function Dashboard() {
                                                 <div key={item.name} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                         <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: item.fill, flexShrink: 0 }} />
-                                                        <span style={{ color: '#e2e8f0' }}>{item.name}</span>
+                                                        <span style={{ color: 'var(--c-text)' }}>{item.name}</span>
                                                     </div>
-                                                    <span style={{ color: '#8892a4' }}>{totalAssets > 0 ? ((item.value / totalAssets) * 100).toFixed(1) : 0}%</span>
+                                                    <span style={{ color: 'var(--c-muted)' }}>{totalAssets > 0 ? ((item.value / totalAssets) * 100).toFixed(1) : 0}%</span>
                                                 </div>
                                             ))}
                                         </div>
@@ -742,11 +742,11 @@ export default function Dashboard() {
                             {/* 族群分布 */}
                             <div style={card}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>族群佔比</div>
+                                    <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>族群佔比</div>
                                 </div>
                                 {!hasAnyGroup ? (
-                                    <div style={{ textAlign: 'center', padding: '40px 20px', color: '#8892a4', fontSize: '13px' }}>
-                                        <Tag size={28} color="#2e3349" style={{ marginBottom: '12px' }} />
+                                    <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--c-muted)', fontSize: '13px' }}>
+                                        <Tag size={28} color="var(--c-border)" style={{ marginBottom: '12px' }} />
                                         <p style={{ margin: '0 0 6px' }}>尚未設定族群標籤</p>
                                         <p style={{ margin: 0, fontSize: '12px' }}>
                                             前往
@@ -782,16 +782,16 @@ export default function Dashboard() {
                                                 <div key={item.name} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                         <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: item.fill, flexShrink: 0 }} />
-                                                        <span style={{ color: item.name === '未分類' ? '#8892a4' : '#e2e8f0' }}>{item.name}</span>
+                                                        <span style={{ color: item.name === '未分類' ? 'var(--c-muted)' : 'var(--c-text)' }}>{item.name}</span>
                                                     </div>
-                                                    <span style={{ color: '#8892a4' }}>
+                                                    <span style={{ color: 'var(--c-muted)' }}>
                                                         {totalAssets > 0 ? ((item.value / totalAssets) * 100).toFixed(1) : 0}%
                                                     </span>
                                                 </div>
                                             ))}
                                         </div>
                                         {ungroupedValue > 0 && (
-                                            <div style={{ marginTop: '10px', padding: '6px 10px', backgroundColor: 'rgba(167,139,250,0.07)', borderRadius: '6px', fontSize: '11px', color: '#8892a4', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <div style={{ marginTop: '10px', padding: '6px 10px', backgroundColor: 'rgba(167,139,250,0.07)', borderRadius: '6px', fontSize: '11px', color: 'var(--c-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                 <Tag size={11} color="#a78bfa" />
                                                 有 {holdings.filter(h => !stockGroups[h.code]).length} 檔尚未設定族群，已歸入「未分類」
                                             </div>
@@ -803,9 +803,9 @@ export default function Dashboard() {
 
                         {/* 目前持倉表格 */}
                         <div style={{ ...card, marginBottom: '0' }}>
-                            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>目前持倉</div>
+                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>目前持倉</div>
                             {holdings.length === 0 ? (
-                                <div style={{ textAlign: 'center', padding: '40px', color: '#8892a4', fontSize: '13px' }}>尚無持倉資料</div>
+                                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--c-muted)', fontSize: '13px' }}>尚無持倉資料</div>
                             ) : (
                                 <div style={{ overflowX: 'auto' }}>
                                     <table className="h-table">
@@ -815,25 +815,25 @@ export default function Dashboard() {
                                         <tbody>
                                             {holdings.map(h => (
                                                 <tr key={h.code}>
-                                                    <td style={{ color: '#4f8ef7', fontWeight: 700 }}>{h.code}</td>
+                                                    <td style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{h.code}</td>
                                                     <td>{h.name}</td>
                                                     <td>{h.shares.toLocaleString()}</td>
                                                     <td>{h.avgCost.toFixed(2)}</td>
-                                                    <td style={{ color: h.currentPrice === null ? '#8892a4' : h.currentPrice > h.avgCost ? '#00c896' : '#ff5757', fontWeight: 600 }}>
+                                                    <td style={{ color: h.currentPrice === null ? 'var(--c-muted)' : h.currentPrice > h.avgCost ? 'var(--c-positive)' : 'var(--c-danger)', fontWeight: 600 }}>
                                                         {h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)}
                                                     </td>
-                                                    <td style={{ color: h.currentPrice === null ? '#8892a4' : pnlColor(h.unrealizedPnL), fontWeight: 600 }}>
+                                                    <td style={{ color: h.currentPrice === null ? 'var(--c-muted)' : pnlColor(h.unrealizedPnL), fontWeight: 600 }}>
                                                         {h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`}
                                                     </td>
                                                     <td>
                                                         {h.currentPrice === null
-                                                            ? <span style={{ color: '#8892a4', fontSize: '12px' }}>點「更新現價」</span>
-                                                            : <span style={{ backgroundColor: h.returnRate >= 0 ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)', color: pnlColor(h.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>
+                                                            ? <span style={{ color: 'var(--c-muted)', fontSize: '12px' }}>點「更新現價」</span>
+                                                            : <span style={{ backgroundColor: h.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(h.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>
                                                                 {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
                                                             </span>
                                                         }
                                                     </td>
-                                                    <td style={{ color: '#8892a4' }}>{h.ratio.toFixed(1)}%</td>
+                                                    <td style={{ color: 'var(--c-muted)' }}>{h.ratio.toFixed(1)}%</td>
                                                     <td>
                                                         {stockGroups[h.code] ? (
                                                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.12)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
@@ -859,26 +859,26 @@ export default function Dashboard() {
                             <div style={card}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <Calendar size={15} color="#4f8ef7" />
-                                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>近 14 天行程</span>
+                                        <Calendar size={15} color="var(--c-accent)" />
+                                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>近 14 天行程</span>
                                     </div>
                                     <button onClick={() => navigate('/calendar')}
-                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#4f8ef7', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-accent)', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                         <ExternalLink size={12} />前往月曆
                                     </button>
                                 </div>
 
                                 {upcomingEvents.length === 0 ? (
-                                    <div style={{ textAlign: 'center', padding: '32px 0', color: '#8892a4', fontSize: '13px' }}>近 14 天無行程</div>
+                                    <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--c-muted)', fontSize: '13px' }}>近 14 天無行程</div>
                                 ) : (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '300px', overflowY: 'auto' }}>
                                         {upcomingEvents.map(ev => {
                                             const isToday = ev.date === todayStr
                                             return (
-                                                <div key={ev.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', backgroundColor: '#0f1117', borderRadius: '8px', borderLeft: `3px solid ${isToday ? '#f5a623' : '#4f8ef7'}` }}>
+                                                <div key={ev.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', borderLeft: `3px solid ${isToday ? 'var(--c-warning)' : 'var(--c-accent)'}` }}>
                                                     <div style={{ flex: 1, minWidth: 0 }}>
-                                                        <div style={{ fontSize: '13px', color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.title}</div>
-                                                        <div style={{ fontSize: '11px', color: isToday ? '#f5a623' : '#4f8ef7', marginTop: '2px' }}>{formatEventDate(ev.date)}</div>
+                                                        <div style={{ fontSize: '13px', color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.title}</div>
+                                                        <div style={{ fontSize: '11px', color: isToday ? 'var(--c-warning)' : 'var(--c-accent)', marginTop: '2px' }}>{formatEventDate(ev.date)}</div>
                                                     </div>
                                                 </div>
                                             )
@@ -891,40 +891,40 @@ export default function Dashboard() {
                             <div style={card}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <CheckSquare size={15} color="#00c896" />
-                                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>待辦任務</span>
+                                        <CheckSquare size={15} color="var(--c-positive)" />
+                                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>待辦任務</span>
                                         {tasks.length > 0 && (
-                                            <span style={{ backgroundColor: 'rgba(0,200,150,0.15)', color: '#00c896', borderRadius: '20px', padding: '1px 8px', fontSize: '11px', fontWeight: 600 }}>
+                                            <span style={{ backgroundColor: 'color-mix(in srgb, var(--c-positive) 15%, transparent)', color: 'var(--c-positive)', borderRadius: '20px', padding: '1px 8px', fontSize: '11px', fontWeight: 600 }}>
                                                 {tasks.length}
                                             </span>
                                         )}
                                     </div>
                                     <button onClick={() => navigate('/calendar/tasks')}
-                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#00c896', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-positive)', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                         <ExternalLink size={12} />任務管理
                                     </button>
                                 </div>
 
                                 {tasks.length === 0 ? (
-                                    <div style={{ textAlign: 'center', padding: '32px 0', color: '#8892a4', fontSize: '13px' }}>🎉 沒有待辦任務！</div>
+                                    <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--c-muted)', fontSize: '13px' }}>🎉 沒有待辦任務！</div>
                                 ) : (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '300px', overflowY: 'auto' }}>
                                         {overdueTasks.length > 0 && (
                                             <>
-                                                <div style={{ fontSize: '11px', color: '#ff5757', fontWeight: 600, padding: '4px 0 2px' }}>⚠️ 逾期</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--c-danger)', fontWeight: 600, padding: '4px 0 2px' }}>⚠️ 逾期</div>
                                                 {overdueTasks.map(t => <TaskRow key={t.id} task={t} todayStr={todayStr} />)}
                                             </>
                                         )}
                                         {todayTasks.length > 0 && (
                                             <>
-                                                <div style={{ fontSize: '11px', color: '#f5a623', fontWeight: 600, padding: '4px 0 2px' }}>今日到期</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--c-warning)', fontWeight: 600, padding: '4px 0 2px' }}>今日到期</div>
                                                 {todayTasks.map(t => <TaskRow key={t.id} task={t} todayStr={todayStr} />)}
                                             </>
                                         )}
                                         {futureTasks.length > 0 && (
                                             <>
                                                 {(overdueTasks.length > 0 || todayTasks.length > 0) && (
-                                                    <div style={{ fontSize: '11px', color: '#8892a4', fontWeight: 600, padding: '4px 0 2px' }}>其他</div>
+                                                    <div style={{ fontSize: '11px', color: 'var(--c-muted)', fontWeight: 600, padding: '4px 0 2px' }}>其他</div>
                                                 )}
                                                 {futureTasks.map(t => <TaskRow key={t.id} task={t} todayStr={todayStr} />)}
                                             </>
@@ -949,15 +949,15 @@ function TaskRow({ task, todayStr }: {
     const isOverdue = task.dueDate && task.dueDate < todayStr
     return (
         <div className="task-row"
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', backgroundColor: '#0f1117', borderRadius: '8px', cursor: 'pointer' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', cursor: 'pointer' }}
             onClick={() => navigate('/calendar/tasks')}
             title="點擊前往任務管理頁面"
         >
             <div style={{ width: '16px', height: '16px', border: `1.5px solid ${PRIORITY_COLORS[task.priority]}`, borderRadius: '4px', flexShrink: 0 }} />
-            <span style={{ flex: 1, fontSize: '13px', color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</span>
+            <span style={{ flex: 1, fontSize: '13px', color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</span>
             <div style={{ display: 'flex', gap: '4px', flexShrink: 0, alignItems: 'center' }}>
                 {task.dueDate && (
-                    <span style={{ fontSize: '11px', color: isOverdue ? '#ff5757' : '#8892a4' }}>
+                    <span style={{ fontSize: '11px', color: isOverdue ? 'var(--c-danger)' : 'var(--c-muted)' }}>
                         {task.dueDate.slice(5).replace('-', '/')}{isOverdue ? ' ⚠️' : ''}
                     </span>
                 )}

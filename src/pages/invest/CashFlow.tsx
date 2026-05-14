@@ -13,9 +13,9 @@ interface CashRecord {
 }
 
 const empty: CashRecord = { date: new Date().toISOString().split('T')[0], type: 'in', amount: 0, note: '' }
-const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
+const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }
 const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 export default function CashFlow() {
@@ -65,21 +65,21 @@ export default function CashFlow() {
         .table-wrap { overflow-x: auto; }
         .cash-table { width: 100%; border-collapse: collapse; font-size: 14px; }
         .cash-table th, .cash-table td { padding: 10px 12px; text-align: left; }
-        .cash-table th { color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; }
-        .cash-table td { border-bottom: 1px solid #2e3349; color: #e2e8f0; }
+        .cash-table th { color: var(--c-muted); font-weight: 500; border-bottom: 1px solid var(--c-border); }
+        .cash-table td { border-bottom: 1px solid var(--c-border); color: var(--c-text); }
       `}</style>
 
       <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
         <div style={{ marginBottom: '24px' }}>
-          <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>出入金</h1>
-          <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>共 {records.length} 筆紀錄</p>
+          <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>出入金</h1>
+          <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>共 {records.length} 筆紀錄</p>
         </div>
 
         {/* 統計卡片 */}
         <div className="cash-stats">
-          {[{ label: '總入金', value: totalIn, color: '#00c896' }, { label: '總出金', value: totalOut, color: '#ff5757' }, { label: '淨值', value: net, color: net >= 0 ? '#00c896' : '#ff5757' }].map(({ label, value, color }) => (
+          {[{ label: '總入金', value: totalIn, color: 'var(--c-positive)' }, { label: '總出金', value: totalOut, color: 'var(--c-danger)' }, { label: '淨值', value: net, color: net >= 0 ? 'var(--c-positive)' : 'var(--c-danger)' }].map(({ label, value, color }) => (
             <div key={label} style={card}>
-              <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>{label}</div>
+              <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}</div>
               <div style={{ fontSize: 'clamp(18px, 2vw, 22px)', fontWeight: 700, color }}>{value.toLocaleString()}</div>
             </div>
           ))}
@@ -87,7 +87,7 @@ export default function CashFlow() {
 
         {/* 表單 */}
         <div style={{ ...card, marginBottom: '20px' }}>
-          <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>
             {editingId ? '✏️ 編輯紀錄' : '➕ 新增紀錄'}
           </div>
           <div className="cash-form-grid">
@@ -102,8 +102,8 @@ export default function CashFlow() {
             <div><label style={lbl}>備註</label><input style={inp} placeholder="選填" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></div>
           </div>
           <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
-            {editingId && <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消編輯</button>}
-            <button style={btn('#4f8ef7')} onClick={handleSave} disabled={loading}>
+            {editingId && <button style={btn('var(--c-border)')} onClick={handleCancel}><X size={14} />取消編輯</button>}
+            <button style={btn('var(--c-accent)')} onClick={handleSave} disabled={loading}>
               <Check size={14} />{loading ? '儲存中...' : editingId ? '確認更新' : '確認新增'}
             </button>
           </div>
@@ -112,7 +112,7 @@ export default function CashFlow() {
         {/* 列表 */}
         <div style={card}>
           {records.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}><p>還沒有出入金紀錄，請在上方新增</p></div>
+            <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}><p>還沒有出入金紀錄，請在上方新增</p></div>
           ) : (
             <div className="table-wrap">
               <table className="cash-table">
@@ -123,13 +123,13 @@ export default function CashFlow() {
                   {records.map(r => (
                     <tr key={r.id} style={{ backgroundColor: editingId === r.id ? 'rgba(79,142,247,0.06)' : 'transparent' }}>
                       <td>{r.date}</td>
-                      <td><span style={{ backgroundColor: r.type === 'in' ? 'rgba(0,200,150,0.15)' : 'rgba(255,87,87,0.15)', color: r.type === 'in' ? '#00c896' : '#ff5757', padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>{r.type === 'in' ? '入金' : '出金'}</span></td>
-                      <td style={{ color: r.type === 'in' ? '#00c896' : '#ff5757', fontWeight: 600 }}>{r.amount.toLocaleString()}</td>
-                      <td style={{ color: '#8892a4' }}>{r.note}</td>
+                      <td><span style={{ backgroundColor: r.type === 'in' ? 'color-mix(in srgb, var(--c-positive) 15%, transparent)' : 'rgba(255,87,87,0.15)', color: r.type === 'in' ? 'var(--c-positive)' : 'var(--c-danger)', padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>{r.type === 'in' ? '入金' : '出金'}</span></td>
+                      <td style={{ color: r.type === 'in' ? 'var(--c-positive)' : 'var(--c-danger)', fontWeight: 600 }}>{r.amount.toLocaleString()}</td>
+                      <td style={{ color: 'var(--c-muted)' }}>{r.note}</td>
                       <td>
                         <div style={{ display: 'flex', gap: '8px' }}>
-                          <button onClick={() => handleEdit(r)} style={{ background: 'none', border: 'none', color: '#4f8ef7', cursor: 'pointer' }}><Pencil size={15} /></button>
-                          <button onClick={() => handleDelete(r.id!)} style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer' }}><Trash2 size={15} /></button>
+                          <button onClick={() => handleEdit(r)} style={{ background: 'none', border: 'none', color: 'var(--c-accent)', cursor: 'pointer' }}><Pencil size={15} /></button>
+                          <button onClick={() => handleDelete(r.id!)} style={{ background: 'none', border: 'none', color: 'var(--c-danger)', cursor: 'pointer' }}><Trash2 size={15} /></button>
                         </div>
                       </td>
                     </tr>

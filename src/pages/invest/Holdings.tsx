@@ -62,17 +62,17 @@ function GroupCell({
                     onKeyDown={handleKeyDown}
                     list={`group-list-${code}`}
                     placeholder="輸入或選擇族群"
-                    style={{ backgroundColor: '#0f1117', border: '1px solid #4f8ef7', borderRadius: '6px', padding: '4px 8px', color: '#e2e8f0', fontSize: '12px', width: '100%', outline: 'none' }}
+                    style={{ backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-accent)', borderRadius: '6px', padding: '4px 8px', color: 'var(--c-text)', fontSize: '12px', width: '100%', outline: 'none' }}
                 />
                 <datalist id={`group-list-${code}`}>
                     {suggestions.map(s => <option key={s} value={s} />)}
                 </datalist>
             </div>
-            <button onClick={handleSave} style={{ background: '#00c896', border: 'none', borderRadius: '4px', padding: '4px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="儲存">
+            <button onClick={handleSave} style={{ background: 'var(--c-positive)', border: 'none', borderRadius: '4px', padding: '4px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="儲存">
                 <Check size={12} color="#fff" />
             </button>
-            <button onClick={() => setEditing(false)} style={{ background: '#2e3349', border: 'none', borderRadius: '4px', padding: '4px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="取消">
-                <X size={12} color="#8892a4" />
+            <button onClick={() => setEditing(false)} style={{ background: 'var(--c-border)', border: 'none', borderRadius: '4px', padding: '4px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="取消">
+                <X size={12} color="var(--c-muted)" />
             </button>
         </div>
     )
@@ -160,8 +160,8 @@ export default function Holdings() {
     const totalPnL = holdings.reduce((s, h) => s + h.unrealizedPnL, 0)
     const totalReturn = totalCost > 0 ? (totalPnL / totalCost) * 100 : 0
     const hasPrice = holdings.some(h => h.currentPrice !== null)
-    const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
-    const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
+    const pnlColor = (v: number) => v >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
+    const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
     const allGroups = Array.from(new Set(Object.values(stockGroups).filter(Boolean)))
 
     return (
@@ -173,8 +173,8 @@ export default function Holdings() {
         .table-wrap { overflow-x: auto; }
         .holdings-table { width: 100%; border-collapse: collapse; font-size: 14px; }
         .holdings-table th, .holdings-table td { padding: 12px 14px; text-align: left; white-space: nowrap; }
-        .holdings-table th { color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; font-size: 13px; }
-        .holdings-table td { border-bottom: 1px solid #2e3349; color: #e2e8f0; }
+        .holdings-table th { color: var(--c-muted); font-weight: 500; border-bottom: 1px solid var(--c-border); font-size: 13px; }
+        .holdings-table td { border-bottom: 1px solid var(--c-border); color: var(--c-text); }
         .holdings-table tr:hover td { background-color: rgba(79,142,247,0.04); }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
@@ -182,18 +182,18 @@ export default function Holdings() {
             <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '8px' }}>
                     <div>
-                        <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>股票持倉</h1>
-                        <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>
+                        <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>股票持倉</h1>
+                        <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
                             {lastUpdated ? `現價更新：${lastUpdated}` : '尚未更新現價，請點「更新現價」'}
                             {groupSaving && <span style={{ marginLeft: '8px', color: '#a78bfa' }}>· 族群儲存中...</span>}
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
-                        <button onClick={load} disabled={loading} style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 14px', color: '#e2e8f0', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <button onClick={load} disabled={loading} style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 14px', color: 'var(--c-text)', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
                             {loading ? '載入中...' : '重新載入'}
                         </button>
-                        <button onClick={handleUpdatePrices} disabled={priceLoading || loading} style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '8px 14px', color: '#fff', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <button onClick={handleUpdatePrices} disabled={priceLoading || loading} style={{ backgroundColor: 'var(--c-accent)', border: 'none', borderRadius: '8px', padding: '8px 14px', color: '#fff', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {priceLoading ? '更新中...' : '更新現價'}
                         </button>
@@ -202,13 +202,13 @@ export default function Holdings() {
 
                 <div className="holdings-stats">
                     {[
-                        { label: '持倉總市值', value: totalMarketValue, color: '#4f8ef7', fmt: (v: number) => `$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
-                        { label: '持倉總成本', value: totalCost, color: '#8892a4', fmt: (v: number) => `$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
+                        { label: '持倉總市值', value: totalMarketValue, color: 'var(--c-accent)', fmt: (v: number) => `$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
+                        { label: '持倉總成本', value: totalCost, color: 'var(--c-muted)', fmt: (v: number) => `$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
                         { label: '未實現損益', value: totalPnL, color: pnlColor(totalPnL), fmt: (v: number) => hasPrice ? `${v >= 0 ? '+' : ''}$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` : '—' },
                         { label: '整體報酬率', value: totalReturn, color: pnlColor(totalReturn), fmt: (v: number) => hasPrice ? `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` : '—' },
                     ].map(({ label, value, color, fmt }) => (
                         <div key={label} style={card}>
-                            <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>{label}</div>
+                            <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}</div>
                             <div style={{ fontSize: 'clamp(16px, 2vw, 22px)', fontWeight: 700, color, display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 {fmt(value)}
                                 {label === '未實現損益' && hasPrice && (value >= 0 ? <TrendingUp size={16} /> : <TrendingDown size={16} />)}
@@ -219,9 +219,9 @@ export default function Holdings() {
 
                 <div style={card}>
                     {loading ? (
-                        <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div>
+                        <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>載入中...</div>
                     ) : holdings.length === 0 ? (
-                        <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>
+                        <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>
                             <p style={{ fontSize: '15px' }}>目前沒有持倉</p>
                             <p style={{ fontSize: '13px', marginTop: '8px' }}>請先在買賣紀錄新增買入交易</p>
                         </div>
@@ -238,25 +238,25 @@ export default function Holdings() {
                                 <tbody>
                                     {holdings.map(h => (
                                         <tr key={h.code}>
-                                            <td style={{ color: '#4f8ef7', fontWeight: 700 }}>{h.code}</td>
+                                            <td style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{h.code}</td>
                                             <td>{h.name}</td>
                                             <td>{h.shares.toLocaleString()}</td>
                                             <td>{h.avgCost.toFixed(2)}</td>
-                                            <td style={{ color: h.currentPrice === null ? '#8892a4' : h.currentPrice > h.avgCost ? '#00c896' : '#ff5757', fontWeight: 600 }}>
+                                            <td style={{ color: h.currentPrice === null ? 'var(--c-muted)' : h.currentPrice > h.avgCost ? 'var(--c-positive)' : 'var(--c-danger)', fontWeight: 600 }}>
                                                 {h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)}
                                             </td>
                                             <td>{h.totalCost.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
-                                            <td style={{ color: '#4f8ef7' }}>{h.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                                            <td style={{ color: 'var(--c-accent)' }}>{h.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
                                             <td>
-                                                <span style={{ color: h.currentPrice === null ? '#8892a4' : pnlColor(h.unrealizedPnL), fontWeight: 600 }}>
+                                                <span style={{ color: h.currentPrice === null ? 'var(--c-muted)' : pnlColor(h.unrealizedPnL), fontWeight: 600 }}>
                                                     {h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`}
                                                 </span>
                                             </td>
                                             <td>
                                                 {h.currentPrice === null ? (
-                                                    <span style={{ color: '#8892a4', fontSize: '12px' }}>請更新現價</span>
+                                                    <span style={{ color: 'var(--c-muted)', fontSize: '12px' }}>請更新現價</span>
                                                 ) : (
-                                                    <span style={{ backgroundColor: h.returnRate >= 0 ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)', color: pnlColor(h.returnRate), padding: '3px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>
+                                                    <span style={{ backgroundColor: h.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(h.returnRate), padding: '3px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>
                                                         {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
                                                     </span>
                                                 )}

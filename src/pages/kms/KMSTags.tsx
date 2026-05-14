@@ -10,8 +10,8 @@ interface TagInfo {
     children: TagInfo[]
 }
 
-const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '6px 10px', color: '#e2e8f0', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }
+const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '6px 10px', color: 'var(--c-text)', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }
 
 const TAG_ORDER_DOC = 'tagOrder'
 
@@ -226,31 +226,31 @@ export default function KMSTags() {
     return (
         <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '900px', margin: '0 auto' }}>
             <div style={{ marginBottom: '24px' }}>
-                <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>標籤管理</h1>
-                <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>共 {totalTags} 個標籤・{totalNotes} 則筆記・可拖曳或點擊 ↑↓ 自訂排序</p>
+                <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>標籤管理</h1>
+                <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>共 {totalTags} 個標籤・{totalNotes} 則筆記・可拖曳或點擊 ↑↓ 自訂排序</p>
             </div>
 
             {msg && (
-                <div style={{ backgroundColor: 'rgba(0,200,150,0.1)', border: '1px solid rgba(0,200,150,0.3)', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', color: '#00c896', fontSize: '13px' }}>
+                <div style={{ backgroundColor: 'rgba(0,200,150,0.1)', border: '1px solid rgba(0,200,150,0.3)', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', color: 'var(--c-positive)', fontSize: '13px' }}>
                     {msg}
                 </div>
             )}
 
             <div style={card}>
                 {loading ? (
-                    <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div>
+                    <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>載入中...</div>
                 ) : tagTree.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>
+                    <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>
                         <p>還沒有標籤</p>
                         <p style={{ fontSize: '13px', marginTop: '8px' }}>在知識庫新增筆記並加上標籤後會顯示在這裡</p>
                     </div>
                 ) : (
                     <div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '24px 1fr 60px auto', gap: '12px', padding: '8px 12px', borderBottom: '1px solid #2e3349', marginBottom: '4px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '24px 1fr 60px auto', gap: '12px', padding: '8px 12px', borderBottom: '1px solid var(--c-border)', marginBottom: '4px' }}>
                             <span />
-                            <span style={{ fontSize: '12px', color: '#8892a4', fontWeight: 500 }}>標籤名稱</span>
-                            <span style={{ fontSize: '12px', color: '#8892a4', fontWeight: 500, textAlign: 'center' }}>筆記數</span>
-                            <span style={{ fontSize: '12px', color: '#8892a4', fontWeight: 500 }}>操作</span>
+                            <span style={{ fontSize: '12px', color: 'var(--c-muted)', fontWeight: 500 }}>標籤名稱</span>
+                            <span style={{ fontSize: '12px', color: 'var(--c-muted)', fontWeight: 500, textAlign: 'center' }}>筆記數</span>
+                            <span style={{ fontSize: '12px', color: 'var(--c-muted)', fontWeight: 500 }}>操作</span>
                         </div>
 
                         {tagTree.map((parent, pIdx) => (
@@ -260,7 +260,7 @@ export default function KMSTags() {
                                 onDragOver={e => handleDragOver(e, parent.name)}
                                 onDrop={() => handleDrop(parent.name)}
                                 onDragEnd={() => { setDragParent(null); setDragOver(null) }}
-                                style={{ opacity: dragParent === parent.name ? 0.5 : 1, outline: dragOver === parent.name && dragParent !== parent.name ? '2px dashed #4f8ef7' : 'none', borderRadius: '8px' }}
+                                style={{ opacity: dragParent === parent.name ? 0.5 : 1, outline: dragOver === parent.name && dragParent !== parent.name ? '2px dashed var(--c-accent)' : 'none', borderRadius: '8px' }}
                             >
                                 <div style={{ display: 'grid', gridTemplateColumns: '24px 1fr 60px auto', gap: '12px', padding: '10px 12px', borderRadius: '8px', alignItems: 'center', backgroundColor: 'rgba(245,166,35,0.04)', marginBottom: '2px' }}>
                                     <div style={{ color: '#4a5568', cursor: 'grab', display: 'flex', alignItems: 'center' }}>
@@ -269,10 +269,10 @@ export default function KMSTags() {
 
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                         {parent.children.length > 0 ? (
-                                            <button onClick={() => toggleParent(parent.name)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', padding: 0, color: '#f5a623' }}>
+                                            <button onClick={() => toggleParent(parent.name)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', padding: 0, color: 'var(--c-warning)' }}>
                                                 {expandedParents.has(parent.name) ? <FolderOpen size={15} /> : <FolderOpen size={15} style={{ opacity: 0.6 }} />}
                                             </button>
-                                        ) : <Tag size={13} color="#8892a4" />}
+                                        ) : <Tag size={13} color="var(--c-muted)" />}
 
                                         {editingTag === parent.name ? (
                                             <div style={{ display: 'flex', gap: '6px', flex: 1 }}>
@@ -280,37 +280,37 @@ export default function KMSTags() {
                                                     onKeyDown={e => { if (e.key === 'Enter') handleRename(parent.name); if (e.key === 'Escape') setEditingTag(null) }}
                                                     autoFocus />
                                                 <button onClick={() => handleRename(parent.name)} disabled={saving}
-                                                    style={{ background: 'none', border: 'none', color: '#00c896', cursor: 'pointer' }}><Check size={15} /></button>
+                                                    style={{ background: 'none', border: 'none', color: 'var(--c-positive)', cursor: 'pointer' }}><Check size={15} /></button>
                                                 <button onClick={() => setEditingTag(null)}
-                                                    style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={15} /></button>
+                                                    style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={15} /></button>
                                             </div>
                                         ) : (
-                                            <span style={{ fontSize: '14px', color: '#e2e8f0', fontWeight: 600 }}>{parent.name}</span>
+                                            <span style={{ fontSize: '14px', color: 'var(--c-text)', fontWeight: 600 }}>{parent.name}</span>
                                         )}
 
                                         {parent.children.length > 0 && (
                                             <button onClick={() => toggleParent(parent.name)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex' }}>
-                                                <ChevronRight size={13} color="#8892a4" style={{ transform: expandedParents.has(parent.name) ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+                                                <ChevronRight size={13} color="var(--c-muted)" style={{ transform: expandedParents.has(parent.name) ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
                                             </button>
                                         )}
                                     </div>
 
-                                    <span style={{ fontSize: '13px', color: '#8892a4', textAlign: 'center' }}>
+                                    <span style={{ fontSize: '13px', color: 'var(--c-muted)', textAlign: 'center' }}>
                                         {parent.children.length > 0 ? parent.children.reduce((s, c) => s + c.count, 0) : parent.count}
                                     </span>
 
                                     <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                                         <button onClick={() => moveParent(parent.name, -1)} disabled={pIdx === 0}
-                                            title="上移" style={{ background: 'none', border: 'none', color: pIdx === 0 ? '#2e3349' : '#8892a4', cursor: pIdx === 0 ? 'default' : 'pointer', padding: '2px', display: 'flex' }}>
+                                            title="上移" style={{ background: 'none', border: 'none', color: pIdx === 0 ? 'var(--c-border)' : 'var(--c-muted)', cursor: pIdx === 0 ? 'default' : 'pointer', padding: '2px', display: 'flex' }}>
                                             <ChevronUp size={14} />
                                         </button>
                                         <button onClick={() => moveParent(parent.name, 1)} disabled={pIdx === tagTree.length - 1}
-                                            title="下移" style={{ background: 'none', border: 'none', color: pIdx === tagTree.length - 1 ? '#2e3349' : '#8892a4', cursor: pIdx === tagTree.length - 1 ? 'default' : 'pointer', padding: '2px', display: 'flex' }}>
+                                            title="下移" style={{ background: 'none', border: 'none', color: pIdx === tagTree.length - 1 ? 'var(--c-border)' : 'var(--c-muted)', cursor: pIdx === tagTree.length - 1 ? 'default' : 'pointer', padding: '2px', display: 'flex' }}>
                                             <ChevronDown size={14} />
                                         </button>
                                         {editingTag !== parent.name && (
                                             <button onClick={() => { setEditingTag(parent.name); setEditValue(parent.name) }}
-                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'transparent', border: '1px solid #2e3349', borderRadius: '6px', padding: '4px 10px', color: '#8892a4', fontSize: '12px', cursor: 'pointer' }}>
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'transparent', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '4px 10px', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}>
                                                 <Pencil size={12} />重新命名
                                             </button>
                                         )}
@@ -321,34 +321,34 @@ export default function KMSTags() {
                                     <div key={child.name} style={{ display: 'grid', gridTemplateColumns: '24px 1fr 60px auto', gap: '12px', padding: '8px 12px 8px 36px', borderRadius: '8px', alignItems: 'center', marginBottom: '2px' }}>
                                         <div />
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <ChevronRight size={11} color="#8892a4" style={{ opacity: 0.4 }} />
+                                            <ChevronRight size={11} color="var(--c-muted)" style={{ opacity: 0.4 }} />
                                             {editingTag === child.name ? (
                                                 <div style={{ display: 'flex', gap: '6px', flex: 1 }}>
                                                     <input style={{ ...inp, flex: 1 }} value={editValue} onChange={e => setEditValue(e.target.value)}
                                                         onKeyDown={e => { if (e.key === 'Enter') handleRename(child.name); if (e.key === 'Escape') setEditingTag(null) }}
                                                         autoFocus />
                                                     <button onClick={() => handleRename(child.name)} disabled={saving}
-                                                        style={{ background: 'none', border: 'none', color: '#00c896', cursor: 'pointer' }}><Check size={15} /></button>
+                                                        style={{ background: 'none', border: 'none', color: 'var(--c-positive)', cursor: 'pointer' }}><Check size={15} /></button>
                                                     <button onClick={() => setEditingTag(null)}
-                                                        style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={15} /></button>
+                                                        style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={15} /></button>
                                                 </div>
                                             ) : (
-                                                <span style={{ fontSize: '13px', color: '#8892a4' }}>{child.name.split('/').slice(1).join('/')}</span>
+                                                <span style={{ fontSize: '13px', color: 'var(--c-muted)' }}>{child.name.split('/').slice(1).join('/')}</span>
                                             )}
                                         </div>
-                                        <span style={{ fontSize: '13px', color: '#8892a4', textAlign: 'center' }}>{child.count}</span>
+                                        <span style={{ fontSize: '13px', color: 'var(--c-muted)', textAlign: 'center' }}>{child.count}</span>
                                         <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                                             <button onClick={() => moveChild(parent.name, child.name, -1)} disabled={cIdx === 0}
-                                                title="上移" style={{ background: 'none', border: 'none', color: cIdx === 0 ? '#2e3349' : '#8892a4', cursor: cIdx === 0 ? 'default' : 'pointer', padding: '2px', display: 'flex' }}>
+                                                title="上移" style={{ background: 'none', border: 'none', color: cIdx === 0 ? 'var(--c-border)' : 'var(--c-muted)', cursor: cIdx === 0 ? 'default' : 'pointer', padding: '2px', display: 'flex' }}>
                                                 <ChevronUp size={14} />
                                             </button>
                                             <button onClick={() => moveChild(parent.name, child.name, 1)} disabled={cIdx === parent.children.length - 1}
-                                                title="下移" style={{ background: 'none', border: 'none', color: cIdx === parent.children.length - 1 ? '#2e3349' : '#8892a4', cursor: cIdx === parent.children.length - 1 ? 'default' : 'pointer', padding: '2px', display: 'flex' }}>
+                                                title="下移" style={{ background: 'none', border: 'none', color: cIdx === parent.children.length - 1 ? 'var(--c-border)' : 'var(--c-muted)', cursor: cIdx === parent.children.length - 1 ? 'default' : 'pointer', padding: '2px', display: 'flex' }}>
                                                 <ChevronDown size={14} />
                                             </button>
                                             {editingTag !== child.name && (
                                                 <button onClick={() => { setEditingTag(child.name); setEditValue(child.name) }}
-                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'transparent', border: '1px solid #2e3349', borderRadius: '6px', padding: '4px 10px', color: '#8892a4', fontSize: '12px', cursor: 'pointer' }}>
+                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'transparent', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '4px 10px', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}>
                                                     <Pencil size={12} />重新命名
                                                 </button>
                                             )}

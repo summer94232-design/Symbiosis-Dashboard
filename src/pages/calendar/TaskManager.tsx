@@ -29,14 +29,14 @@ interface Project {
     createdAt: string
 }
 
-const PRIORITY_COLORS = { high: '#ff5757', medium: '#f5a623', low: '#00c896' }
+const PRIORITY_COLORS = { high: 'var(--c-danger)', medium: 'var(--c-warning)', low: 'var(--c-positive)' }
 const PRIORITY_LABELS = { high: '高', medium: '中', low: '低' }
-const PROJECT_COLORS = ['#4f8ef7', '#00c896', '#f5a623', '#a78bfa', '#ff5757', '#00b4d8']
+const PROJECT_COLORS = ['var(--c-accent)', 'var(--c-positive)', 'var(--c-warning)', '#a78bfa', 'var(--c-danger)', '#00b4d8']
 const DEFAULT_TAGS = ['工作', '投資', '生活', '學習', '健康', '其他']
 
-const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
+const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }
 const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 // 可拖曳任務元件
@@ -52,31 +52,31 @@ function SortableTask({ task, onToggle, onDelete, onEdit }: {
     const isOverdue = task.dueDate && !task.done && new Date(task.dueDate) < new Date()
 
     return (
-        <div ref={setNodeRef} style={{ ...style, display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '10px 12px', backgroundColor: '#0f1117', borderRadius: '8px', border: '1px solid #2e3349', marginBottom: '6px' }}>
+        <div ref={setNodeRef} style={{ ...style, display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '10px 12px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', border: '1px solid var(--c-border)', marginBottom: '6px' }}>
             {/* 拖曳把手 */}
-            <button {...attributes} {...listeners} style={{ background: 'none', border: 'none', color: '#2e3349', cursor: 'grab', padding: '2px', display: 'flex', flexShrink: 0, marginTop: '2px' }}>
+            <button {...attributes} {...listeners} style={{ background: 'none', border: 'none', color: 'var(--c-border)', cursor: 'grab', padding: '2px', display: 'flex', flexShrink: 0, marginTop: '2px' }}>
                 <GripVertical size={14} />
             </button>
 
             {/* 完成勾選 */}
             <button onClick={() => onToggle(task.id, !task.done)}
-                style={{ width: '18px', height: '18px', borderRadius: '50%', border: `2px solid ${task.done ? '#00c896' : PRIORITY_COLORS[task.priority]}`, backgroundColor: task.done ? '#00c896' : 'transparent', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '2px' }}>
+                style={{ width: '18px', height: '18px', borderRadius: '50%', border: `2px solid ${task.done ? 'var(--c-positive)' : PRIORITY_COLORS[task.priority]}`, backgroundColor: task.done ? 'var(--c-positive)' : 'transparent', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '2px' }}>
                 {task.done && <Check size={10} color="#fff" />}
             </button>
 
             {/* 內容 */}
             <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '14px', color: task.done ? '#8892a4' : '#e2e8f0', textDecoration: task.done ? 'line-through' : 'none', lineHeight: 1.4 }}>
+                <div style={{ fontSize: '14px', color: task.done ? 'var(--c-muted)' : 'var(--c-text)', textDecoration: task.done ? 'line-through' : 'none', lineHeight: 1.4 }}>
                     {task.title}
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
                     {task.tag && (
-                        <span style={{ fontSize: '11px', backgroundColor: 'rgba(79,142,247,0.1)', color: '#4f8ef7', borderRadius: '10px', padding: '1px 6px' }}>
+                        <span style={{ fontSize: '11px', backgroundColor: 'color-mix(in srgb, var(--c-accent) 10%, transparent)', color: 'var(--c-accent)', borderRadius: '10px', padding: '1px 6px' }}>
                             #{task.tag}
                         </span>
                     )}
                     {task.dueDate && (
-                        <span style={{ fontSize: '11px', color: isOverdue ? '#ff5757' : '#8892a4', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                        <span style={{ fontSize: '11px', color: isOverdue ? 'var(--c-danger)' : 'var(--c-muted)', display: 'flex', alignItems: 'center', gap: '3px' }}>
                             <Calendar size={10} />{task.dueDate}
                             {isOverdue && ' ⚠️'}
                         </span>
@@ -85,13 +85,13 @@ function SortableTask({ task, onToggle, onDelete, onEdit }: {
                         {PRIORITY_LABELS[task.priority]}
                     </span>
                 </div>
-                {task.note && <div style={{ fontSize: '12px', color: '#8892a4', marginTop: '4px', lineHeight: 1.5 }}>{task.note}</div>}
+                {task.note && <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '4px', lineHeight: 1.5 }}>{task.note}</div>}
             </div>
 
             {/* 操作按鈕 */}
             <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                <button onClick={() => onEdit(task)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', padding: '2px' }}><Pencil size={13} /></button>
-                <button onClick={() => onDelete(task.id)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', padding: '2px' }}><Trash2 size={13} /></button>
+                <button onClick={() => onEdit(task)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer', padding: '2px' }}><Pencil size={13} /></button>
+                <button onClick={() => onDelete(task.id)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer', padding: '2px' }}><Trash2 size={13} /></button>
             </div>
         </div>
     )
@@ -255,17 +255,17 @@ export default function TaskManager() {
                 {/* 標題列 */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                     <div>
-                        <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>任務管理</h1>
-                        <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>
+                        <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>任務管理</h1>
+                        <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
                             {todoTasks.length} 個待辦
-                            {overdueCount > 0 && <span style={{ color: '#ff5757', marginLeft: '8px' }}>⚠️ {overdueCount} 個已逾期</span>}
+                            {overdueCount > 0 && <span style={{ color: 'var(--c-danger)', marginLeft: '8px' }}>⚠️ {overdueCount} 個已逾期</span>}
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
-                        <button onClick={() => { setShowProjectForm(true) }} style={{ ...btn('#21253a'), border: '1px solid #2e3349', fontSize: '13px' }}>
+                        <button onClick={() => { setShowProjectForm(true) }} style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', fontSize: '13px' }}>
                             <FolderOpen size={14} />新增專案
                         </button>
-                        <button onClick={() => { setEditingTask(null); setTaskForm({ title: '', priority: 'medium', dueDate: '', tag: '', projectId: selectedProject || '', note: '' }); setShowTaskForm(true) }} style={btn('#4f8ef7')}>
+                        <button onClick={() => { setEditingTask(null); setTaskForm({ title: '', priority: 'medium', dueDate: '', tag: '', projectId: selectedProject || '', note: '' }); setShowTaskForm(true) }} style={btn('var(--c-accent)')}>
                             <Plus size={14} />新增任務
                         </button>
                     </div>
@@ -276,31 +276,31 @@ export default function TaskManager() {
                     {/* 左側：專案 + 標籤 */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         <div style={card}>
-                            <div style={{ fontSize: '12px', color: '#8892a4', fontWeight: 600, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>專案</div>
+                            <div style={{ fontSize: '12px', color: 'var(--c-muted)', fontWeight: 600, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>專案</div>
                             <div
                                 onClick={() => setSelectedProject(null)}
-                                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 8px', borderRadius: '8px', cursor: 'pointer', backgroundColor: !selectedProject ? 'rgba(79,142,247,0.12)' : 'transparent', color: !selectedProject ? '#4f8ef7' : '#8892a4', fontSize: '13px', marginBottom: '2px' }}>
-                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#4f8ef7', flexShrink: 0 }} />
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 8px', borderRadius: '8px', cursor: 'pointer', backgroundColor: !selectedProject ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: !selectedProject ? 'var(--c-accent)' : 'var(--c-muted)', fontSize: '13px', marginBottom: '2px' }}>
+                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--c-accent)', flexShrink: 0 }} />
                                 <span style={{ flex: 1 }}>全部任務</span>
                                 <span style={{ fontSize: '11px' }}>{tasks.filter(t => !t.done).length}</span>
                             </div>
                             {projects.map(p => (
                                 <div key={p.id}
                                     className="project-row"
-                                    style={{ backgroundColor: selectedProject === p.id ? `${p.color}18` : 'transparent', color: selectedProject === p.id ? p.color : '#8892a4' }}
+                                    style={{ backgroundColor: selectedProject === p.id ? `${p.color}18` : 'transparent', color: selectedProject === p.id ? p.color : 'var(--c-muted)' }}
                                     onClick={() => setSelectedProject(selectedProject === p.id ? null : p.id)}>
                                     <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: p.color, flexShrink: 0 }} />
                                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
                                     <span style={{ fontSize: '11px' }}>{tasks.filter(t => t.projectId === p.id && !t.done).length}</span>
                                     <button onClick={e => { e.stopPropagation(); handleDeleteProject(p.id) }}
                                         className="project-delete"
-                                        style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                                        style={{ background: 'none', border: 'none', color: 'var(--c-danger)', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                                         <Trash2 size={12} />
                                     </button>
                                 </div>
                             ))}
                             <button onClick={() => setShowProjectForm(true)}
-                                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 8px', borderRadius: '8px', border: '1px dashed #2e3349', color: '#8892a4', fontSize: '12px', cursor: 'pointer', background: 'none', width: '100%', marginTop: '4px' }}>
+                                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 8px', borderRadius: '8px', border: '1px dashed var(--c-border)', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer', background: 'none', width: '100%', marginTop: '4px' }}>
                                 <Plus size={12} />新增專案
                             </button>
                         </div>
@@ -308,14 +308,14 @@ export default function TaskManager() {
                         {/* 標籤篩選 */}
                         {allTags.length > 0 && (
                             <div style={card}>
-                                <div style={{ fontSize: '12px', color: '#8892a4', fontWeight: 600, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>標籤</div>
+                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', fontWeight: 600, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>標籤</div>
                                 <button onClick={() => setSelectedTag('')}
-                                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 8px', borderRadius: '8px', border: 'none', backgroundColor: !selectedTag ? 'rgba(79,142,247,0.12)' : 'transparent', color: !selectedTag ? '#4f8ef7' : '#8892a4', fontSize: '12px', cursor: 'pointer', width: '100%', marginBottom: '2px' }}>
+                                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 8px', borderRadius: '8px', border: 'none', backgroundColor: !selectedTag ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: !selectedTag ? 'var(--c-accent)' : 'var(--c-muted)', fontSize: '12px', cursor: 'pointer', width: '100%', marginBottom: '2px' }}>
                                     全部
                                 </button>
                                 {allTags.map(tag => (
                                     <button key={tag} onClick={() => setSelectedTag(selectedTag === tag ? '' : tag)}
-                                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 8px', borderRadius: '8px', border: 'none', backgroundColor: selectedTag === tag ? 'rgba(79,142,247,0.12)' : 'transparent', color: selectedTag === tag ? '#4f8ef7' : '#8892a4', fontSize: '12px', cursor: 'pointer', width: '100%', marginBottom: '2px' }}>
+                                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 8px', borderRadius: '8px', border: 'none', backgroundColor: selectedTag === tag ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: selectedTag === tag ? 'var(--c-accent)' : 'var(--c-muted)', fontSize: '12px', cursor: 'pointer', width: '100%', marginBottom: '2px' }}>
                                         <Tag size={11} />#{tag}
                                     </button>
                                 ))}
@@ -328,11 +328,11 @@ export default function TaskManager() {
                         {/* 待辦任務 */}
                         <div style={{ ...card, marginBottom: '16px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>待辦 ({todoTasks.length})</span>
+                                <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>待辦 ({todoTasks.length})</span>
                             </div>
 
                             {todoTasks.length === 0 ? (
-                                <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4', fontSize: '13px' }}>
+                                <div style={{ textAlign: 'center', padding: '32px', color: 'var(--c-muted)', fontSize: '13px' }}>
                                     🎉 沒有待辦任務！
                                 </div>
                             ) : (
@@ -347,7 +347,7 @@ export default function TaskManager() {
                             )}
 
                             <button onClick={() => { setEditingTask(null); setTaskForm({ title: '', priority: 'medium', dueDate: '', tag: '', projectId: selectedProject || '', note: '' }); setShowTaskForm(true) }}
-                                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px', borderRadius: '8px', border: '1px dashed #2e3349', color: '#8892a4', fontSize: '13px', cursor: 'pointer', background: 'none', width: '100%', marginTop: '8px', justifyContent: 'center' }}>
+                                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px', borderRadius: '8px', border: '1px dashed var(--c-border)', color: 'var(--c-muted)', fontSize: '13px', cursor: 'pointer', background: 'none', width: '100%', marginTop: '8px', justifyContent: 'center' }}>
                                 <Plus size={13} />新增任務
                             </button>
                         </div>
@@ -355,7 +355,7 @@ export default function TaskManager() {
                         {/* 已完成 */}
                         <div style={card}>
                             <button onClick={() => setShowDone(v => !v)}
-                                style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', fontSize: '14px', fontWeight: 600, padding: 0, width: '100%' }}>
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer', fontSize: '14px', fontWeight: 600, padding: 0, width: '100%' }}>
                                 {showDone ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                                 已完成 ({doneTasks.length})
                             </button>
@@ -377,8 +377,8 @@ export default function TaskManager() {
                 <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                     <div style={{ ...card, width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                            <span style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0' }}>{editingTask ? '編輯任務' : '新增任務'}</span>
-                            <button onClick={() => { setShowTaskForm(false); setEditingTask(null) }} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
+                            <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>{editingTask ? '編輯任務' : '新增任務'}</span>
+                            <button onClick={() => { setShowTaskForm(false); setEditingTask(null) }} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={18} /></button>
                         </div>
 
                         <div className="task-form-grid">
@@ -433,8 +433,8 @@ export default function TaskManager() {
                         </div>
 
                         <div style={{ display: 'flex', gap: '8px', marginTop: '20px', justifyContent: 'flex-end' }}>
-                            <button style={btn('#2e3349')} onClick={() => { setShowTaskForm(false); setEditingTask(null) }}><X size={14} />取消</button>
-                            <button style={btn('#4f8ef7')} onClick={handleSaveTask}>
+                            <button style={btn('var(--c-border)')} onClick={() => { setShowTaskForm(false); setEditingTask(null) }}><X size={14} />取消</button>
+                            <button style={btn('var(--c-accent)')} onClick={handleSaveTask}>
                                 <Check size={14} />{editingTask ? '更新' : '新增'}
                             </button>
                         </div>
@@ -447,8 +447,8 @@ export default function TaskManager() {
                 <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                     <div style={{ ...card, width: '100%', maxWidth: '400px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                            <span style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0' }}>新增專案</span>
-                            <button onClick={() => setShowProjectForm(false)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
+                            <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>新增專案</span>
+                            <button onClick={() => setShowProjectForm(false)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={18} /></button>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                             <div>
@@ -468,8 +468,8 @@ export default function TaskManager() {
                             </div>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', marginTop: '20px', justifyContent: 'flex-end' }}>
-                            <button style={btn('#2e3349')} onClick={() => setShowProjectForm(false)}><X size={14} />取消</button>
-                            <button style={btn('#4f8ef7')} onClick={handleSaveProject}><Check size={14} />新增</button>
+                            <button style={btn('var(--c-border)')} onClick={() => setShowProjectForm(false)}><X size={14} />取消</button>
+                            <button style={btn('var(--c-accent)')} onClick={handleSaveProject}><Check size={14} />新增</button>
                         </div>
                     </div>
                 </div>

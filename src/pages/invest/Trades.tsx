@@ -28,9 +28,9 @@ const emptyTrade: Trade = {
     isMargin: false, marginRatio: 0.6, marginAmount: 0
 }
 
-const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
+const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }
 const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 const isOddLot = (shares: number) => shares > 0 && shares < 1000
@@ -289,7 +289,7 @@ export default function Trades() {
     )
 
     const feeHint = () => isOddLot(form.shares) ? '（零股 6折，最低 1 元）' : '（6折自動計算）'
-    const feeHintColor = isOddLot(form.shares) ? '#f5a623' : '#4f8ef7'
+    const feeHintColor = isOddLot(form.shares) ? 'var(--c-warning)' : 'var(--c-accent)'
 
     return (
         <>
@@ -299,13 +299,13 @@ export default function Trades() {
                     onClick={e => { if (e.target === e.currentTarget) handleCancel() }}>
                     <div style={{ ...card, width: '100%', maxWidth: '720px', maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                            <div style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 ✏️ 編輯交易
                                 {isOddLot(form.shares) && (
-                                    <span style={{ fontSize: '11px', backgroundColor: 'rgba(245,166,35,0.15)', color: '#f5a623', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>零股</span>
+                                    <span style={{ fontSize: '11px', backgroundColor: 'rgba(245,166,35,0.15)', color: 'var(--c-warning)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>零股</span>
                                 )}
                             </div>
-                            <button onClick={handleCancel} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', padding: '4px' }}><X size={18} /></button>
+                            <button onClick={handleCancel} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer', padding: '4px' }}><X size={18} /></button>
                         </div>
                         <div className="trades-grid">
                             <div><label style={lbl}>日期</label><input type="date" style={inp} value={form.date} onChange={e => handleChange('date', e.target.value)} /></div>
@@ -320,7 +320,7 @@ export default function Trades() {
                                 <input style={inp} placeholder="例：2330" value={form.code} onChange={e => handleCodeChange(e.target.value)} />
                             </div>
                             <div>
-                                <label style={lbl}>股票名稱 {lookingUp && <span style={{ color: '#8892a4', fontSize: '10px' }}>查詢中...</span>}</label>
+                                <label style={lbl}>股票名稱 {lookingUp && <span style={{ color: 'var(--c-muted)', fontSize: '10px' }}>查詢中...</span>}</label>
                                 <input style={inp} placeholder="輸入代號後自動帶入" value={form.name} onChange={e => handleChange('name', e.target.value)} />
                             </div>
                             <div><label style={lbl}>價格</label><input type="number" style={inp} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} /></div>
@@ -330,14 +330,14 @@ export default function Trades() {
                                 <input type="number" style={inp} value={form.fee || ''} onChange={e => handleChange('fee', parseFloat(e.target.value) || 0)} />
                             </div>
                             <div>
-                                <label style={lbl}>交易稅 <span style={{ color: form.type === 'sell' ? (isETF(form.code) ? '#f5a623' : '#4f8ef7') : '#2e3349', fontSize: '11px' }}>
+                                <label style={lbl}>交易稅 <span style={{ color: form.type === 'sell' ? (isETF(form.code) ? 'var(--c-warning)' : 'var(--c-accent)') : 'var(--c-border)', fontSize: '11px' }}>
                                     {form.type === 'sell' ? (isETF(form.code) ? '（ETF千分之一）' : '（千分之三）') : '（買入免稅）'}
                                 </span></label>
                                 <input type="number" style={inp} value={form.tax || ''} onChange={e => handleChange('tax', parseFloat(e.target.value) || 0)} />
                             </div>
                             <div>
-                                <label style={lbl}>收付金額 {form.isMargin && form.type === 'buy' && <span style={{ color: '#f5a623', fontSize: '11px' }}>（自備款）</span>}</label>
-                                <input type="number" style={{ ...inp, color: form.type === 'buy' ? '#ff5757' : '#00c896' }} value={form.total} readOnly />
+                                <label style={lbl}>收付金額 {form.isMargin && form.type === 'buy' && <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（自備款）</span>}</label>
+                                <input type="number" style={{ ...inp, color: form.type === 'buy' ? 'var(--c-danger)' : 'var(--c-positive)' }} value={form.total} readOnly />
                             </div>
                             <div className="span2">
                                 <label style={lbl}>備註</label>
@@ -348,7 +348,7 @@ export default function Trades() {
                                             onClick={() => handleChange('isMargin', !form.isMargin)}
                                             style={{
                                                 width: '38px', height: '22px', borderRadius: '11px', position: 'relative', cursor: 'pointer', flexShrink: 0,
-                                                backgroundColor: form.isMargin ? 'rgba(245,166,35,0.9)' : '#2e3349',
+                                                backgroundColor: form.isMargin ? 'rgba(245,166,35,0.9)' : 'var(--c-border)',
                                                 transition: 'background-color 0.2s'
                                             }}>
                                             <div style={{
@@ -357,26 +357,26 @@ export default function Trades() {
                                                 transition: 'left 0.2s'
                                             }} />
                                         </div>
-                                        <span style={{ fontSize: '12px', color: form.isMargin ? '#f5a623' : '#8892a4', fontWeight: form.isMargin ? 600 : 400 }}>融資</span>
+                                        <span style={{ fontSize: '12px', color: form.isMargin ? 'var(--c-warning)' : 'var(--c-muted)', fontWeight: form.isMargin ? 600 : 400 }}>融資</span>
                                     </label>
                                 </div>
                             </div>
                             {form.isMargin && form.type === 'buy' && (
                                 <>
                                     <div>
-                                        <label style={lbl}>融資成數 <span style={{ color: '#f5a623', fontSize: '11px' }}>（例：0.6 = 六成）</span></label>
+                                        <label style={lbl}>融資成數 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（例：0.6 = 六成）</span></label>
                                         <input type="number" step="0.1" min="0" max="1" style={inp} value={form.marginRatio ?? 0.6} onChange={e => handleChange('marginRatio', parseFloat(e.target.value) || 0.6)} />
                                     </div>
                                     <div>
-                                        <label style={lbl}>融資金額 <span style={{ color: '#f5a623', fontSize: '11px' }}>（自動計算）</span></label>
-                                        <input type="number" style={{ ...inp, color: '#f5a623' }} value={form.marginAmount ?? 0} readOnly />
+                                        <label style={lbl}>融資金額 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（自動計算）</span></label>
+                                        <input type="number" style={{ ...inp, color: 'var(--c-warning)' }} value={form.marginAmount ?? 0} readOnly />
                                     </div>
                                 </>
                             )}
                         </div>
                         <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
-                            <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消</button>
-                            <button style={btn('#4f8ef7')} onClick={handleSave} disabled={loading}>
+                            <button style={btn('var(--c-border)')} onClick={handleCancel}><X size={14} />取消</button>
+                            <button style={btn('var(--c-accent)')} onClick={handleSave} disabled={loading}>
                                 <Check size={14} />{loading ? '儲存中...' : '確認更新'}
                             </button>
                         </div>
@@ -390,11 +390,11 @@ export default function Trades() {
         @media (max-width: 700px) { .trades-grid { grid-template-columns: repeat(2, 1fr); } }
         @media (max-width: 480px) { .trades-grid { grid-template-columns: 1fr; } .trades-grid .span2 { grid-column: span 1; } }
         .trade-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .trade-table th { padding: 8px 10px; text-align: left; color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; white-space: nowrap; }
-        .trade-table td { padding: 10px; border-bottom: 1px solid #2e3349; color: #e2e8f0; white-space: nowrap; }
+        .trade-table th { padding: 8px 10px; text-align: left; color: var(--c-muted); font-weight: 500; border-bottom: 1px solid var(--c-border); white-space: nowrap; }
+        .trade-table td { padding: 10px; border-bottom: 1px solid var(--c-border); color: var(--c-text); white-space: nowrap; }
         .trade-table tr:hover td { background-color: rgba(79,142,247,0.04); }
-        .trade-card { background: #0f1117; border-radius: 10px; padding: 12px 14px; border: 1px solid #2e3349; margin-bottom: 8px; }
-        .trade-card:active { border-color: #4f8ef7; }
+        .trade-card { background: var(--c-bg); border-radius: 10px; padding: 12px 14px; border: 1px solid var(--c-border); margin-bottom: 8px; }
+        .trade-card:active { border-color: var(--c-accent); }
       `}</style>
 
             <div style={{ padding: 'clamp(12px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
@@ -402,15 +402,15 @@ export default function Trades() {
                 {/* 標題列 */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
                     <div>
-                        <h1 style={{ fontSize: 'clamp(16px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>買賣紀錄</h1>
-                        <p style={{ fontSize: '12px', color: '#8892a4', margin: '2px 0 0' }}>共 {trades.length} 筆交易</p>
+                        <h1 style={{ fontSize: 'clamp(16px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>買賣紀錄</h1>
+                        <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '2px 0 0' }}>共 {trades.length} 筆交易</p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
-                        <label style={{ ...btn('#21253a'), border: '1px solid #2e3349', cursor: 'pointer', fontSize: '12px', padding: '7px 10px' }}>
+                        <label style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', cursor: 'pointer', fontSize: '12px', padding: '7px 10px' }}>
                             <Upload size={13} />{isMobile ? 'CSV' : importing ? '匯入中...' : '匯入歷史紀錄 CSV'}
                             <input ref={fileRef} type="file" accept=".csv" onChange={handleImportCSV} disabled={importing} style={{ display: 'none' }} />
                         </label>
-                        <button style={{ ...btn('#4f8ef7'), fontSize: '12px', padding: '7px 12px' }} onClick={() => { setForm(emptyTrade); setEditingId(null); setShowForm(v => !v) }}>
+                        <button style={{ ...btn('var(--c-accent)'), fontSize: '12px', padding: '7px 12px' }} onClick={() => { setForm(emptyTrade); setEditingId(null); setShowForm(v => !v) }}>
                             {showForm ? <X size={13} /> : <Check size={13} />}{showForm ? '收起' : '新增交易'}
                         </button>
                     </div>
@@ -418,19 +418,19 @@ export default function Trades() {
 
                 {importResult && (
                     <div style={{ backgroundColor: 'rgba(0,200,150,0.08)', border: '1px solid rgba(0,200,150,0.25)', borderRadius: '10px', padding: '12px 16px', marginBottom: '12px', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-                        <div><span style={{ fontSize: '11px', color: '#8892a4' }}>成功匯入</span><div style={{ fontSize: '16px', fontWeight: 700, color: '#00c896' }}>{importResult.success} 筆</div></div>
-                        {importResult.failed > 0 && <div><span style={{ fontSize: '11px', color: '#8892a4' }}>失敗</span><div style={{ fontSize: '16px', fontWeight: 700, color: '#ff5757' }}>{importResult.failed} 筆</div></div>}
-                        {importResult.skipped > 0 && <div><span style={{ fontSize: '11px', color: '#8892a4' }}>略過</span><div style={{ fontSize: '16px', fontWeight: 700, color: '#8892a4' }}>{importResult.skipped} 筆</div></div>}
+                        <div><span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>成功匯入</span><div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--c-positive)' }}>{importResult.success} 筆</div></div>
+                        {importResult.failed > 0 && <div><span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>失敗</span><div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--c-danger)' }}>{importResult.failed} 筆</div></div>}
+                        {importResult.skipped > 0 && <div><span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>略過</span><div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--c-muted)' }}>{importResult.skipped} 筆</div></div>}
                     </div>
                 )}
 
                 {/* 表單 */}
                 {showForm && (
                     <div style={{ ...card, marginBottom: '16px' }}>
-                        <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>
+                        <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>
                             {editingId ? '✏️ 編輯交易' : '➕ 新增交易'}
                             {isOddLot(form.shares) && (
-                                <span style={{ marginLeft: '10px', fontSize: '11px', backgroundColor: 'rgba(245,166,35,0.15)', color: '#f5a623', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
+                                <span style={{ marginLeft: '10px', fontSize: '11px', backgroundColor: 'rgba(245,166,35,0.15)', color: 'var(--c-warning)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
                                     零股交易
                                 </span>
                             )}
@@ -448,7 +448,7 @@ export default function Trades() {
                                 <input style={inp} placeholder="例：2330" value={form.code} onChange={e => handleCodeChange(e.target.value)} />
                             </div>
                             <div>
-                                <label style={lbl}>股票名稱 {lookingUp && <span style={{ color: '#8892a4', fontSize: '10px' }}>查詢中...</span>}</label>
+                                <label style={lbl}>股票名稱 {lookingUp && <span style={{ color: 'var(--c-muted)', fontSize: '10px' }}>查詢中...</span>}</label>
                                 <input style={inp} placeholder="輸入代號後自動帶入" value={form.name} onChange={e => handleChange('name', e.target.value)} />
                             </div>
                             <div><label style={lbl}>價格</label><input type="number" style={inp} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} /></div>
@@ -458,14 +458,14 @@ export default function Trades() {
                                 <input type="number" style={inp} value={form.fee || ''} onChange={e => handleChange('fee', parseFloat(e.target.value) || 0)} />
                             </div>
                             <div>
-                                <label style={lbl}>交易稅 <span style={{ color: form.type === 'sell' ? (isETF(form.code) ? '#f5a623' : '#4f8ef7') : '#2e3349', fontSize: '11px' }}>
+                                <label style={lbl}>交易稅 <span style={{ color: form.type === 'sell' ? (isETF(form.code) ? 'var(--c-warning)' : 'var(--c-accent)') : 'var(--c-border)', fontSize: '11px' }}>
                                     {form.type === 'sell' ? (isETF(form.code) ? '（ETF千分之一）' : '（千分之三）') : '（買入免稅）'}
                                 </span></label>
                                 <input type="number" style={inp} value={form.tax || ''} onChange={e => handleChange('tax', parseFloat(e.target.value) || 0)} />
                             </div>
                             <div>
-                                <label style={lbl}>收付金額 {form.isMargin && form.type === 'buy' && <span style={{ color: '#f5a623', fontSize: '11px' }}>（自備款）</span>}</label>
-                                <input type="number" style={{ ...inp, color: form.type === 'buy' ? '#ff5757' : '#00c896' }} value={form.total} readOnly />
+                                <label style={lbl}>收付金額 {form.isMargin && form.type === 'buy' && <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（自備款）</span>}</label>
+                                <input type="number" style={{ ...inp, color: form.type === 'buy' ? 'var(--c-danger)' : 'var(--c-positive)' }} value={form.total} readOnly />
                             </div>
                             <div className="span2">
                                 <label style={lbl}>備註</label>
@@ -476,7 +476,7 @@ export default function Trades() {
                                             onClick={() => handleChange('isMargin', !form.isMargin)}
                                             style={{
                                                 width: '38px', height: '22px', borderRadius: '11px', position: 'relative', cursor: 'pointer', flexShrink: 0,
-                                                backgroundColor: form.isMargin ? 'rgba(245,166,35,0.9)' : '#2e3349',
+                                                backgroundColor: form.isMargin ? 'rgba(245,166,35,0.9)' : 'var(--c-border)',
                                                 transition: 'background-color 0.2s'
                                             }}>
                                             <div style={{
@@ -485,26 +485,26 @@ export default function Trades() {
                                                 transition: 'left 0.2s'
                                             }} />
                                         </div>
-                                        <span style={{ fontSize: '12px', color: form.isMargin ? '#f5a623' : '#8892a4', fontWeight: form.isMargin ? 600 : 400 }}>融資</span>
+                                        <span style={{ fontSize: '12px', color: form.isMargin ? 'var(--c-warning)' : 'var(--c-muted)', fontWeight: form.isMargin ? 600 : 400 }}>融資</span>
                                     </label>
                                 </div>
                             </div>
                             {form.isMargin && form.type === 'buy' && (
                                 <>
                                     <div>
-                                        <label style={lbl}>融資成數 <span style={{ color: '#f5a623', fontSize: '11px' }}>（例：0.6 = 六成）</span></label>
+                                        <label style={lbl}>融資成數 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（例：0.6 = 六成）</span></label>
                                         <input type="number" step="0.1" min="0" max="1" style={inp} value={form.marginRatio ?? 0.6} onChange={e => handleChange('marginRatio', parseFloat(e.target.value) || 0.6)} />
                                     </div>
                                     <div>
-                                        <label style={lbl}>融資金額 <span style={{ color: '#f5a623', fontSize: '11px' }}>（自動計算）</span></label>
-                                        <input type="number" style={{ ...inp, color: '#f5a623' }} value={form.marginAmount ?? 0} readOnly />
+                                        <label style={lbl}>融資金額 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（自動計算）</span></label>
+                                        <input type="number" style={{ ...inp, color: 'var(--c-warning)' }} value={form.marginAmount ?? 0} readOnly />
                                     </div>
                                 </>
                             )}
                         </div>
                         <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
-                            {editingId && <button style={btn('#2e3349')} onClick={handleCancel}><X size={14} />取消</button>}
-                            <button style={btn('#4f8ef7')} onClick={handleSave} disabled={loading}>
+                            {editingId && <button style={btn('var(--c-border)')} onClick={handleCancel}><X size={14} />取消</button>}
+                            <button style={btn('var(--c-accent)')} onClick={handleSave} disabled={loading}>
                                 <Check size={14} />{loading ? '儲存中...' : editingId ? '確認更新' : '確認新增'}
                             </button>
                         </div>
@@ -513,15 +513,15 @@ export default function Trades() {
 
                 {/* 搜尋列 */}
                 <div style={{ marginBottom: '12px', position: 'relative' }}>
-                    <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#8892a4' }} />
-                    <input style={{ ...inp, paddingLeft: '36px', backgroundColor: '#1a1d27', border: '1px solid #2e3349' }}
+                    <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--c-muted)' }} />
+                    <input style={{ ...inp, paddingLeft: '36px', backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)' }}
                         placeholder="搜尋代號或名稱..." value={search} onChange={e => setSearch(e.target.value)} />
                 </div>
 
                 {/* 列表 */}
                 <div style={card}>
                     {filtered.length === 0 ? (
-                        <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>
+                        <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>
                             {search ? `找不到「${search}」相關紀錄` : '還沒有交易紀錄'}
                         </div>
                     ) : isMobile ? (
@@ -531,27 +531,27 @@ export default function Trades() {
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                                         onClick={() => setExpandedId(expandedId === trade.id ? null : trade.id!)}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
-                                            <span style={{ backgroundColor: trade.type === 'buy' ? 'rgba(255,87,87,0.15)' : 'rgba(0,200,150,0.15)', color: trade.type === 'buy' ? '#ff5757' : '#00c896', padding: '2px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, flexShrink: 0 }}>
+                                            <span style={{ backgroundColor: trade.type === 'buy' ? 'rgba(255,87,87,0.15)' : 'color-mix(in srgb, var(--c-positive) 15%, transparent)', color: trade.type === 'buy' ? 'var(--c-danger)' : 'var(--c-positive)', padding: '2px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, flexShrink: 0 }}>
                                                 {trade.type === 'buy' ? '買' : '賣'}
                                             </span>
                                             {trade.isMargin && (
-                                                <span style={{ backgroundColor: 'rgba(245,166,35,0.15)', color: '#f5a623', padding: '1px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600, flexShrink: 0 }}>融資</span>
+                                                <span style={{ backgroundColor: 'rgba(245,166,35,0.15)', color: 'var(--c-warning)', padding: '1px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600, flexShrink: 0 }}>融資</span>
                                             )}
                                             {isOddLot(trade.shares) && (
-                                                <span style={{ backgroundColor: 'rgba(245,166,35,0.12)', color: '#f5a623', padding: '1px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600, flexShrink: 0 }}>零股</span>
+                                                <span style={{ backgroundColor: 'color-mix(in srgb, var(--c-warning) 12%, transparent)', color: 'var(--c-warning)', padding: '1px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600, flexShrink: 0 }}>零股</span>
                                             )}
-                                            <span style={{ color: '#4f8ef7', fontWeight: 700, fontSize: '14px', flexShrink: 0 }}>{trade.code}</span>
-                                            <span style={{ color: '#e2e8f0', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{trade.name}</span>
+                                            <span style={{ color: 'var(--c-accent)', fontWeight: 700, fontSize: '14px', flexShrink: 0 }}>{trade.code}</span>
+                                            <span style={{ color: 'var(--c-text)', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{trade.name}</span>
                                         </div>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                                            <span style={{ color: trade.type === 'buy' ? '#ff5757' : '#00c896', fontWeight: 600, fontSize: '13px' }}>
+                                            <span style={{ color: trade.type === 'buy' ? 'var(--c-danger)' : 'var(--c-positive)', fontWeight: 600, fontSize: '13px' }}>
                                                 ${trade.total.toLocaleString()}
                                             </span>
-                                            {expandedId === trade.id ? <ChevronUp size={14} color="#8892a4" /> : <ChevronDown size={14} color="#8892a4" />}
+                                            {expandedId === trade.id ? <ChevronUp size={14} color="var(--c-muted)" /> : <ChevronDown size={14} color="var(--c-muted)" />}
                                         </div>
                                     </div>
                                     {expandedId === trade.id && (
-                                        <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #2e3349' }}>
+                                        <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--c-border)' }}>
                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '10px' }}>
                                                 {[
                                                     { label: '日期', value: trade.date },
@@ -562,16 +562,16 @@ export default function Trades() {
                                                     { label: '備註', value: trade.note || '—' },
                                                 ].map(({ label, value }) => (
                                                     <div key={label}>
-                                                        <div style={{ fontSize: '10px', color: '#8892a4' }}>{label}</div>
-                                                        <div style={{ fontSize: '13px', color: '#e2e8f0' }}>{value}</div>
+                                                        <div style={{ fontSize: '10px', color: 'var(--c-muted)' }}>{label}</div>
+                                                        <div style={{ fontSize: '13px', color: 'var(--c-text)' }}>{value}</div>
                                                     </div>
                                                 ))}
                                             </div>
                                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                                                <button onClick={() => handleEdit(trade)} style={{ ...btn('#21253a'), border: '1px solid #2e3349', fontSize: '12px', padding: '6px 12px' }}>
+                                                <button onClick={() => handleEdit(trade)} style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', fontSize: '12px', padding: '6px 12px' }}>
                                                     <Pencil size={12} />編輯
                                                 </button>
-                                                <button onClick={() => handleDelete(trade.id!)} style={{ ...btn('rgba(255,87,87,0.15)'), color: '#ff5757', fontSize: '12px', padding: '6px 12px' }}>
+                                                <button onClick={() => handleDelete(trade.id!)} style={{ ...btn('rgba(255,87,87,0.15)'), color: 'var(--c-danger)', fontSize: '12px', padding: '6px 12px' }}>
                                                     <Trash2 size={12} />刪除
                                                 </button>
                                             </div>
@@ -592,23 +592,23 @@ export default function Trades() {
                                             <td>{trade.date}</td>
                                             <td>
                                                 <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                                                    <span style={{ backgroundColor: trade.type === 'buy' ? 'rgba(255,87,87,0.15)' : 'rgba(0,200,150,0.15)', color: trade.type === 'buy' ? '#ff5757' : '#00c896', padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>{trade.type === 'buy' ? '買入' : '賣出'}</span>
-                                                    {trade.isMargin && <span style={{ backgroundColor: 'rgba(245,166,35,0.15)', color: '#f5a623', padding: '2px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600 }}>融資</span>}
-                                                    {isOddLot(trade.shares) && <span style={{ backgroundColor: 'rgba(245,166,35,0.12)', color: '#d3d3d3', padding: '2px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600 }}>零股</span>}
+                                                    <span style={{ backgroundColor: trade.type === 'buy' ? 'rgba(255,87,87,0.15)' : 'color-mix(in srgb, var(--c-positive) 15%, transparent)', color: trade.type === 'buy' ? 'var(--c-danger)' : 'var(--c-positive)', padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>{trade.type === 'buy' ? '買入' : '賣出'}</span>
+                                                    {trade.isMargin && <span style={{ backgroundColor: 'rgba(245,166,35,0.15)', color: 'var(--c-warning)', padding: '2px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600 }}>融資</span>}
+                                                    {isOddLot(trade.shares) && <span style={{ backgroundColor: 'color-mix(in srgb, var(--c-warning) 12%, transparent)', color: '#d3d3d3', padding: '2px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 600 }}>零股</span>}
                                                 </div>
                                             </td>
-                                            <td style={{ color: '#4f8ef7', fontWeight: 700 }}>{trade.code}</td>
+                                            <td style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{trade.code}</td>
                                             <td>{trade.name}</td>
                                             <td>{trade.price.toLocaleString()}</td>
                                             <td>{trade.shares.toLocaleString()}</td>
                                             <td>{trade.fee.toLocaleString()}</td>
                                             <td>{trade.tax.toLocaleString()}</td>
-                                            <td style={{ color: trade.type === 'buy' ? '#ff5757' : '#00c896', fontWeight: 600 }}>{trade.total.toLocaleString()}</td>
-                                            <td style={{ color: '#8892a4' }}>{trade.note}</td>
+                                            <td style={{ color: trade.type === 'buy' ? 'var(--c-danger)' : 'var(--c-positive)', fontWeight: 600 }}>{trade.total.toLocaleString()}</td>
+                                            <td style={{ color: 'var(--c-muted)' }}>{trade.note}</td>
                                             <td>
                                                 <div style={{ display: 'flex', gap: '8px' }}>
-                                                    <button onClick={() => handleEdit(trade)} style={{ background: 'none', border: 'none', color: '#4f8ef7', cursor: 'pointer' }}><Pencil size={15} /></button>
-                                                    <button onClick={() => handleDelete(trade.id!)} style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer' }}><Trash2 size={15} /></button>
+                                                    <button onClick={() => handleEdit(trade)} style={{ background: 'none', border: 'none', color: 'var(--c-accent)', cursor: 'pointer' }}><Pencil size={15} /></button>
+                                                    <button onClick={() => handleDelete(trade.id!)} style={{ background: 'none', border: 'none', color: 'var(--c-danger)', cursor: 'pointer' }}><Trash2 size={15} /></button>
                                                 </div>
                                             </td>
                                         </tr>

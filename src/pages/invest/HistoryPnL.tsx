@@ -5,9 +5,9 @@ import { userCol } from '../../lib/userDB'
 import { calcPositions, type TradeRecord, type DividendRecord, type RealizedRecord } from '../../lib/calc'
 import { Search, TrendingUp, TrendingDown, Calendar, X } from 'lucide-react'
 
-const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
+const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const pnlColor = (v: number) => v >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
 
 // 快速時間範圍選項
 const RANGE_OPTIONS = [
@@ -134,15 +134,15 @@ export default function HistoryPnL() {
                 @media (max-width: 1100px) { .history-stats { grid-template-columns: repeat(3, 1fr); } }
                 @media (max-width: 600px)  { .history-stats { grid-template-columns: repeat(2, 1fr); } }
                 .history-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-                .history-table th { padding: 10px 14px; text-align: left; color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; white-space: nowrap; font-size: 12px; }
-                .history-table td { padding: 12px 14px; border-bottom: 1px solid #1e2235; color: #e2e8f0; white-space: nowrap; }
+                .history-table th { padding: 10px 14px; text-align: left; color: var(--c-muted); font-weight: 500; border-bottom: 1px solid var(--c-border); white-space: nowrap; font-size: 12px; }
+                .history-table td { padding: 12px 14px; border-bottom: 1px solid var(--c-border); color: var(--c-text); white-space: nowrap; }
                 .history-table tr:last-child td { border-bottom: none; }
                 .history-table tbody tr:hover td { background-color: rgba(79,142,247,0.04); }
-                .range-btn { border: 1px solid #2e3349; border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; transition: all 0.15s; background: transparent; color: #8892a4; }
-                .range-btn:hover { border-color: #4f8ef7; color: #4f8ef7; }
-                .range-btn.active { background: rgba(79,142,247,0.12); border-color: #4f8ef7; color: #4f8ef7; font-weight: 600; }
-                .date-inp { background: #0f1117; border: 1px solid #2e3349; border-radius: 6px; padding: 5px 10px; color: #e2e8f0; font-size: 12px; outline: none; cursor: pointer; }
-                .date-inp:focus { border-color: #4f8ef7; }
+                .range-btn { border: 1px solid var(--c-border); border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; transition: all 0.15s; background: transparent; color: var(--c-muted); }
+                .range-btn:hover { border-color: var(--c-accent); color: var(--c-accent); }
+                .range-btn.active { background: color-mix(in srgb, var(--c-accent) 12%, transparent); border-color: var(--c-accent); color: var(--c-accent); font-weight: 600; }
+                .date-inp { background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 6px; padding: 5px 10px; color: var(--c-text); font-size: 12px; outline: none; cursor: pointer; }
+                .date-inp:focus { border-color: var(--c-accent); }
             `}</style>
 
             <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
@@ -150,21 +150,21 @@ export default function HistoryPnL() {
                 {/* ── 標題與 Tab 切換 ── */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <div>
-                        <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>歷史損益</h1>
-                        <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>
+                        <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>歷史損益</h1>
+                        <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
                             已實現損益與股利紀錄
-                            {isFiltered && <span style={{ marginLeft: '8px', color: '#4f8ef7' }}>・篩選中</span>}
+                            {isFiltered && <span style={{ marginLeft: '8px', color: 'var(--c-accent)' }}>・篩選中</span>}
                         </p>
                     </div>
                     
                     {/* ── Tab（帶筆數） ── */}
-                    <div style={{ display: 'flex', gap: '4px', backgroundColor: '#21253a', padding: '4px', borderRadius: '8px', width: 'fit-content' }}>
+                    <div style={{ display: 'flex', gap: '4px', backgroundColor: 'var(--c-card)', padding: '4px', borderRadius: '8px', width: 'fit-content' }}>
                         {[
                             { key: 'realized', label: `已實現損益（${filteredRecords.length}）` },
                             { key: 'dividend', label: `股利紀錄（${filteredDividends.length}）` },
                         ].map(t => (
                             <button key={t.key} onClick={() => setTab(t.key as 'realized' | 'dividend')}
-                                style={{ backgroundColor: tab === t.key ? '#1a1d27' : 'transparent', border: 'none', borderRadius: '6px', padding: '6px 18px', color: tab === t.key ? '#e2e8f0' : '#8892a4', fontSize: '13px', cursor: 'pointer', fontWeight: tab === t.key ? 600 : 400, whiteSpace: 'nowrap' }}>
+                                style={{ backgroundColor: tab === t.key ? 'var(--c-sidebar)' : 'transparent', border: 'none', borderRadius: '6px', padding: '6px 18px', color: tab === t.key ? 'var(--c-text)' : 'var(--c-muted)', fontSize: '13px', cursor: 'pointer', fontWeight: tab === t.key ? 600 : 400, whiteSpace: 'nowrap' }}>
                                 {t.label}
                             </button>
                         ))}
@@ -184,14 +184,14 @@ export default function HistoryPnL() {
                         {
                             label: isFiltered ? '區間股利收入' : '累計股利收入',
                             main: `$${totalDividend.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`,
-                            color: '#4f8ef7',
+                            color: 'var(--c-accent)',
                             Icon: null,
                             sub: '',
                         },
                         {
                             label: '交易勝率',
                             main: filteredRecords.length > 0 ? `${winRate.toFixed(1)}%` : '—',
-                            color: winRate >= 50 ? '#00c896' : '#ff5757',
+                            color: winRate >= 50 ? 'var(--c-positive)' : 'var(--c-danger)',
                             Icon: null,
                             sub: filteredRecords.length > 0 ? `${winCount} 勝 ${loseCount} 敗` : '',
                         },
@@ -205,18 +205,18 @@ export default function HistoryPnL() {
                         {
                             label: '篩選筆數',
                             main: `${filteredRecords.length} 筆`,
-                            color: '#e2e8f0',
+                            color: 'var(--c-text)',
                             Icon: null,
                             sub: records.length !== filteredRecords.length ? `共 ${records.length} 筆` : '',
                         },
                     ].map(({ label, main, color, Icon, sub }) => (
                         <div key={label} style={card}>
-                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '6px' }}>{label}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '6px' }}>{label}</div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                                 {Icon && <Icon size={14} color={color} />}
                                 <span style={{ fontSize: 'clamp(14px, 1.8vw, 18px)', fontWeight: 700, color }}>{main}</span>
                             </div>
-                            {sub && <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '3px' }}>{sub}</div>}
+                            {sub && <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginTop: '3px' }}>{sub}</div>}
                         </div>
                     ))}
                 </div>
@@ -227,7 +227,7 @@ export default function HistoryPnL() {
 
                         {/* 快速時間按鈕 */}
                         <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-                            <Calendar size={13} color="#8892a4" style={{ flexShrink: 0 }} />
+                            <Calendar size={13} color="var(--c-muted)" style={{ flexShrink: 0 }} />
                             {RANGE_OPTIONS.map(o => (
                                 <button
                                     key={o.value}
@@ -242,17 +242,17 @@ export default function HistoryPnL() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <input type="date" className="date-inp"
                                     value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
-                                <span style={{ color: '#8892a4', fontSize: '12px' }}>～</span>
+                                <span style={{ color: 'var(--c-muted)', fontSize: '12px' }}>～</span>
                                 <input type="date" className="date-inp"
                                     value={customTo} onChange={e => setCustomTo(e.target.value)} />
                             </div>
                         )}
 
-                        <div style={{ width: '1px', height: '20px', backgroundColor: '#2e3349', flexShrink: 0 }} />
+                        <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--c-border)', flexShrink: 0 }} />
 
                         {/* 搜尋 */}
                         <div style={{ position: 'relative', flex: 1, minWidth: '180px', maxWidth: '260px' }}>
-                            <Search size={13} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#8892a4' }} />
+                            <Search size={13} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--c-muted)' }} />
                             <input
                                 style={{ ...inp, paddingLeft: '32px', padding: '6px 12px 6px 32px', fontSize: '13px' }}
                                 placeholder="搜尋代號或名稱..."
@@ -263,7 +263,7 @@ export default function HistoryPnL() {
                         {/* 清除篩選 */}
                         {isFiltered && (
                             <button onClick={clearFilter}
-                                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(255,87,87,0.08)', border: '1px solid rgba(255,87,87,0.25)', borderRadius: '6px', padding: '5px 10px', color: '#ff5757', fontSize: '12px', cursor: 'pointer' }}>
+                                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(255,87,87,0.08)', border: '1px solid rgba(255,87,87,0.25)', borderRadius: '6px', padding: '5px 10px', color: 'var(--c-danger)', fontSize: '12px', cursor: 'pointer' }}>
                                 <X size={11} />清除篩選
                             </button>
                         )}
@@ -271,7 +271,7 @@ export default function HistoryPnL() {
 
                     {/* 生效時間範圍提示 */}
                     {range !== 'all' && (activeFrom || activeTo) && (
-                        <div style={{ marginTop: '10px', fontSize: '12px', color: '#4f8ef7' }}>
+                        <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--c-accent)' }}>
                             📅 {activeFrom || '最早'} ～ {activeTo || '今日'}
                             　損益 {filteredRecords.length} 筆・股利 {filteredDividends.length} 筆
                         </div>
@@ -282,9 +282,9 @@ export default function HistoryPnL() {
                 {tab === 'realized' && (
                     <div style={card}>
                         {loading ? (
-                            <div style={{ textAlign: 'center', padding: '60px', color: '#8892a4' }}>載入中...</div>
+                            <div style={{ textAlign: 'center', padding: '60px', color: 'var(--c-muted)' }}>載入中...</div>
                         ) : filteredRecords.length === 0 ? (
-                            <div style={{ textAlign: 'center', padding: '60px', color: '#8892a4' }}>
+                            <div style={{ textAlign: 'center', padding: '60px', color: 'var(--c-muted)' }}>
                                 <div style={{ fontSize: '32px', marginBottom: '12px' }}>📭</div>
                                 <div style={{ fontSize: '14px' }}>{isFiltered ? '此條件下沒有損益紀錄' : '還沒有已實現損益紀錄'}</div>
                                 {isFiltered && <div style={{ fontSize: '12px', color: '#3d4460', marginTop: '6px' }}>試著調整篩選條件</div>}
@@ -303,11 +303,11 @@ export default function HistoryPnL() {
                                         {filteredRecords.map((r, i) => (
                                             <tr key={i}>
                                                 <td style={{ color: '#6b7690', fontSize: '13px' }}>{r.date}</td>
-                                                <td><span style={{ color: '#4f8ef7', fontWeight: 700 }}>{r.code}</span></td>
+                                                <td><span style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{r.code}</span></td>
                                                 <td style={{ color: '#c8d0e0' }}>{r.name}</td>
-                                                <td style={{ color: '#8892a4' }}>{r.shares.toLocaleString()}</td>
-                                                <td style={{ color: '#8892a4', fontFamily: 'monospace' }}>{r.avgCost.toFixed(2)}</td>
-                                                <td style={{ color: '#e2e8f0', fontFamily: 'monospace', fontWeight: 600 }}>{r.sellPrice.toFixed(2)}</td>
+                                                <td style={{ color: 'var(--c-muted)' }}>{r.shares.toLocaleString()}</td>
+                                                <td style={{ color: 'var(--c-muted)', fontFamily: 'monospace' }}>{r.avgCost.toFixed(2)}</td>
+                                                <td style={{ color: 'var(--c-text)', fontFamily: 'monospace', fontWeight: 600 }}>{r.sellPrice.toFixed(2)}</td>
                                                 <td>
                                                     <span style={{ color: pnlColor(r.realized), fontWeight: 700 }}>
                                                         {r.realized >= 0 ? '+' : ''}{r.realized.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
@@ -316,7 +316,7 @@ export default function HistoryPnL() {
                                                 <td>
                                                     <span style={{
                                                         display: 'inline-flex', alignItems: 'center', gap: '3px',
-                                                        backgroundColor: r.returnRate >= 0 ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)',
+                                                        backgroundColor: r.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)',
                                                         color: pnlColor(r.returnRate),
                                                         padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 700
                                                     }}>
@@ -333,20 +333,20 @@ export default function HistoryPnL() {
 
                                 {/* 區間小計列 */}
                                 {filteredRecords.length > 1 && (
-                                    <div style={{ marginTop: '16px', padding: '12px 16px', backgroundColor: '#0f1117', borderRadius: '8px', display: 'flex', gap: '28px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                    <div style={{ marginTop: '16px', padding: '12px 16px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', display: 'flex', gap: '28px', flexWrap: 'wrap', alignItems: 'center' }}>
                                         <div>
-                                            <span style={{ fontSize: '11px', color: '#8892a4' }}>合計　</span>
+                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>合計　</span>
                                             <span style={{ fontSize: '15px', fontWeight: 700, color: pnlColor(totalRealized) }}>
                                                 {totalRealized >= 0 ? '+' : ''}${totalRealized.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
                                             </span>
                                         </div>
                                         <div>
-                                            <span style={{ fontSize: '11px', color: '#8892a4' }}>勝率　</span>
-                                            <span style={{ fontSize: '14px', fontWeight: 600, color: winRate >= 50 ? '#00c896' : '#ff5757' }}>{winRate.toFixed(1)}%</span>
-                                            <span style={{ fontSize: '11px', color: '#8892a4', marginLeft: '6px' }}>{winCount} 勝 {loseCount} 敗</span>
+                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>勝率　</span>
+                                            <span style={{ fontSize: '14px', fontWeight: 600, color: winRate >= 50 ? 'var(--c-positive)' : 'var(--c-danger)' }}>{winRate.toFixed(1)}%</span>
+                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)', marginLeft: '6px' }}>{winCount} 勝 {loseCount} 敗</span>
                                         </div>
                                         <div>
-                                            <span style={{ fontSize: '11px', color: '#8892a4' }}>平均報酬率　</span>
+                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>平均報酬率　</span>
                                             <span style={{ fontSize: '14px', fontWeight: 600, color: pnlColor(avgReturn) }}>
                                                 {avgReturn >= 0 ? '+' : ''}{avgReturn.toFixed(2)}%
                                             </span>
@@ -362,7 +362,7 @@ export default function HistoryPnL() {
                 {tab === 'dividend' && (
                     <div style={card}>
                         {filteredDividends.length === 0 ? (
-                            <div style={{ textAlign: 'center', padding: '60px', color: '#8892a4' }}>
+                            <div style={{ textAlign: 'center', padding: '60px', color: 'var(--c-muted)' }}>
                                 <div style={{ fontSize: '32px', marginBottom: '12px' }}>📭</div>
                                 <div style={{ fontSize: '14px' }}>{isFiltered ? '此條件下沒有股利紀錄' : '還沒有股利紀錄'}</div>
                             </div>
@@ -380,15 +380,15 @@ export default function HistoryPnL() {
                                         {filteredDividends.map((d, i) => (
                                             <tr key={i}>
                                                 <td style={{ color: '#6b7690', fontSize: '13px' }}>{d.date}</td>
-                                                <td><span style={{ color: '#4f8ef7', fontWeight: 700 }}>{d.code}</span></td>
+                                                <td><span style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{d.code}</span></td>
                                                 <td style={{ color: '#c8d0e0' }}>{d.name}</td>
                                                 <td>
-                                                    <span style={{ color: '#00c896', fontWeight: 700 }}>{d.cashDividend.toLocaleString()}</span>
-                                                    <span style={{ color: '#8892a4', fontSize: '12px' }}> 元</span>
+                                                    <span style={{ color: 'var(--c-positive)', fontWeight: 700 }}>{d.cashDividend.toLocaleString()}</span>
+                                                    <span style={{ color: 'var(--c-muted)', fontSize: '12px' }}> 元</span>
                                                 </td>
                                                 <td>
                                                     {d.stockDividend > 0
-                                                        ? <><span style={{ color: '#4f8ef7', fontWeight: 700 }}>{d.stockDividend.toLocaleString()}</span><span style={{ color: '#8892a4', fontSize: '12px' }}> 股</span></>
+                                                        ? <><span style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{d.stockDividend.toLocaleString()}</span><span style={{ color: 'var(--c-muted)', fontSize: '12px' }}> 股</span></>
                                                         : <span style={{ color: '#3d4460' }}>—</span>
                                                     }
                                                 </td>
@@ -400,16 +400,16 @@ export default function HistoryPnL() {
 
                                 {/* 股利小計 */}
                                 {filteredDividends.length > 1 && (
-                                    <div style={{ marginTop: '16px', padding: '12px 16px', backgroundColor: '#0f1117', borderRadius: '8px', display: 'flex', gap: '28px', flexWrap: 'wrap' }}>
+                                    <div style={{ marginTop: '16px', padding: '12px 16px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', display: 'flex', gap: '28px', flexWrap: 'wrap' }}>
                                         <div>
-                                            <span style={{ fontSize: '11px', color: '#8892a4' }}>現金股利合計　</span>
-                                            <span style={{ fontSize: '15px', fontWeight: 700, color: '#00c896' }}>
+                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>現金股利合計　</span>
+                                            <span style={{ fontSize: '15px', fontWeight: 700, color: 'var(--c-positive)' }}>
                                                 ${totalDividend.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
                                             </span>
                                         </div>
                                         <div>
-                                            <span style={{ fontSize: '11px', color: '#8892a4' }}>筆數　</span>
-                                            <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>{filteredDividends.length} 筆</span>
+                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>筆數　</span>
+                                            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>{filteredDividends.length} 筆</span>
                                         </div>
                                     </div>
                                 )}

@@ -96,11 +96,11 @@ function calcMDD(curve: number[]): number {
 }
 
 function heatColor(val: number, max: number): string {
-    if (max === 0) return '#2e3349'
+    if (max === 0) return 'var(--c-border)'
     const r = Math.min(Math.abs(val) / max, 1)
     if (val > 0) return `rgba(0,200,150,${(0.15 + r * 0.65).toFixed(2)})`
     if (val < 0) return `rgba(255,87,87,${(0.15 + r * 0.65).toFixed(2)})`
-    return '#21253a'
+    return 'var(--c-card)'
 }
 
 function calcCAGR(startValue: number, endValue: number, years: number): number {
@@ -108,9 +108,9 @@ function calcCAGR(startValue: number, endValue: number, years: number): number {
     return (Math.pow(endValue / startValue, 1 / years) - 1) * 100
 }
 
-const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', outline: 'none' }
-const pnlColor = (v: number) => v >= 0 ? '#00c896' : '#ff5757'
+const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', outline: 'none' }
+const pnlColor = (v: number) => v >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
 const fmtMoney = (v: number) => `${v >= 0 ? '+' : ''}$${Math.abs(v).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`
 const fmtPct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
 
@@ -123,8 +123,8 @@ interface TooltipProps {
 const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
     if (!active || !payload?.length) return null
     return (
-        <div style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '8px', padding: '12px 16px' }}>
-            <p style={{ color: '#8892a4', fontSize: '12px', margin: '0 0 8px' }}>{label}</p>
+        <div style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '12px 16px' }}>
+            <p style={{ color: 'var(--c-muted)', fontSize: '12px', margin: '0 0 8px' }}>{label}</p>
             {payload.map((p) => (
                 <p key={p.name} style={{ color: p.color, fontSize: '14px', fontWeight: 600, margin: '2px 0' }}>
                     {p.name}：{p.name.includes('%') ? `${p.value.toFixed(2)}%` : `$${Number(p.value).toLocaleString()}`}
@@ -671,20 +671,20 @@ export default function YearReview() {
         year: `${p.year}`,
         '年度報酬率%': parseFloat(p.totalReturn.toFixed(2)),
         '年末資產': p.endValue,
-        fill: p.totalReturn >= 0 ? '#00c896' : '#ff5757'
+        fill: p.totalReturn >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
     }))
 
     const filteredWithFill: MonthlyBarEntry[] = filtered.map(m => ({
         ...m,
-        realizedFill: m.realized >= 0 ? '#00c896' : '#ff5757'
+        realizedFill: m.realized >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
     }))
 
     const heatYears = [...new Set(Object.keys(heatmapData).map(k => k.slice(0, 4)))].sort()
     const heatMax = Math.max(...Object.values(heatmapData).map(Math.abs), 1)
 
     const tabBtn = (active: boolean): React.CSSProperties => ({
-        backgroundColor: active ? '#1a1d27' : 'transparent', border: 'none', borderRadius: '6px',
-        padding: '6px 18px', color: active ? '#e2e8f0' : '#8892a4', fontSize: '14px', cursor: 'pointer', fontWeight: active ? 600 : 400,
+        backgroundColor: active ? 'var(--c-sidebar)' : 'transparent', border: 'none', borderRadius: '6px',
+        padding: '6px 18px', color: active ? 'var(--c-text)' : 'var(--c-muted)', fontSize: '14px', cursor: 'pointer', fontWeight: active ? 600 : 400,
     })
 
     return (
@@ -696,14 +696,14 @@ export default function YearReview() {
         @media (max-width: 900px) { .review-stats, .perf-stats, .snap-stats { grid-template-columns: repeat(2, 1fr); } }
         @media (max-width: 480px) { .review-stats, .perf-stats, .snap-stats { grid-template-columns: 1fr; } }
         .perf-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .perf-table th { padding: 10px 12px; text-align: left; color: #8892a4; font-weight: 500; border-bottom: 1px solid #2e3349; white-space: nowrap; }
-        .perf-table td { padding: 12px; border-bottom: 1px solid #2e3349; color: #e2e8f0; white-space: nowrap; }
+        .perf-table th { padding: 10px 12px; text-align: left; color: var(--c-muted); font-weight: 500; border-bottom: 1px solid var(--c-border); white-space: nowrap; }
+        .perf-table td { padding: 12px; border-bottom: 1px solid var(--c-border); color: var(--c-text); white-space: nowrap; }
       `}</style>
 
                     <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
                         <div style={{ marginBottom: '24px' }}>
-                            <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: '0 0 12px' }}>年度復盤</h1>
-                            <div style={{ display: 'inline-flex', backgroundColor: '#21253a', padding: '4px', borderRadius: '8px', gap: '4px' }}>
+                            <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: '0 0 12px' }}>年度復盤</h1>
+                            <div style={{ display: 'inline-flex', backgroundColor: 'var(--c-card)', padding: '4px', borderRadius: '8px', gap: '4px' }}>
                                 <button style={tabBtn(tab === 'review')} onClick={() => setTab('review')}>損益分析</button>
                                 <button style={tabBtn(tab === 'snapshot')} onClick={() => setTab('snapshot')}>資產快照 CAGR</button>
                                 <button style={tabBtn(tab === 'performance')} onClick={() => setTab('performance')}>進階績效</button>
@@ -714,19 +714,19 @@ export default function YearReview() {
                             <>
                                 <div style={{ ...card, marginBottom: '20px', display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                                     <div>
-                                        <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>年度</label>
+                                        <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>年度</label>
                                         <select style={inp} value={selectedYear} onChange={e => handleYearChange(parseInt(e.target.value))}>
                                             {(years.length === 0 ? [new Date().getFullYear()] : years).map(y => <option key={y} value={y}>{y}</option>)}
                                         </select>
                                     </div>
                                     <div>
-                                        <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>起始月份</label>
+                                        <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>起始月份</label>
                                         <select style={inp} value={startMonth} onChange={e => setStartMonth(parseInt(e.target.value))}>
                                             {months.map(m => <option key={m} value={m}>{m} 月</option>)}
                                         </select>
                                     </div>
                                     <div>
-                                        <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>結束月份</label>
+                                        <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>結束月份</label>
                                         <select style={inp} value={endMonth} onChange={e => setEndMonth(parseInt(e.target.value))}>
                                             {months.filter(m => m >= startMonth).map(m => <option key={m} value={m}>{m} 月</option>)}
                                         </select>
@@ -736,43 +736,43 @@ export default function YearReview() {
                                 <div className="review-stats">
                                     {[
                                         { label: '已實現損益', txt: fmtMoney(totalRealized), color: pnlColor(totalRealized) },
-                                        { label: '股利收入', txt: `$${totalDividend.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#4f8ef7' },
+                                        { label: '股利收入', txt: `$${totalDividend.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)' },
                                         { label: '合計收益', txt: fmtMoney(totalPnL), color: pnlColor(totalPnL) },
-                                        { label: '已實現報酬率', txt: realizedReturnRate !== null ? fmtPct(realizedReturnRate) : '—', color: realizedReturnRate !== null ? pnlColor(realizedReturnRate) : '#8892a4' },
+                                        { label: '已實現報酬率', txt: realizedReturnRate !== null ? fmtPct(realizedReturnRate) : '—', color: realizedReturnRate !== null ? pnlColor(realizedReturnRate) : 'var(--c-muted)' },
                                     ].map(({ label, txt, color }) => (
                                         <div key={label} style={card}>
-                                            <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>{label}</div>
+                                            <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}</div>
                                             <div style={{ fontSize: 'clamp(16px, 2vw, 22px)', fontWeight: 700, color }}>{txt}</div>
                                         </div>
                                     ))}
                                 </div>
 
                                 <div style={{ ...card, marginBottom: '20px' }}>
-                                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '20px' }}>
+                                    <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '20px' }}>
                                         {selectedYear} 年 {startMonth}–{endMonth} 月 損益分佈
                                     </div>
-                                    {loading ? <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div> : (
+                                    {loading ? <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>載入中...</div> : (
                                         <ResponsiveContainer width="100%" height={300}>
                                             <BarChart data={filteredWithFill} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                                                <CartesianGrid strokeDasharray="3 3" stroke="#2e3349" />
-                                                <XAxis dataKey="month" tick={{ fill: '#8892a4', fontSize: 12 }} />
-                                                <YAxis tick={{ fill: '#8892a4', fontSize: 12 }} tickFormatter={v => `${(Number(v) / 1000).toFixed(0)}K`} width={50} />
+                                                <CartesianGrid strokeDasharray="3 3" stroke="var(--c-border)" />
+                                                <XAxis dataKey="month" tick={{ fill: 'var(--c-muted)', fontSize: 12 }} />
+                                                <YAxis tick={{ fill: 'var(--c-muted)', fontSize: 12 }} tickFormatter={v => `${(Number(v) / 1000).toFixed(0)}K`} width={50} />
                                                 <Tooltip content={<CustomTooltip />} />
-                                                <Bar dataKey="realized" name="已實現損益" fill="#00c896" radius={[4, 4, 0, 0]} />
-                                                <Bar dataKey="dividend" name="股利收入" fill="#4f8ef7" radius={[4, 4, 0, 0]} />
+                                                <Bar dataKey="realized" name="已實現損益" fill="var(--c-positive)" radius={[4, 4, 0, 0]} />
+                                                <Bar dataKey="dividend" name="股利收入" fill="var(--c-accent)" radius={[4, 4, 0, 0]} />
                                             </BarChart>
                                         </ResponsiveContainer>
                                     )}
                                 </div>
 
                                 <div style={{ ...card, marginBottom: '40px' }}>
-                                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>月份明細</div>
+                                    <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>月份明細</div>
                                     <div style={{ overflowX: 'auto' }}>
                                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                                             <thead>
-                                                <tr style={{ borderBottom: '1px solid #2e3349' }}>
+                                                <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
                                                     {['月份', '已實現損益', '股利收入', '合計', '已實現報酬率'].map(h => (
-                                                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#8892a4', fontWeight: 500 }}>{h}</th>
+                                                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--c-muted)', fontWeight: 500 }}>{h}</th>
                                                     ))}
                                                 </tr>
                                             </thead>
@@ -780,21 +780,21 @@ export default function YearReview() {
                                                 {filtered.map(m => {
                                                     const mr = m.costBasis > 0 ? (m.realized / m.costBasis) * 100 : null
                                                     return (
-                                                        <tr key={m.month} style={{ borderBottom: '1px solid #2e3349' }}>
-                                                            <td style={{ padding: '12px', color: '#e2e8f0', fontWeight: 500 }}>{selectedYear} {m.month}</td>
-                                                            <td style={{ padding: '12px', color: m.realized !== 0 ? pnlColor(m.realized) : '#8892a4', fontWeight: 600 }}>
+                                                        <tr key={m.month} style={{ borderBottom: '1px solid var(--c-border)' }}>
+                                                            <td style={{ padding: '12px', color: 'var(--c-text)', fontWeight: 500 }}>{selectedYear} {m.month}</td>
+                                                            <td style={{ padding: '12px', color: m.realized !== 0 ? pnlColor(m.realized) : 'var(--c-muted)', fontWeight: 600 }}>
                                                                 {m.realized !== 0 ? fmtMoney(m.realized) : '—'}
                                                             </td>
-                                                            <td style={{ padding: '12px', color: m.dividend > 0 ? '#4f8ef7' : '#8892a4', fontWeight: 600 }}>
+                                                            <td style={{ padding: '12px', color: m.dividend > 0 ? 'var(--c-accent)' : 'var(--c-muted)', fontWeight: 600 }}>
                                                                 {m.dividend > 0 ? `+$${m.dividend.toLocaleString()}` : '—'}
                                                             </td>
-                                                            <td style={{ padding: '12px', color: m.total !== 0 ? pnlColor(m.total) : '#8892a4', fontWeight: 700 }}>
+                                                            <td style={{ padding: '12px', color: m.total !== 0 ? pnlColor(m.total) : 'var(--c-muted)', fontWeight: 700 }}>
                                                                 {m.total !== 0 ? fmtMoney(m.total) : '—'}
                                                             </td>
                                                             <td style={{ padding: '12px' }}>
                                                                 {mr !== null
-                                                                    ? <span style={{ backgroundColor: mr >= 0 ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)', color: pnlColor(mr), padding: '3px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>{fmtPct(mr)}</span>
-                                                                    : <span style={{ color: '#8892a4' }}>—</span>}
+                                                                    ? <span style={{ backgroundColor: mr >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(mr), padding: '3px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>{fmtPct(mr)}</span>
+                                                                    : <span style={{ color: 'var(--c-muted)' }}>—</span>}
                                                             </td>
                                                         </tr>
                                                     )
@@ -809,12 +809,12 @@ export default function YearReview() {
                         {tab === 'snapshot' && (
                             <>
                                 <div style={{ marginBottom: '20px' }}>
-                                    <h2 style={{ fontSize: 'clamp(16px, 2vw, 20px)', fontWeight: 700, color: '#e2e8f0', margin: '0 0 4px' }}>投資績效報告</h2>
-                                    <p style={{ fontSize: '13px', color: '#8892a4', margin: 0 }}>基於資產趨勢快照計算，請先在「資產趨勢」頁面記錄每年資產</p>
+                                    <h2 style={{ fontSize: 'clamp(16px, 2vw, 20px)', fontWeight: 700, color: 'var(--c-text)', margin: '0 0 4px' }}>投資績效報告</h2>
+                                    <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: 0 }}>基於資產趨勢快照計算，請先在「資產趨勢」頁面記錄每年資產</p>
                                 </div>
 
                                 {Object.keys(assetSnapshots).length < 2 ? (
-                                    <div style={{ ...card, textAlign: 'center', padding: '48px', color: '#8892a4' }}>
+                                    <div style={{ ...card, textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>
                                         <p style={{ fontSize: '15px' }}>資料不足</p>
                                         <p style={{ fontSize: '13px', marginTop: '8px' }}>請先在「資產趨勢」頁面至少記錄 2 筆以上的資產快照才能計算績效</p>
                                     </div>
@@ -822,46 +822,45 @@ export default function YearReview() {
                                     <>
                                         <div className="snap-stats">
                                             {[
-                                                { label: '整體 CAGR', value: overallCAGR !== null ? `${overallCAGR >= 0 ? '+' : ''}${overallCAGR.toFixed(2)}%` : '—', color: overallCAGR !== null ? pnlColor(overallCAGR) : '#8892a4', desc: '年化複合報酬率' },
-                                                { label: '記錄年數', value: `${(() => { const d = Object.keys(assetSnapshots).sort(); if (d.length < 2) return 0; return ((new Date(d[d.length - 1]).getTime() - new Date(d[0]).getTime()) / (365.25 * 24 * 60 * 60 * 1000)).toFixed(1) })()}`, color: '#4f8ef7', desc: '年' },
-                                                { label: '最新總資產', value: `$${(assetSnapshots[Object.keys(assetSnapshots).sort().pop()!] || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#4f8ef7', desc: '最近一筆快照' },
-                                                { label: '起始資產', value: `$${(assetSnapshots[Object.keys(assetSnapshots).sort()[0]] || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: '#8892a4', desc: '第一筆快照' },
+                                                { label: '整體 CAGR', value: overallCAGR !== null ? `${overallCAGR >= 0 ? '+' : ''}${overallCAGR.toFixed(2)}%` : '—', color: overallCAGR !== null ? pnlColor(overallCAGR) : 'var(--c-muted)', desc: '年化複合報酬率' },
+                                                { label: '記錄年數', value: `${(() => { const d = Object.keys(assetSnapshots).sort(); if (d.length < 2) return 0; return ((new Date(d[d.length - 1]).getTime() - new Date(d[0]).getTime()) / (365.25 * 24 * 60 * 60 * 1000)).toFixed(1) })()}`, color: 'var(--c-accent)', desc: '年' },
+                                                { label: '最新總資產', value: `$${(assetSnapshots[Object.keys(assetSnapshots).sort().pop()!] || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', desc: '最近一筆快照' },
+                                                { label: '起始資產', value: `$${(assetSnapshots[Object.keys(assetSnapshots).sort()[0]] || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-muted)', desc: '第一筆快照' },
                                             ].map(({ label, value, color, desc }) => (
                                                 <div key={label} style={card}>
-                                                    <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '4px' }}>{label}</div>
+                                                    <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '4px' }}>{label}</div>
                                                     <div style={{ fontSize: 'clamp(18px, 2vw, 22px)', fontWeight: 700, color, marginBottom: '4px' }}>{value}</div>
-                                                    <div style={{ fontSize: '11px', color: '#8892a4' }}>{desc}</div>
+                                                    <div style={{ fontSize: '11px', color: 'var(--c-muted)' }}>{desc}</div>
                                                 </div>
                                             ))}
                                         </div>
 
                                         <div style={{ ...card, marginBottom: '20px' }}>
-                                            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '4px' }}>自訂區間 CAGR</div>
-                                            <p style={{ fontSize: '12px', color: '#8892a4', margin: '0 0 16px' }}>
+                                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '4px' }}>自訂區間 CAGR</div>
+                                            <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '0 0 16px' }}>
                                                 依交易紀錄推算期初持倉成本與期末市值
-                                                {perfConfig.startDate && <span style={{ color: '#4f8ef7' }}>起{perfConfig.startDate}</span>}
-                                                {!perfConfig.startDate && <span style={{ color: '#f5a623' }}>\u63d0\u793a\uff1a\u53ef\u5230\u300c\u8a2d\u5b9a\u8207\u5099\u4efd\u300d\u8a2d\u5b9a\u8d77\u59cb\u65e5\uff0c\u8207\u8d77\u59cb\u8cc7\u7522\u3002</span>}
+                                                {perfConfig.startDate && <span style={{ color: 'var(--c-accent)' }}>起{perfConfig.startDate}</span>}
                                             </p>
                                             <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                                                 <div>
-                                                    <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>起始日期</label>
+                                                    <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>起始日期</label>
                                                     <input type="date" style={inp} value={customStart} onChange={e => { setCustomStart(e.target.value); setCustomCAGR(null) }} />
                                                 </div>
                                                 <div>
-                                                    <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>結束日期</label>
+                                                    <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>結束日期</label>
                                                     <input type="date" style={inp} value={customEnd} onChange={e => { setCustomEnd(e.target.value); setCustomCAGR(null) }} />
                                                 </div>
                                                 <button onClick={calcCustomCAGR}
                                                     disabled={perfLoading || !customStart || !customEnd || customStart >= customEnd}
-                                                    style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '8px 20px', color: '#fff', fontSize: '14px', cursor: 'pointer', opacity: (!customStart || !customEnd || customStart >= customEnd) ? 0.5 : 1 }}>
+                                                    style={{ backgroundColor: 'var(--c-accent)', border: 'none', borderRadius: '8px', padding: '8px 20px', color: '#fff', fontSize: '14px', cursor: 'pointer', opacity: (!customStart || !customEnd || customStart >= customEnd) ? 0.5 : 1 }}>
                                                     {perfLoading ? '計算中...' : '計算'}
                                                 </button>
                                             </div>
                                             {customCAGR !== null && (
                                                 <div style={{ marginTop: '16px', backgroundColor: customCAGR >= 0 ? 'rgba(0,200,150,0.1)' : 'rgba(255,87,87,0.1)', border: `1px solid ${customCAGR >= 0 ? 'rgba(0,200,150,0.3)' : 'rgba(255,87,87,0.3)'}`, borderRadius: '10px', padding: '16px 24px', display: 'inline-flex', flexDirection: 'column', gap: '4px' }}>
-                                                    <span style={{ fontSize: '11px', color: '#8892a4' }}>年化 CAGR</span>
+                                                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>年化 CAGR</span>
                                                     <span style={{ fontSize: '32px', fontWeight: 700, color: pnlColor(customCAGR) }}>{customCAGR >= 0 ? '+' : ''}{customCAGR.toFixed(2)}%</span>
-                                                    <span style={{ fontSize: '11px', color: '#8892a4' }}>
+                                                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>
                                                         {perfConfig.startDate && perfConfig.startDate > customStart ? perfConfig.startDate : customStart} \uff5e {customEnd}
                                                         {perfConfig.startValue && perfConfig.startDate && perfConfig.startDate >= customStart && ` \uff5c 起始 $${perfConfig.startValue.toLocaleString()}`}
                                                     </span>
@@ -871,21 +870,21 @@ export default function YearReview() {
 
                                         {perfChartData.length >= 2 && (
                                             <div style={{ ...card, marginBottom: '20px' }}>
-                                                <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '20px' }}>年度報酬率趨勢</div>
+                                                <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '20px' }}>年度報酬率趨勢</div>
                                                 <ResponsiveContainer width="100%" height={280}>
                                                     <BarChart data={perfChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                                                        <CartesianGrid strokeDasharray="3 3" stroke="#2e3349" />
-                                                        <XAxis dataKey="year" tick={{ fill: '#8892a4', fontSize: 12 }} />
-                                                        <YAxis tick={{ fill: '#8892a4', fontSize: 12 }} tickFormatter={v => `${v}%`} width={50} />
+                                                        <CartesianGrid strokeDasharray="3 3" stroke="var(--c-border)" />
+                                                        <XAxis dataKey="year" tick={{ fill: 'var(--c-muted)', fontSize: 12 }} />
+                                                        <YAxis tick={{ fill: 'var(--c-muted)', fontSize: 12 }} tickFormatter={v => `${v}%`} width={50} />
                                                         <Tooltip content={<CustomTooltip />} />
-                                                        <Bar dataKey="年度報酬率%" fill="#00c896" radius={[4, 4, 0, 0]} />
+                                                        <Bar dataKey="年度報酬率%" fill="var(--c-positive)" radius={[4, 4, 0, 0]} />
                                                     </BarChart>
                                                 </ResponsiveContainer>
                                             </div>
                                         )}
 
                                         <div style={card}>
-                                            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>年度績效明細</div>
+                                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>年度績效明細</div>
                                             <div style={{ overflowX: 'auto' }}>
                                                 <table className="perf-table">
                                                     <thead>
@@ -894,7 +893,7 @@ export default function YearReview() {
                                                     <tbody>
                                                         {yearlyPerf.map(p => (
                                                             <tr key={p.year}>
-                                                                <td style={{ color: '#4f8ef7', fontWeight: 600 }}>{p.year}</td>
+                                                                <td style={{ color: 'var(--c-accent)', fontWeight: 600 }}>{p.year}</td>
                                                                 <td>${p.startValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
                                                                 <td>${p.endValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
                                                                 <td style={{ color: pnlColor(p.totalReturn), fontWeight: 600 }}>{p.totalReturn >= 0 ? '+' : ''}{p.totalReturn.toFixed(2)}%</td>
@@ -906,12 +905,12 @@ export default function YearReview() {
                                                             const sv = assetSnapshots[dates[0]] || 0, ev = assetSnapshots[dates[dates.length - 1]] || 0
                                                             const r = sv > 0 ? ((ev - sv) / sv) * 100 : 0
                                                             return (
-                                                                <tr style={{ borderTop: '2px solid #2e3349', backgroundColor: 'rgba(79,142,247,0.05)' }}>
-                                                                    <td style={{ color: '#e2e8f0', fontWeight: 700 }}>整體</td>
+                                                                <tr style={{ borderTop: '2px solid var(--c-border)', backgroundColor: 'color-mix(in srgb, var(--c-accent) 5%, transparent)' }}>
+                                                                    <td style={{ color: 'var(--c-text)', fontWeight: 700 }}>整體</td>
                                                                     <td>${sv.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
                                                                     <td>${ev.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
                                                                     <td style={{ color: pnlColor(r), fontWeight: 600 }}>{r >= 0 ? '+' : ''}{r.toFixed(2)}%</td>
-                                                                    <td style={{ color: overallCAGR !== null ? pnlColor(overallCAGR) : '#8892a4', fontWeight: 700 }}>
+                                                                    <td style={{ color: overallCAGR !== null ? pnlColor(overallCAGR) : 'var(--c-muted)', fontWeight: 700 }}>
                                                                         {overallCAGR !== null ? `${overallCAGR >= 0 ? '+' : ''}${overallCAGR.toFixed(2)}%` : '—'}
                                                                     </td>
                                                                 </tr>
@@ -928,46 +927,46 @@ export default function YearReview() {
 
                         {tab === 'performance' && (
                             xirrLoading
-                                ? <div style={{ textAlign: 'center', padding: '80px', color: '#8892a4' }}>計算中...</div>
+                                ? <div style={{ textAlign: 'center', padding: '80px', color: 'var(--c-muted)' }}>計算中...</div>
                                 : (
                                     <>
                                         {/* ── XIRR 統計卡片 ── */}
                                         <div className="perf-stats">
                                             <div style={card}>
-                                                <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>年化報酬率（XIRR）</div>
-                                                <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: xirr !== null ? pnlColor(xirr) : '#8892a4' }}>
+                                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>年化報酬率（XIRR）</div>
+                                                <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: xirr !== null ? pnlColor(xirr) : 'var(--c-muted)' }}>
                                                     {xirr !== null ? fmtPct(xirr * 100) : '—'}
                                                 </div>
-                                                <div style={{ fontSize: '12px', color: '#8892a4', marginTop: '6px' }}>
+                                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '6px' }}>
                                                     保守估（以成本）：{xirrCost !== null ? fmtPct(xirrCost * 100) : '—'}
                                                 </div>
                                                 {/* ✅ XIRR 無法計算時說明原因，避免用戶誤以為功能故障 */}
                                                 {xirr === null && !xirrLoading && (
-                                                    <div style={{ fontSize: '11px', color: '#f5a623', marginTop: '8px', lineHeight: 1.5 }}>
+                                                    <div style={{ fontSize: '11px', color: 'var(--c-warning)', marginTop: '8px', lineHeight: 1.5 }}>
                                                         現金流方向不足（需同時有買入與賣出），或資料筆數不足，無法計算 XIRR。
                                                     </div>
                                                 )}
                                             </div>
                                             <div style={card}>
-                                                <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>最大回撤（MDD）</div>
-                                                <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: mdd !== null && mdd > 0.1 ? '#ff5757' : '#e2e8f0' }}>
+                                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>最大回撤（MDD）</div>
+                                                <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: mdd !== null && mdd > 0.1 ? 'var(--c-danger)' : 'var(--c-text)' }}>
                                                     {mdd !== null ? `-${(mdd * 100).toFixed(2)}%` : '—'}
                                                 </div>
-                                                <div style={{ fontSize: '12px', color: '#8892a4', marginTop: '6px' }}>依已實現損益曲線計算</div>
+                                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '6px' }}>依已實現損益曲線計算</div>
                                             </div>
                                             <div style={card}>
-                                                <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>交易勝率</div>
-                                                <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: winRate !== null ? (winRate >= 50 ? '#00c896' : '#ff5757') : '#8892a4' }}>
+                                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>交易勝率</div>
+                                                <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: winRate !== null ? (winRate >= 50 ? 'var(--c-positive)' : 'var(--c-danger)') : 'var(--c-muted)' }}>
                                                     {winRate !== null ? `${winRate.toFixed(1)}%` : '—'}
                                                 </div>
-                                                <div style={{ fontSize: '12px', color: '#8892a4', marginTop: '6px' }}>{totalWins} 勝 / {totalTrades - totalWins} 敗（共 {totalTrades} 筆）</div>
+                                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '6px' }}>{totalWins} 勝 / {totalTrades - totalWins} 敗（共 {totalTrades} 筆）</div>
                                             </div>
                                             <div style={card}>
-                                                <div style={{ fontSize: '12px', color: '#8892a4', marginBottom: '8px' }}>平均持有天數</div>
-                                                <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: '#e2e8f0' }}>
+                                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>平均持有天數</div>
+                                                <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: 'var(--c-text)' }}>
                                                     {avgHoldingDays !== null ? `${Math.round(avgHoldingDays)} 天` : '—'}
                                                 </div>
-                                                <div style={{ fontSize: '12px', color: '#8892a4', marginTop: '6px' }}>
+                                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '6px' }}>
                                                     {avgHoldingDays !== null ? avgHoldingDays < 7 ? '短線為主' : avgHoldingDays < 30 ? '波段操作' : '中長線持有' : ''}
                                                 </div>
                                             </div>
@@ -975,23 +974,23 @@ export default function YearReview() {
 
                                         {/* ── 自訂區間 XIRR ── */}
                                         <div style={{ ...card, marginBottom: '20px' }}>
-                                            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '4px' }}>自訂區間 XIRR</div>
-                                            <p style={{ fontSize: '12px', color: '#8892a4', margin: '0 0 16px' }}>
+                                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '4px' }}>自訂區間 XIRR</div>
+                                            <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '0 0 16px' }}>
                                                 計算指定時間區間內的年化報酬率。期初／期末持倉以成本或現價估值，區間內出入金與股利均納入計算。
                                             </p>
                                             <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                                                 <div>
-                                                    <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>起始日期</label>
+                                                    <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>起始日期</label>
                                                     <input type="date" style={inp} value={xirrRangeStart} onChange={e => { setXirrRangeStart(e.target.value); setXirrRange(null) }} />
                                                 </div>
                                                 <div>
-                                                    <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }}>結束日期</label>
+                                                    <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>結束日期</label>
                                                     <input type="date" style={inp} value={xirrRangeEnd} onChange={e => { setXirrRangeEnd(e.target.value); setXirrRange(null) }} />
                                                 </div>
                                                 <button
                                                     onClick={calcXirrRange}
                                                     disabled={xirrRangeLoading || !xirrRangeStart || !xirrRangeEnd || xirrRangeStart >= xirrRangeEnd}
-                                                    style={{ backgroundColor: '#4f8ef7', border: 'none', borderRadius: '8px', padding: '8px 20px', color: '#fff', fontSize: '14px', cursor: 'pointer', opacity: (!xirrRangeStart || !xirrRangeEnd || xirrRangeStart >= xirrRangeEnd) ? 0.5 : 1 }}>
+                                                    style={{ backgroundColor: 'var(--c-accent)', border: 'none', borderRadius: '8px', padding: '8px 20px', color: '#fff', fontSize: '14px', cursor: 'pointer', opacity: (!xirrRangeStart || !xirrRangeEnd || xirrRangeStart >= xirrRangeEnd) ? 0.5 : 1 }}>
                                                     {xirrRangeLoading ? '計算中...' : '計算'}
                                                 </button>
 
@@ -1002,19 +1001,19 @@ export default function YearReview() {
                                                         borderRadius: '8px', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: '12px'
                                                     }}>
                                                         <div>
-                                                            <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '2px' }}>區間 XIRR</div>
+                                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '2px' }}>區間 XIRR</div>
                                                             <div style={{ fontSize: '22px', fontWeight: 700, color: pnlColor(xirrRange) }}>
                                                                 {fmtPct(xirrRange * 100)}
                                                             </div>
                                                         </div>
-                                                        <div style={{ fontSize: '11px', color: '#8892a4', lineHeight: 1.6 }}>
+                                                        <div style={{ fontSize: '11px', color: 'var(--c-muted)', lineHeight: 1.6 }}>
                                                             {xirrRangeStart} ～ {xirrRangeEnd}
                                                         </div>
                                                     </div>
                                                 )}
 
                                                 {xirrRange === null && !xirrRangeLoading && xirrRangeStart && xirrRangeEnd && xirrRangeStart < xirrRangeEnd && (
-                                                    <span style={{ fontSize: '12px', color: '#8892a4', alignSelf: 'center' }}>
+                                                    <span style={{ fontSize: '12px', color: 'var(--c-muted)', alignSelf: 'center' }}>
                                                         點「計算」取得區間 XIRR
                                                     </span>
                                                 )}
@@ -1022,7 +1021,7 @@ export default function YearReview() {
 
                                             {/* 快速區間按鈕 */}
                                             <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
-                                                <span style={{ fontSize: '12px', color: '#8892a4', alignSelf: 'center', marginRight: '4px' }}>快速選擇：</span>
+                                                <span style={{ fontSize: '12px', color: 'var(--c-muted)', alignSelf: 'center', marginRight: '4px' }}>快速選擇：</span>
                                                 {[
                                                     { label: '近 1 年', years: 1 },
                                                     { label: '近 2 年', years: 2 },
@@ -1033,7 +1032,7 @@ export default function YearReview() {
                                                     const start = new Date(Date.now() - y * 365.25 * 86400000).toISOString().split('T')[0]
                                                     return (
                                                         <button key={label} onClick={() => { setXirrRangeStart(start); setXirrRangeEnd(end); setXirrRange(null) }}
-                                                            style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '6px', padding: '4px 12px', color: '#8892a4', fontSize: '12px', cursor: 'pointer' }}>
+                                                            style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '4px 12px', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}>
                                                             {label}
                                                         </button>
                                                     )
@@ -1044,7 +1043,7 @@ export default function YearReview() {
                                                         setXirrRangeEnd(`${y}-12-31`)
                                                         setXirrRange(null)
                                                     }}
-                                                        style={{ backgroundColor: '#21253a', border: '1px solid #2e3349', borderRadius: '6px', padding: '4px 12px', color: '#8892a4', fontSize: '12px', cursor: 'pointer' }}>
+                                                        style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '4px 12px', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}>
                                                         {y} 年
                                                     </button>
                                                 ))}
@@ -1053,35 +1052,35 @@ export default function YearReview() {
 
                                         {/* ── 各年度已實現績效 ── */}
                                         <div style={{ ...card, marginBottom: '20px' }}>
-                                            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>各年度已實現績效</div>
+                                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>各年度已實現績效</div>
                                             {yearStats.length === 0
-                                                ? <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4' }}>尚無已實現交易紀錄</div>
+                                                ? <div style={{ textAlign: 'center', padding: '32px', color: 'var(--c-muted)' }}>尚無已實現交易紀錄</div>
                                                 : (
                                                     <div style={{ overflowX: 'auto' }}>
                                                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                                                             <thead>
-                                                                <tr style={{ borderBottom: '1px solid #2e3349' }}>
+                                                                <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
                                                                     {['年度', '已實現損益', '股利收入', '合計', '已實現報酬率', '勝率', '交易筆數'].map(h => (
-                                                                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#8892a4', fontWeight: 500, whiteSpace: 'nowrap' }}>{h}</th>
+                                                                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--c-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>{h}</th>
                                                                     ))}
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
                                                                 {yearStats.map(y => (
-                                                                    <tr key={y.year} style={{ borderBottom: '1px solid #2e3349' }}>
-                                                                        <td style={{ padding: '12px', color: '#4f8ef7', fontWeight: 700 }}>{y.year}</td>
+                                                                    <tr key={y.year} style={{ borderBottom: '1px solid var(--c-border)' }}>
+                                                                        <td style={{ padding: '12px', color: 'var(--c-accent)', fontWeight: 700 }}>{y.year}</td>
                                                                         <td style={{ padding: '12px', color: pnlColor(y.realized), fontWeight: 600 }}>{fmtMoney(y.realized)}</td>
-                                                                        <td style={{ padding: '12px', color: '#4f8ef7', fontWeight: 600 }}>+${y.dividend.toLocaleString()}</td>
+                                                                        <td style={{ padding: '12px', color: 'var(--c-accent)', fontWeight: 600 }}>+${y.dividend.toLocaleString()}</td>
                                                                         <td style={{ padding: '12px', color: pnlColor(y.total), fontWeight: 700 }}>{fmtMoney(y.total)}</td>
                                                                         <td style={{ padding: '12px' }}>
                                                                             {y.returnRate !== null
-                                                                                ? <span style={{ backgroundColor: y.returnRate >= 0 ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)', color: pnlColor(y.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>{fmtPct(y.returnRate)}</span>
+                                                                                ? <span style={{ backgroundColor: y.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(y.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>{fmtPct(y.returnRate)}</span>
                                                                                 : '—'}
                                                                         </td>
-                                                                        <td style={{ padding: '12px', color: y.winRate !== null ? (y.winRate >= 50 ? '#00c896' : '#ff5757') : '#8892a4', fontWeight: 600 }}>
+                                                                        <td style={{ padding: '12px', color: y.winRate !== null ? (y.winRate >= 50 ? 'var(--c-positive)' : 'var(--c-danger)') : 'var(--c-muted)', fontWeight: 600 }}>
                                                                             {y.winRate !== null ? `${y.winRate.toFixed(1)}%` : '—'}
                                                                         </td>
-                                                                        <td style={{ padding: '12px', color: '#8892a4' }}>{y.tradeCount} 筆</td>
+                                                                        <td style={{ padding: '12px', color: 'var(--c-muted)' }}>{y.tradeCount} 筆</td>
                                                                     </tr>
                                                                 ))}
                                                             </tbody>
@@ -1092,29 +1091,29 @@ export default function YearReview() {
 
                                         {/* ── 月份損益熱力圖 ── */}
                                         <div style={{ ...card, marginBottom: '20px' }}>
-                                            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>月份損益熱力圖（全歷史）</div>
+                                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>月份損益熱力圖（全歷史）</div>
                                             {heatYears.length === 0
-                                                ? <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4' }}>尚無資料</div>
+                                                ? <div style={{ textAlign: 'center', padding: '32px', color: 'var(--c-muted)' }}>尚無資料</div>
                                                 : (
                                                     <div style={{ overflowX: 'auto' }}>
                                                         <table style={{ borderCollapse: 'separate', borderSpacing: '4px', fontSize: '12px' }}>
                                                             <thead>
                                                                 <tr>
-                                                                    <th style={{ padding: '4px 8px', color: '#8892a4', fontWeight: 500, textAlign: 'left', minWidth: '48px' }} />
+                                                                    <th style={{ padding: '4px 8px', color: 'var(--c-muted)', fontWeight: 500, textAlign: 'left', minWidth: '48px' }} />
                                                                     {Array.from({ length: 12 }, (_, i) => (
-                                                                        <th key={i} style={{ padding: '4px 8px', color: '#8892a4', fontWeight: 500, textAlign: 'center', minWidth: '54px' }}>{i + 1}月</th>
+                                                                        <th key={i} style={{ padding: '4px 8px', color: 'var(--c-muted)', fontWeight: 500, textAlign: 'center', minWidth: '54px' }}>{i + 1}月</th>
                                                                     ))}
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
                                                                 {heatYears.map(yr => (
                                                                     <tr key={yr}>
-                                                                        <td style={{ padding: '4px 8px', color: '#8892a4', fontWeight: 600, whiteSpace: 'nowrap' }}>{yr}</td>
+                                                                        <td style={{ padding: '4px 8px', color: 'var(--c-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>{yr}</td>
                                                                         {Array.from({ length: 12 }, (_, i) => {
                                                                             const mo = `${yr}-${String(i + 1).padStart(2, '0')}`
                                                                             const val = heatmapData[mo]
                                                                             return (
-                                                                                <td key={i} style={{ padding: '6px 4px', borderRadius: '6px', textAlign: 'center', backgroundColor: val !== undefined ? heatColor(val, heatMax) : '#1a1d27', color: val !== undefined ? (val >= 0 ? '#00c896' : '#ff5757') : '#2e3349', fontWeight: 600, minWidth: '54px', fontSize: '11px', whiteSpace: 'nowrap' }}>
+                                                                                <td key={i} style={{ padding: '6px 4px', borderRadius: '6px', textAlign: 'center', backgroundColor: val !== undefined ? heatColor(val, heatMax) : 'var(--c-sidebar)', color: val !== undefined ? (val >= 0 ? 'var(--c-positive)' : 'var(--c-danger)') : 'var(--c-border)', fontWeight: 600, minWidth: '54px', fontSize: '11px', whiteSpace: 'nowrap' }}>
                                                                                     {val !== undefined ? `${val >= 0 ? '+' : ''}${(val / 1000).toFixed(1)}K` : '—'}
                                                                                 </td>
                                                                             )
@@ -1129,31 +1128,31 @@ export default function YearReview() {
 
                                         {/* ── 已實現交易明細 ── */}
                                         <div style={card}>
-                                            <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>
+                                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>
                                                 已實現交易明細（最近 {Math.min(realizedTrades.length, 50)} 筆）
                                             </div>
                                             {realizedTrades.length === 0
-                                                ? <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4' }}>尚無已實現交易</div>
+                                                ? <div style={{ textAlign: 'center', padding: '32px', color: 'var(--c-muted)' }}>尚無已實現交易</div>
                                                 : (
                                                     <div style={{ overflowX: 'auto' }}>
                                                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                                                             <thead>
-                                                                <tr style={{ borderBottom: '1px solid #2e3349' }}>
+                                                                <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
                                                                     {['賣出日', '代號', '名稱', '持有天數', '損益', '報酬率'].map(h => (
-                                                                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#8892a4', fontWeight: 500, whiteSpace: 'nowrap' }}>{h}</th>
+                                                                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--c-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>{h}</th>
                                                                     ))}
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
                                                                 {realizedTrades.slice(0, 50).map((r, i) => (
-                                                                    <tr key={i} style={{ borderBottom: '1px solid #2e3349' }}>
-                                                                        <td style={{ padding: '12px', color: '#8892a4' }}>{r.date}</td>
-                                                                        <td style={{ padding: '12px', color: '#4f8ef7', fontWeight: 700 }}>{r.code}</td>
-                                                                        <td style={{ padding: '12px', color: '#e2e8f0' }}>{r.name}</td>
-                                                                        <td style={{ padding: '12px', color: '#8892a4' }}>{r.holdingDays} 天</td>
+                                                                    <tr key={i} style={{ borderBottom: '1px solid var(--c-border)' }}>
+                                                                        <td style={{ padding: '12px', color: 'var(--c-muted)' }}>{r.date}</td>
+                                                                        <td style={{ padding: '12px', color: 'var(--c-accent)', fontWeight: 700 }}>{r.code}</td>
+                                                                        <td style={{ padding: '12px', color: 'var(--c-text)' }}>{r.name}</td>
+                                                                        <td style={{ padding: '12px', color: 'var(--c-muted)' }}>{r.holdingDays} 天</td>
                                                                         <td style={{ padding: '12px', color: pnlColor(r.pnl), fontWeight: 600 }}>{fmtMoney(r.pnl)}</td>
                                                                         <td style={{ padding: '12px' }}>
-                                                                            <span style={{ backgroundColor: r.returnRate >= 0 ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)', color: pnlColor(r.returnRate), padding: '3px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>
+                                                                            <span style={{ backgroundColor: r.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(r.returnRate), padding: '3px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>
                                                                                 {fmtPct(r.returnRate)}
                                                                             </span>
                                                                         </td>

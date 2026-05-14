@@ -41,13 +41,14 @@ export default function CalendarHome() {
     const [investorInfo, setInvestorInfo] = useState<string | null>(null)
     const [xlsxImporting, setXlsxImporting] = useState(false)
     const watchListRef = useRef<{ code: string; name: string }[]>([])
-    const [filterTypes, setFilterTypes] = useState<Set<string>>(new Set(['fomc', 'futures', 'tech', 'investor', 'personal', 'dividend']))
+    const [filterTypes, setFilterTypes] = useState<Set<string>>(new Set(['fomc', 'futures', 'tech', 'investor', 'personal', 'dividend', 'shareholder']))
     const [myStocksOnly, setMyStocksOnly] = useState(true)
     const [myStockCodes, setMyStockCodes] = useState<Set<string>>(new Set())
-    const [form, setForm] = useState({ title: '', date: '', description: '', url: '' })
+    const [form, setForm] = useState({ title: '', date: '', description: '', url: '', type: 'personal' as CalendarEvent['type'] })
 
     const loadPersonal = async () => {
         const snap = await getDocs(query(userCol(investDB, 'calendarEvents'), orderBy('date', 'asc')))
+        // 讀取所有手動建立的行程（不限 type，支援 personal / tech / fomc / dividend / shareholder 等）
         setPersonalEvents(snap.docs.map(d => ({ id: d.id, ...d.data() } as CalendarEvent)))
     }
 
@@ -370,14 +371,40 @@ export default function CalendarHome() {
 
     const handleAddEvent = async () => {
         if (!form.title || !form.date) return
-        await addDoc(userCol(investDB, 'calendarEvents'), {
-            title: form.title, date: form.date,
-            description: form.description, url: form.url,
-            type: 'personal'
-        })
-        setForm({ title: '', date: '', description: '', url: '' })
+        const type = form.type
+
+        if (type === 'investor') {
+            // 寫入 root collection investorMeetings（與自動抓取同一位置）
+            const [y, m] = form.date.split('-')
+            const yearMonth = `${y}-${m}`
+            const stockCode = form.title.match(/^(\d{4,6})/)?.[1] || form.title
+            const docId = `${stockCode}-${yearMonth}`
+            const docRef = doc(collection(investDB, 'investorMeetings'), docId)
+            const existing = await getDoc(docRef)
+            const oldDates: string[] = existing.exists() ? (existing.data().dates || []) : []
+            const newDates = [...new Set([...oldDates, form.date])].sort()
+            await setDoc(docRef, {
+                stockCode,
+                stockName: form.title,
+                yearMonth,
+                dates: newDates,
+                updatedAt: new Date().toISOString()
+            })
+            await loadInvestorFromFirestore(year, month)
+        } else {
+            // 其餘類型（personal, fomc, tech, dividend, shareholder, futures）全寫入 calendarEvents
+            await addDoc(userCol(investDB, 'calendarEvents'), {
+                title: form.title,
+                date: form.date,
+                description: form.description,
+                url: form.url,
+                type,
+            })
+            loadPersonal()
+        }
+
+        setForm({ title: '', date: '', description: '', url: '', type: 'personal' })
         setShowForm(false)
-        loadPersonal()
     }
 
     const handleDeleteEvent = async (id: string) => {
@@ -555,9 +582,11 @@ export default function CalendarHome() {
                                                         <a href={ev.url} target="_blank" rel="noopener noreferrer"
                                                             style={{ color: '#4f8ef7', display: 'flex' }}><ExternalLink size={14} /></a>
                                                     )}
-                                                    {ev.type === 'personal' && (
+                                                    {/* 手動建立的行程（存在 calendarEvents collection）才顯示刪除鈕 */}
+                                                    {['personal', 'tech', 'fomc', 'dividend', 'shareholder', 'futures'].includes(ev.type) && ev.id && !ev.id.startsWith('fomc-') && !ev.id.startsWith('gtc-') && !ev.id.startsWith('wwdc-') && !ev.id.startsWith('build-') && !ev.id.startsWith('google-io-') && !ev.id.startsWith('ces-') && !ev.id.startsWith('futures-') && !ev.id.startsWith('div-') && (
                                                         <button onClick={() => handleDeleteEvent(ev.id)}
-                                                            style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer', padding: 0 }}>
+                                                            style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer', padding: 0 }}
+                                                            title="刪除此行程">
                                                             <X size={14} />
                                                         </button>
                                                     )}
@@ -581,7 +610,7 @@ export default function CalendarHome() {
                                     ))}
                                 </div>
                             )}
-                            <button onClick={() => { setForm(f => ({ ...f, date: selectedDay })); setShowForm(true) }}
+                            <button onClick={() => { setForm(f => ({ ...f, date: selectedDay, type: 'personal' })); setShowForm(true) }}
                                 style={{ ...btn('#21253a'), border: '1px solid #2e3349', width: '100%', justifyContent: 'center', marginTop: '12px', fontSize: '13px' }}>
                                 <Plus size={13} />新增行程到這天
                             </button>
@@ -618,13 +647,55 @@ export default function CalendarHome() {
                     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                         <div style={{ ...card, width: '100%', maxWidth: '480px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                                <span style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0' }}>新增個人行程</span>
+                                <span style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0' }}>新增行程</span>
                                 <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
                             </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                                {/* 類型選擇 */}
+                                <div>
+                                    <label style={lbl}>類型 *</label>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                        {([
+                                            ['personal', '個人行程'],
+                                            ['tech', '科技活動'],
+                                            ['fomc', 'FOMC'],
+                                            ['investor', '法說會'],
+                                            ['dividend', '除權息'],
+                                            ['shareholder', '股東會'],
+                                        ] as [CalendarEvent['type'], string][]).map(([t, label]) => (
+                                            <button key={t} onClick={() => setForm(f => ({ ...f, type: t }))}
+                                                style={{
+                                                    padding: '5px 14px', borderRadius: '20px', border: `1px solid`,
+                                                    borderColor: form.type === t ? EVENT_COLORS[t] : '#2e3349',
+                                                    backgroundColor: form.type === t ? `${EVENT_COLORS[t]}22` : 'transparent',
+                                                    color: form.type === t ? EVENT_COLORS[t] : '#8892a4',
+                                                    fontSize: '12px', cursor: 'pointer', fontWeight: form.type === t ? 600 : 400,
+                                                    display: 'flex', alignItems: 'center', gap: '5px'
+                                                }}>
+                                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: EVENT_COLORS[t], display: 'inline-block' }} />
+                                                {label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    {form.type === 'investor' && (
+                                        <div style={{ fontSize: '11px', color: '#f5a623', marginTop: '6px' }}>
+                                            ⚠️ 法說會請在標題填入「股票代號 公司名稱」，如：2330 台積電
+                                        </div>
+                                    )}
+                                </div>
                                 <div>
                                     <label style={lbl}>標題 *</label>
-                                    <input style={inp} placeholder="行程標題" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+                                    <input style={inp}
+                                        placeholder={
+                                            form.type === 'investor' ? '2330 台積電' :
+                                                form.type === 'tech' ? '例：Apple 發表會' :
+                                                    form.type === 'fomc' ? 'FOMC 會議結果' :
+                                                        form.type === 'dividend' ? '例：2330 台積電 除權息' :
+                                                            form.type === 'shareholder' ? '例：2330 台積電 股東會' :
+                                                                '行程標題'
+                                        }
+                                        value={form.title}
+                                        onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
                                 </div>
                                 <div>
                                     <label style={lbl}>日期 *</label>
@@ -641,7 +712,7 @@ export default function CalendarHome() {
                             </div>
                             <div style={{ display: 'flex', gap: '8px', marginTop: '20px', justifyContent: 'flex-end' }}>
                                 <button style={btn('#2e3349')} onClick={() => setShowForm(false)}><X size={14} />取消</button>
-                                <button style={btn('#4f8ef7')} onClick={handleAddEvent}>新增</button>
+                                <button style={{ ...btn(EVENT_COLORS[form.type] || '#4f8ef7') }} onClick={handleAddEvent}>新增</button>
                             </div>
                         </div>
                     </div>

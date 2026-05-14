@@ -35,14 +35,14 @@ interface ChartBar {
 }
 
 const UNGROUPED = '未分類'
-const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
+const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }
 const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 const MARKETS = {
-    tw: { label: '台股 TW', color: '#4f8ef7', bg: 'rgba(79,142,247,0.12)', activeColor: '#4f8ef7' },
-    jp: { label: '日股 JP', color: '#f5a623', bg: 'rgba(245,166,35,0.12)', activeColor: '#f5a623' },
+    tw: { label: '台股 TW', color: 'var(--c-accent)', bg: 'color-mix(in srgb, var(--c-accent) 12%, transparent)', activeColor: 'var(--c-accent)' },
+    jp: { label: '日股 JP', color: 'var(--c-warning)', bg: 'color-mix(in srgb, var(--c-warning) 12%, transparent)', activeColor: 'var(--c-warning)' },
     us: { label: '美股 US', color: '#60a5fa', bg: 'rgba(96,165,250,0.12)', activeColor: '#60a5fa' },
 } as const
 
@@ -108,7 +108,7 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
 
     // 是否上漲（首→末）
     const isUp = closes[closes.length - 1] >= closes[0]
-    const lineColor = isUp ? '#00c896' : '#ff5757'
+    const lineColor = isUp ? 'var(--c-positive)' : 'var(--c-danger)'
     const fillColor = isUp ? 'rgba(0,200,150,0.08)' : 'rgba(255,87,87,0.08)'
 
     // 填色路徑
@@ -148,7 +148,7 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
                     left: tooltip!.x < W / 2 ? tooltip!.x + 8 : undefined,
                     right: tooltip!.x >= W / 2 ? W - tooltip!.x + 8 : undefined,
                     backgroundColor: '#0d1017',
-                    border: '1px solid #2e3349',
+                    border: '1px solid var(--c-border)',
                     borderRadius: '6px',
                     padding: '5px 8px',
                     fontSize: '10px',
@@ -158,7 +158,7 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
                     zIndex: 10,
                     lineHeight: 1.7,
                 }}>
-                    <div style={{ color: '#8892a4' }}>{hovered.date}</div>
+                    <div style={{ color: 'var(--c-muted)' }}>{hovered.date}</div>
                     <div>收盤 <span style={{ color: lineColor, fontWeight: 700 }}>{formatPrice(hovered.close)}</span></div>
                     <div>量 <span style={{ color: '#a78bfa' }}>{formatVol(hovered.volume)}</span></div>
                 </div>
@@ -211,7 +211,7 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
                             cy={pts[tooltip.i].y}
                             r="3"
                             fill={lineColor}
-                            stroke="#1a1d27"
+                            stroke="var(--c-sidebar)"
                             strokeWidth="1.5"
                         />
                     </>
@@ -232,18 +232,18 @@ function DistanceBar({ current, target, type }: { current: number; target: numbe
     const absPct = Math.abs(pct)
     const reached = type === 'high' ? current >= target : current <= target
     const near = !reached && absPct <= 10
-    const barColor = reached ? (type === 'high' ? '#00c896' : '#ff5757') : near ? '#f5a623' : '#4f8ef7'
+    const barColor = reached ? (type === 'high' ? 'var(--c-positive)' : 'var(--c-danger)') : near ? 'var(--c-warning)' : 'var(--c-accent)'
     const fill = Math.min(100, type === 'high' ? (current / target) * 100 : (target / current) * 100)
     const sign = pct > 0 ? '+' : ''
     return (
         <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                <span style={{ fontSize: '11px', color: '#8892a4' }}>{type === 'high' ? '上標' : '下標'} {target}</span>
-                <span style={{ fontSize: '11px', fontWeight: 600, color: reached ? barColor : near ? '#f5a623' : '#8892a4' }}>
+                <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>{type === 'high' ? '上標' : '下標'} {target}</span>
+                <span style={{ fontSize: '11px', fontWeight: 600, color: reached ? barColor : near ? 'var(--c-warning)' : 'var(--c-muted)' }}>
                     {reached ? '✓ 達標' : `${sign}${pct.toFixed(1)}%`}
                 </span>
             </div>
-            <div style={{ height: '5px', backgroundColor: '#2e3349', borderRadius: '3px', overflow: 'hidden' }}>
+            <div style={{ height: '5px', backgroundColor: 'var(--c-border)', borderRadius: '3px', overflow: 'hidden' }}>
                 <div style={{ height: '100%', width: `${fill}%`, backgroundColor: barColor, borderRadius: '3px', transition: 'width 0.4s ease' }} />
             </div>
         </div>
@@ -253,25 +253,25 @@ function DistanceBar({ current, target, type }: { current: number; target: numbe
 function TargetCell({ current, target, type }: { current?: number; target: number; type: 'high' | 'low' }) {
     if (!current) return (
         <div>
-            <span style={{ fontSize: '12px', fontWeight: 600, color: type === 'high' ? '#00c896' : '#ff5757' }}>{target}</span>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: type === 'high' ? 'var(--c-positive)' : 'var(--c-danger)' }}>{target}</span>
             <span style={{ fontSize: '10px', color: '#4a5568', marginLeft: '4px' }}>—</span>
         </div>
     )
     const pct = (target - current) / current * 100
     const reached = type === 'high' ? current >= target : current <= target
     const near = !reached && Math.abs(pct) <= 10
-    const barColor = reached ? (type === 'high' ? '#00c896' : '#ff5757') : near ? '#f5a623' : '#4f8ef7'
-    const textColor = reached ? barColor : near ? '#f5a623' : '#8892a4'
+    const barColor = reached ? (type === 'high' ? 'var(--c-positive)' : 'var(--c-danger)') : near ? 'var(--c-warning)' : 'var(--c-accent)'
+    const textColor = reached ? barColor : near ? 'var(--c-warning)' : 'var(--c-muted)'
     const fill = Math.min(100, type === 'high' ? (current / target) * 100 : (target / current) * 100)
     return (
         <div style={{ minWidth: '90px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
-                <span style={{ fontSize: '12px', fontWeight: 600, color: type === 'high' ? '#00c896' : '#ff5757' }}>{target}</span>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: type === 'high' ? 'var(--c-positive)' : 'var(--c-danger)' }}>{target}</span>
                 <span style={{ fontSize: '10px', fontWeight: 600, color: textColor }}>
                     {reached ? '✓' : `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`}
                 </span>
             </div>
-            <div style={{ height: '3px', backgroundColor: '#2e3349', borderRadius: '2px', marginTop: '3px', overflow: 'hidden' }}>
+            <div style={{ height: '3px', backgroundColor: 'var(--c-border)', borderRadius: '2px', marginTop: '3px', overflow: 'hidden' }}>
                 <div style={{ height: '100%', width: `${fill}%`, backgroundColor: barColor, borderRadius: '2px' }} />
             </div>
         </div>
@@ -281,7 +281,7 @@ function TargetCell({ current, target, type }: { current?: number; target: numbe
 function MABadge({ label, value, currentPrice }: { label: string; value: number | null; currentPrice?: number }) {
     if (value === null) return <span style={{ fontSize: '10px', color: '#3d4460' }}>{label}:—</span>
     const above = currentPrice ? currentPrice > value : null
-    const color = above === null ? '#8892a4' : above ? '#00c896' : '#ff5757'
+    const color = above === null ? 'var(--c-muted)' : above ? 'var(--c-positive)' : 'var(--c-danger)'
     return (
         <span style={{ fontSize: '10px', color, backgroundColor: `${color}15`, borderRadius: '4px', padding: '1px 5px', fontWeight: 600 }}>
             {label}:{value.toFixed(1)}
@@ -297,7 +297,7 @@ function TableRow({ item, ma, onEdit, onDelete }: {
     const reachedHigh = !!(currentPrice && targetHigh && currentPrice >= targetHigh)
     const reachedLow = !!(currentPrice && targetLow && currentPrice <= targetLow)
     const rowBg = reachedHigh ? 'rgba(0,200,150,0.06)' : reachedLow ? 'rgba(255,87,87,0.06)' : 'transparent'
-    const leftBorder = reachedHigh ? '2px solid #00c896' : reachedLow ? '2px solid #ff5757' : '2px solid transparent'
+    const leftBorder = reachedHigh ? '2px solid var(--c-positive)' : reachedLow ? '2px solid var(--c-danger)' : '2px solid transparent'
     const isTW = market === 'tw'
 
     return (
@@ -305,13 +305,13 @@ function TableRow({ item, ma, onEdit, onDelete }: {
             <td style={{ padding: '6px 10px 6px 12px', whiteSpace: 'nowrap', borderLeft: leftBorder }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <MarketBadge market={market || 'tw'} />
-                    <span style={{ fontWeight: 700, color: '#4f8ef7', fontSize: '13px' }}>{code}</span>
+                    <span style={{ fontWeight: 700, color: 'var(--c-accent)', fontSize: '13px' }}>{code}</span>
                     <span style={{ fontSize: '11px', color: '#6b7690' }}>{name}</span>
                     {group && group !== UNGROUPED &&
-                        <span style={{ fontSize: '10px', backgroundColor: 'rgba(79,142,247,0.12)', color: '#4f8ef7', borderRadius: '6px', padding: '0px 5px' }}>{group}</span>}
+                        <span style={{ fontSize: '10px', backgroundColor: 'color-mix(in srgb, var(--c-accent) 12%, transparent)', color: 'var(--c-accent)', borderRadius: '6px', padding: '0px 5px' }}>{group}</span>}
                 </div>
             </td>
-            <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700, fontSize: '13px', color: '#e2e8f0', whiteSpace: 'nowrap' }}>
+            <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700, fontSize: '13px', color: 'var(--c-text)', whiteSpace: 'nowrap' }}>
                 {currentPrice
                     ? (market === 'jp' ? <span>{Math.round(currentPrice).toLocaleString()} <span style={{ fontSize: '10px', color: '#4a5568' }}>円</span></span> : currentPrice.toFixed(2))
                     : <span style={{ color: '#3a4560' }}>—</span>}
@@ -557,9 +557,9 @@ export default function Watchlist() {
                 .watch-card { transition: box-shadow 0.2s, border-color 0.2s; }
                 .watch-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
                 .overview-table { width: 100%; border-collapse: collapse; }
-                .overview-table thead th { position: sticky; top: 0; background: #12151f; z-index: 1; padding: 6px 10px; text-align: left; font-size: 11px; color: #6b7690; font-weight: 600; border-bottom: 1px solid #2e3349; letter-spacing: 0.03em; text-transform: uppercase; }
+                .overview-table thead th { position: sticky; top: 0; background: #12151f; z-index: 1; padding: 6px 10px; text-align: left; font-size: 11px; color: #6b7690; font-weight: 600; border-bottom: 1px solid var(--c-border); letter-spacing: 0.03em; text-transform: uppercase; }
                 .overview-table tbody tr:hover td { background-color: rgba(79,142,247,0.05) !important; }
-                .market-toggle { display: flex; border-radius: 8px; overflow: hidden; border: 1px solid #2e3349; max-width: 280px; }
+                .market-toggle { display: flex; border-radius: 8px; overflow: hidden; border: 1px solid var(--c-border); max-width: 280px; }
                 .market-toggle button { flex: 1; padding: 8px 0; border: none; cursor: pointer; font-size: 12px; font-weight: 700; transition: background 0.15s, color 0.15s; }
             `}</style>
 
@@ -569,37 +569,34 @@ export default function Watchlist() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                     <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>自選股追蹤</h1>
+                            <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>自選股追蹤</h1>
                             {alertCount > 0 && (
-                                <span style={{ fontSize: '12px', backgroundColor: 'rgba(245,166,35,0.2)', color: '#f5a623', borderRadius: '10px', padding: '2px 10px', fontWeight: 600 }}>
+                                <span style={{ fontSize: '12px', backgroundColor: 'rgba(245,166,35,0.2)', color: 'var(--c-warning)', borderRadius: '10px', padding: '2px 10px', fontWeight: 600 }}>
                                     🔔 {alertCount} 檔達標
                                 </span>
                             )}
                         </div>
-                        <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>
-                            {lastUpdated ? `現價更新：${lastUpdated}` : '點「更新現價」取得最新報價'}
-                            {maUpdatedAt && <span style={{ marginLeft: '8px', color: '#a78bfa' }}>· MA：{maUpdatedAt}</span>}
-                            {chartUpdatedAt && <span style={{ marginLeft: '8px', color: '#00c896' }}>· 線圖：{chartUpdatedAt}</span>}
+                        <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        <div style={{ display: 'flex', backgroundColor: '#12151f', borderRadius: '8px', padding: '3px', border: '1px solid #2e3349' }}>
-                            <button onClick={() => setViewMode('card')} style={{ ...btn(viewMode === 'card' ? '#2e3349' : 'transparent'), padding: '5px 10px', fontSize: '12px', borderRadius: '6px' }}><LayoutGrid size={13} />卡片</button>
-                            <button onClick={() => setViewMode('table')} style={{ ...btn(viewMode === 'table' ? '#2e3349' : 'transparent'), padding: '5px 10px', fontSize: '12px', borderRadius: '6px' }}><Table2 size={13} />一覽表</button>
+                        <div style={{ display: 'flex', backgroundColor: '#12151f', borderRadius: '8px', padding: '3px', border: '1px solid var(--c-border)' }}>
+                            <button onClick={() => setViewMode('card')} style={{ ...btn(viewMode === 'card' ? 'var(--c-border)' : 'transparent'), padding: '5px 10px', fontSize: '12px', borderRadius: '6px' }}><LayoutGrid size={13} />卡片</button>
+                            <button onClick={() => setViewMode('table')} style={{ ...btn(viewMode === 'table' ? 'var(--c-border)' : 'transparent'), padding: '5px 10px', fontSize: '12px', borderRadius: '6px' }}><Table2 size={13} />一覽表</button>
                         </div>
-                        <button onClick={handleUpdateChart} disabled={chartLoading || items.length === 0} style={{ ...btn('#21253a'), border: '1px solid #2e3349' }}>
+                        <button onClick={handleUpdateChart} disabled={chartLoading || items.length === 0} style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)' }}>
                             <BarChart2 size={14} style={{ animation: chartLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {chartLoading ? '載入中...' : '更新線圖'}
                         </button>
-                        <button onClick={handleUpdateMA} disabled={maLoading || items.length === 0} style={{ ...btn('#21253a'), border: '1px solid #2e3349' }}>
+                        <button onClick={handleUpdateMA} disabled={maLoading || items.length === 0} style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)' }}>
                             <Activity size={14} style={{ animation: maLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {maLoading ? 'MA 計算中...' : '更新 MA'}
                         </button>
-                        <button onClick={handleUpdatePrices} disabled={priceLoading || items.length === 0} style={btn('#21253a')}>
+                        <button onClick={handleUpdatePrices} disabled={priceLoading || items.length === 0} style={btn('var(--c-card)')}>
                             <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {priceLoading ? '更新中...' : '更新現價'}
                         </button>
-                        <button onClick={() => { setShowForm(!showForm); setForm(emptyForm) }} style={btn('#4f8ef7')}>
+                        <button onClick={() => { setShowForm(!showForm); setForm(emptyForm) }} style={btn('var(--c-accent)')}>
                             <Plus size={14} />{showForm ? '取消' : '新增自選股'}
                         </button>
                     </div>
@@ -608,9 +605,9 @@ export default function Watchlist() {
                 {/* 族群篩選列 */}
                 {allGroups.length > 1 && (
                     <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
-                        <Tag size={13} style={{ color: '#8892a4', flexShrink: 0 }} />
+                        <Tag size={13} style={{ color: 'var(--c-muted)', flexShrink: 0 }} />
                         {['all', ...allGroups].map(g => (
-                            <button key={g} onClick={() => setFilterGroup(g)} style={{ ...btn(filterGroup === g ? '#4f8ef7' : '#21253a'), padding: '4px 12px', fontSize: '12px', borderRadius: '20px', border: `1px solid ${filterGroup === g ? '#4f8ef7' : '#2e3349'}` }}>
+                            <button key={g} onClick={() => setFilterGroup(g)} style={{ ...btn(filterGroup === g ? 'var(--c-accent)' : 'var(--c-card)'), padding: '4px 12px', fontSize: '12px', borderRadius: '20px', border: `1px solid ${filterGroup === g ? 'var(--c-accent)' : 'var(--c-border)'}` }}>
                                 {g === 'all' ? `全部 (${items.length})` : `${g} (${items.filter(i => (i.group || UNGROUPED) === g).length})`}
                             </button>
                         ))}
@@ -620,13 +617,13 @@ export default function Watchlist() {
                 {/* 新增表單 */}
                 {showForm && (
                     <div style={{ ...card, marginBottom: '20px' }}>
-                        <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>新增自選股</div>
+                        <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>新增自選股</div>
                         <div style={{ marginBottom: '16px' }}>
                             <label style={lbl}>市場</label>
                             <div className="market-toggle">
                                 {MARKET_ORDER.map(m => (
                                     <button key={m} onClick={() => setForm(f => ({ ...f, market: m, code: '', name: '' }))}
-                                        style={{ background: form.market === m ? MARKETS[m].activeColor : '#0f1117', color: form.market === m ? '#fff' : '#8892a4' }}>
+                                        style={{ background: form.market === m ? MARKETS[m].activeColor : 'var(--c-bg)', color: form.market === m ? '#fff' : 'var(--c-muted)' }}>
                                         {MARKETS[m].label}
                                     </button>
                                 ))}
@@ -667,7 +664,7 @@ export default function Watchlist() {
                                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
                                     {allGroups.filter(g => g !== UNGROUPED).map(g => (
                                         <button key={g} onClick={() => setForm(f => ({ ...f, group: f.group === g ? '' : g }))}
-                                            style={{ ...btn(form.group === g ? '#4f8ef7' : '#21253a'), padding: '3px 10px', fontSize: '12px', borderRadius: '20px', border: `1px solid ${form.group === g ? '#4f8ef7' : '#2e3349'}` }}>{g}</button>
+                                            style={{ ...btn(form.group === g ? 'var(--c-accent)' : 'var(--c-card)'), padding: '3px 10px', fontSize: '12px', borderRadius: '20px', border: `1px solid ${form.group === g ? 'var(--c-accent)' : 'var(--c-border)'}` }}>{g}</button>
                                     ))}
                                 </div>
                                 <input style={inp} placeholder="輸入新族群名稱，或選擇上方已有族群" value={form.group}
@@ -680,7 +677,7 @@ export default function Watchlist() {
                             </div>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
-                            <button style={btn('#2e3349')} onClick={() => { setShowForm(false); setForm(emptyForm) }}><X size={14} />取消</button>
+                            <button style={btn('var(--c-border)')} onClick={() => { setShowForm(false); setForm(emptyForm) }}><X size={14} />取消</button>
                             <button style={btn(MARKETS[form.market].activeColor)} onClick={handleAdd}><Check size={14} />新增</button>
                         </div>
                     </div>
@@ -688,14 +685,14 @@ export default function Watchlist() {
 
                 {/* 載入中 / 空狀態 */}
                 {loading ? (
-                    <div style={{ textAlign: 'center', padding: '60px', color: '#8892a4' }}>
+                    <div style={{ textAlign: 'center', padding: '60px', color: 'var(--c-muted)' }}>
                         <RefreshCw size={24} style={{ animation: 'spin 1s linear infinite', marginBottom: '12px' }} />
                         <p>載入中...</p>
                     </div>
                 ) : items.length === 0 ? (
                     <div style={{ ...card, textAlign: 'center', padding: '60px' }}>
-                        <TrendingUp size={32} color="#2e3349" style={{ marginBottom: '16px' }} />
-                        <p style={{ color: '#8892a4', fontSize: '15px', margin: '0 0 8px' }}>尚無自選股</p>
+                        <TrendingUp size={32} color="var(--c-border)" style={{ marginBottom: '16px' }} />
+                        <p style={{ color: 'var(--c-muted)', fontSize: '15px', margin: '0 0 8px' }}>尚無自選股</p>
                         <p style={{ color: '#3d4460', fontSize: '13px', margin: 0 }}>點擊「新增自選股」開始追蹤</p>
                     </div>
                 ) : viewMode === 'table' ? (
@@ -728,8 +725,8 @@ export default function Watchlist() {
                             return (
                                 <div key={groupName}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', cursor: 'pointer' }} onClick={() => toggleGroup(groupName)}>
-                                        {isCollapsed ? <ChevronRight size={14} color="#8892a4" /> : <ChevronDown size={14} color="#8892a4" />}
-                                        <span style={{ fontSize: '13px', fontWeight: 600, color: groupName === UNGROUPED ? '#8892a4' : '#4f8ef7' }}>{groupName}</span>
+                                        {isCollapsed ? <ChevronRight size={14} color="var(--c-muted)" /> : <ChevronDown size={14} color="var(--c-muted)" />}
+                                        <span style={{ fontSize: '13px', fontWeight: 600, color: groupName === UNGROUPED ? 'var(--c-muted)' : 'var(--c-accent)' }}>{groupName}</span>
                                         <span style={{ fontSize: '11px', color: '#3d4460' }}>{groupItems.length} 檔</span>
                                     </div>
 
@@ -738,19 +735,19 @@ export default function Watchlist() {
                                             {groupItems.map(item => {
                                                 const status = getPriceStatus(item)
                                                 const isEditing = editingCode === item.code
-                                                const borderColor = status === 'high' ? '#00c896' : status === 'low' ? '#ff5757' : '#2e3349'
+                                                const borderColor = status === 'high' ? 'var(--c-positive)' : status === 'low' ? 'var(--c-danger)' : 'var(--c-border)'
                                                 const ma = maData[item.code] || null
                                                 const isTW = item.market === 'tw'
                                                 const chart = chartData[item.code] || null
 
                                                 return (
-                                                    <div key={item.code} className="watch-card" style={{ backgroundColor: '#1a1d27', border: `1px solid ${borderColor}`, borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                    <div key={item.code} className="watch-card" style={{ backgroundColor: 'var(--c-sidebar)', border: `1px solid ${borderColor}`, borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
 
                                                         {/* 第一行：市場 + 代號 + 名稱 + 操作 */}
                                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: 0 }}>
                                                                 <MarketBadge market={item.market || 'tw'} />
-                                                                <span style={{ fontWeight: 700, color: '#4f8ef7', fontSize: '14px' }}>{item.code}</span>
+                                                                <span style={{ fontWeight: 700, color: 'var(--c-accent)', fontSize: '14px' }}>{item.code}</span>
                                                                 <span style={{ fontSize: '12px', color: '#6b7690', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
                                                             </div>
                                                             <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
@@ -761,7 +758,7 @@ export default function Watchlist() {
 
                                                         {/* 現價 + 漲跌（與線圖連動顯示） */}
                                                         <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-                                                            <span style={{ fontSize: '20px', fontWeight: 700, color: '#e2e8f0', lineHeight: 1 }}>
+                                                            <span style={{ fontSize: '20px', fontWeight: 700, color: 'var(--c-text)', lineHeight: 1 }}>
                                                                 {item.currentPrice
                                                                     ? (item.market === 'jp'
                                                                         ? <span>{Math.round(item.currentPrice).toLocaleString()} <span style={{ fontSize: '11px', color: '#4a5568' }}>円</span></span>
@@ -771,7 +768,7 @@ export default function Watchlist() {
                                                             {/* 10日漲跌幅 */}
                                                             {chart && chart.length >= 2 && (() => {
                                                                 const chg = (chart[chart.length - 1].close - chart[0].close) / chart[0].close * 100
-                                                                const color = chg >= 0 ? '#00c896' : '#ff5757'
+                                                                const color = chg >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
                                                                 return <span style={{ fontSize: '11px', color, fontWeight: 600 }}>{chg >= 0 ? '+' : ''}{chg.toFixed(2)}% <span style={{ color: '#4a5568', fontWeight: 400 }}>10日</span></span>
                                                             })()}
                                                         </div>
@@ -795,15 +792,15 @@ export default function Watchlist() {
                                                         {/* 目標標籤 */}
                                                         <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                                                             {item.targetLow && (
-                                                                <span style={{ fontSize: '11px', color: '#ff5757', backgroundColor: 'rgba(255,87,87,0.08)', borderRadius: '6px', padding: '1px 6px' }}>
+                                                                <span style={{ fontSize: '11px', color: 'var(--c-danger)', backgroundColor: 'rgba(255,87,87,0.08)', borderRadius: '6px', padding: '1px 6px' }}>
                                                                     ↓{item.targetLow}
-                                                                    {item.currentPrice && <span style={{ color: '#8892a4', marginLeft: '2px' }}>({((item.targetLow - item.currentPrice) / item.currentPrice * 100).toFixed(1)}%)</span>}
+                                                                    {item.currentPrice && <span style={{ color: 'var(--c-muted)', marginLeft: '2px' }}>({((item.targetLow - item.currentPrice) / item.currentPrice * 100).toFixed(1)}%)</span>}
                                                                 </span>
                                                             )}
                                                             {item.targetHigh && (
-                                                                <span style={{ fontSize: '11px', color: '#00c896', backgroundColor: 'rgba(0,200,150,0.08)', borderRadius: '6px', padding: '1px 6px' }}>
+                                                                <span style={{ fontSize: '11px', color: 'var(--c-positive)', backgroundColor: 'rgba(0,200,150,0.08)', borderRadius: '6px', padding: '1px 6px' }}>
                                                                     ↑{item.targetHigh}
-                                                                    {item.currentPrice && <span style={{ color: '#8892a4', marginLeft: '2px' }}>({((item.targetHigh - item.currentPrice) / item.currentPrice * 100).toFixed(1)}%)</span>}
+                                                                    {item.currentPrice && <span style={{ color: 'var(--c-muted)', marginLeft: '2px' }}>({((item.targetHigh - item.currentPrice) / item.currentPrice * 100).toFixed(1)}%)</span>}
                                                                 </span>
                                                             )}
                                                         </div>
@@ -838,7 +835,7 @@ export default function Watchlist() {
                                                                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
                                                                         {allGroups.filter(g => g !== UNGROUPED).map(g => (
                                                                             <button key={g} onClick={() => setForm(f => ({ ...f, group: f.group === g ? '' : g }))}
-                                                                                style={{ ...btn(form.group === g ? '#4f8ef7' : '#21253a'), padding: '2px 8px', fontSize: '11px', borderRadius: '20px', border: `1px solid ${form.group === g ? '#4f8ef7' : '#2e3349'}` }}>{g}</button>
+                                                                                style={{ ...btn(form.group === g ? 'var(--c-accent)' : 'var(--c-card)'), padding: '2px 8px', fontSize: '11px', borderRadius: '20px', border: `1px solid ${form.group === g ? 'var(--c-accent)' : 'var(--c-border)'}` }}>{g}</button>
                                                                         ))}
                                                                     </div>
                                                                     <input style={inp} placeholder="族群名稱" value={form.group} onChange={e => setForm(f => ({ ...f, group: e.target.value }))} />
@@ -849,21 +846,21 @@ export default function Watchlist() {
                                                                         value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
                                                                 </div>
                                                                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                                                                    <button style={{ ...btn('#2e3349'), fontSize: '12px', padding: '6px 12px' }} onClick={() => setEditingCode(null)}><X size={12} />取消</button>
-                                                                    <button style={{ ...btn('#4f8ef7'), fontSize: '12px', padding: '6px 12px' }} onClick={() => handleEdit(item.code)}><Check size={12} />儲存</button>
+                                                                    <button style={{ ...btn('var(--c-border)'), fontSize: '12px', padding: '6px 12px' }} onClick={() => setEditingCode(null)}><X size={12} />取消</button>
+                                                                    <button style={{ ...btn('var(--c-accent)'), fontSize: '12px', padding: '6px 12px' }} onClick={() => handleEdit(item.code)}><Check size={12} />儲存</button>
                                                                 </div>
                                                             </div>
                                                         ) : (
                                                             <>
                                                                 {item.note && (
-                                                                    <div style={{ borderTop: '1px solid #2e3349', paddingTop: '6px', marginTop: '2px' }}>
+                                                                    <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: '6px', marginTop: '2px' }}>
                                                                         <button onClick={() => setExpandedNote(expandedNote === item.code ? null : item.code)}
                                                                             style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', color: '#4a5568', cursor: 'pointer', fontSize: '11px', padding: 0 }}>
                                                                             <FileText size={11} />筆記
                                                                             {expandedNote === item.code ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                                                                         </button>
                                                                         {expandedNote === item.code && (
-                                                                            <p style={{ fontSize: '11px', color: '#8892a4', margin: '4px 0 0', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{item.note}</p>
+                                                                            <p style={{ fontSize: '11px', color: 'var(--c-muted)', margin: '4px 0 0', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{item.note}</p>
                                                                         )}
                                                                     </div>
                                                                 )}

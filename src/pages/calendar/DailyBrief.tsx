@@ -39,9 +39,9 @@ interface HoldingItem {
     returnRate: number | null
 }
 
-const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
+const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
 const CATEGORY_COLORS: Record<string, string> = {
-    市場: '#00c896', 科技: '#a78bfa', 經濟: '#f5a623', 政治: '#ff5757'
+    市場: 'var(--c-positive)', 科技: '#a78bfa', 經濟: 'var(--c-warning)', 政治: 'var(--c-danger)'
 }
 
 export default function DailyBrief() {
@@ -188,10 +188,10 @@ export default function DailyBrief() {
         <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1200px', margin: '0 auto' }}>
             {/* 標題 */}
             <div style={{ marginBottom: '24px' }}>
-                <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>
+                <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>
                     每日簡報
                 </h1>
-                <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>
+                <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
                     {today.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}
                 </p>
             </div>
@@ -201,22 +201,22 @@ export default function DailyBrief() {
                 {/* 今日事件 */}
                 <div style={card}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                        <Calendar size={16} color="#4f8ef7" />
-                        <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>今日事件</span>
+                        <Calendar size={16} color="var(--c-accent)" />
+                        <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)' }}>今日事件</span>
                     </div>
                     {dataLoading ? (
-                        <div style={{ color: '#8892a4', fontSize: '13px' }}>載入中...</div>
+                        <div style={{ color: 'var(--c-muted)', fontSize: '13px' }}>載入中...</div>
                     ) : todayEvents.length === 0 ? (
-                        <div style={{ color: '#8892a4', fontSize: '13px' }}>今日無排程事件</div>
+                        <div style={{ color: 'var(--c-muted)', fontSize: '13px' }}>今日無排程事件</div>
                     ) : (
                         todayEvents.map(e => (
-                            <div key={e.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '10px', backgroundColor: '#0f1117', borderRadius: '8px', marginBottom: '8px' }}>
-                                <span style={{ fontSize: '11px', backgroundColor: `${EVENT_COLORS[e.type] || '#8892a4'}20`, color: EVENT_COLORS[e.type] || '#8892a4', padding: '2px 8px', borderRadius: '10px', whiteSpace: 'nowrap', marginTop: '1px' }}>
+                            <div key={e.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '10px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', marginBottom: '8px' }}>
+                                <span style={{ fontSize: '11px', backgroundColor: `${EVENT_COLORS[e.type] || 'var(--c-muted)'}20`, color: EVENT_COLORS[e.type] || 'var(--c-muted)', padding: '2px 8px', borderRadius: '10px', whiteSpace: 'nowrap', marginTop: '1px' }}>
                                     {EVENT_LABELS[e.type] || e.type}
                                 </span>
                                 <div>
-                                    <div style={{ fontSize: '13px', color: '#e2e8f0' }}>{e.title}</div>
-                                    {e.description && <div style={{ fontSize: '12px', color: '#8892a4', marginTop: '2px' }}>{e.description}</div>}
+                                    <div style={{ fontSize: '13px', color: 'var(--c-text)' }}>{e.title}</div>
+                                    {e.description && <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '2px' }}>{e.description}</div>}
                                 </div>
                             </div>
                         ))
@@ -227,21 +227,21 @@ export default function DailyBrief() {
                 <div style={card}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
                         <Globe size={16} color="#a78bfa" />
-                        <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>近 14 天事件</span>
+                        <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)' }}>近 14 天事件</span>
                     </div>
                     {dataLoading ? (
-                        <div style={{ color: '#8892a4', fontSize: '13px' }}>載入中...</div>
+                        <div style={{ color: 'var(--c-muted)', fontSize: '13px' }}>載入中...</div>
                     ) : upcomingEvents.length === 0 ? (
-                        <div style={{ color: '#8892a4', fontSize: '13px' }}>近期無特別事件</div>
+                        <div style={{ color: 'var(--c-muted)', fontSize: '13px' }}>近期無特別事件</div>
                     ) : (
                         upcomingEvents.map(e => (
-                            <div key={e.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px', backgroundColor: '#0f1117', borderRadius: '8px', marginBottom: '8px' }}>
-                                <div style={{ fontSize: '12px', color: '#8892a4', whiteSpace: 'nowrap', marginTop: '1px', minWidth: '72px' }}>{e.date.slice(5)}</div>
+                            <div key={e.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', marginBottom: '8px' }}>
+                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', whiteSpace: 'nowrap', marginTop: '1px', minWidth: '72px' }}>{e.date.slice(5)}</div>
                                 <div>
-                                    <span style={{ fontSize: '11px', backgroundColor: `${EVENT_COLORS[e.type] || '#8892a4'}20`, color: EVENT_COLORS[e.type] || '#8892a4', padding: '1px 6px', borderRadius: '10px', marginRight: '6px' }}>
+                                    <span style={{ fontSize: '11px', backgroundColor: `${EVENT_COLORS[e.type] || 'var(--c-muted)'}20`, color: EVENT_COLORS[e.type] || 'var(--c-muted)', padding: '1px 6px', borderRadius: '10px', marginRight: '6px' }}>
                                         {EVENT_LABELS[e.type] || e.type}
                                     </span>
-                                    <span style={{ fontSize: '13px', color: '#e2e8f0' }}>{e.title}</span>
+                                    <span style={{ fontSize: '13px', color: 'var(--c-text)' }}>{e.title}</span>
                                 </div>
                             </div>
                         ))
@@ -251,32 +251,32 @@ export default function DailyBrief() {
                 {/* 今日任務 */}
                 <div style={card}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                        <CheckSquare size={16} color="#00c896" />
-                        <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>今日任務</span>
+                        <CheckSquare size={16} color="var(--c-positive)" />
+                        <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)' }}>今日任務</span>
                         {overdueTasks.length > 0 && (
-                            <span style={{ fontSize: '11px', backgroundColor: 'rgba(255,87,87,0.15)', color: '#ff5757', padding: '2px 8px', borderRadius: '10px' }}>
+                            <span style={{ fontSize: '11px', backgroundColor: 'rgba(255,87,87,0.15)', color: 'var(--c-danger)', padding: '2px 8px', borderRadius: '10px' }}>
                                 {overdueTasks.length} 個逾期
                             </span>
                         )}
                     </div>
                     {dataLoading ? (
-                        <div style={{ color: '#8892a4', fontSize: '13px' }}>載入中...</div>
+                        <div style={{ color: 'var(--c-muted)', fontSize: '13px' }}>載入中...</div>
                     ) : (
                         <>
                             {todayTasks.length === 0 && overdueTasks.length === 0 ? (
-                                <div style={{ color: '#8892a4', fontSize: '13px' }}>今日無待辦任務 🎉</div>
+                                <div style={{ color: 'var(--c-muted)', fontSize: '13px' }}>今日無待辦任務 🎉</div>
                             ) : null}
                             {overdueTasks.map(t => (
                                 <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', backgroundColor: 'rgba(255,87,87,0.08)', border: '1px solid rgba(255,87,87,0.2)', borderRadius: '8px', marginBottom: '6px' }}>
-                                    <AlertCircle size={13} color="#ff5757" />
-                                    <span style={{ fontSize: '13px', color: '#e2e8f0', flex: 1 }}>{t.title}</span>
-                                    <span style={{ fontSize: '11px', color: '#ff5757' }}>{t.dueDate}</span>
+                                    <AlertCircle size={13} color="var(--c-danger)" />
+                                    <span style={{ fontSize: '13px', color: 'var(--c-text)', flex: 1 }}>{t.title}</span>
+                                    <span style={{ fontSize: '11px', color: 'var(--c-danger)' }}>{t.dueDate}</span>
                                 </div>
                             ))}
                             {todayTasks.map(t => (
-                                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', backgroundColor: '#0f1117', borderRadius: '8px', marginBottom: '6px' }}>
-                                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: t.priority === 'high' ? '#ff5757' : t.priority === 'low' ? '#00c896' : '#f5a623', flexShrink: 0 }} />
-                                    <span style={{ fontSize: '13px', color: '#e2e8f0' }}>{t.title}</span>
+                                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', marginBottom: '6px' }}>
+                                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: t.priority === 'high' ? 'var(--c-danger)' : t.priority === 'low' ? 'var(--c-positive)' : 'var(--c-warning)', flexShrink: 0 }} />
+                                    <span style={{ fontSize: '13px', color: 'var(--c-text)' }}>{t.title}</span>
                                 </div>
                             ))}
                         </>
@@ -286,32 +286,32 @@ export default function DailyBrief() {
                 {/* 持倉概覽 */}
                 <div style={card}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                        <TrendingUp size={16} color="#f5a623" />
-                        <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>持倉概覽</span>
+                        <TrendingUp size={16} color="var(--c-warning)" />
+                        <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)' }}>持倉概覽</span>
                     </div>
                     {dataLoading ? (
-                        <div style={{ color: '#8892a4', fontSize: '13px' }}>載入中...</div>
+                        <div style={{ color: 'var(--c-muted)', fontSize: '13px' }}>載入中...</div>
                     ) : holdings.length === 0 ? (
-                        <div style={{ color: '#8892a4', fontSize: '13px' }}>目前無持倉</div>
+                        <div style={{ color: 'var(--c-muted)', fontSize: '13px' }}>目前無持倉</div>
                     ) : (
                         holdings.slice(0, 6).map(h => (
-                            <div key={h.code} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', backgroundColor: '#0f1117', borderRadius: '8px', marginBottom: '6px' }}>
+                            <div key={h.code} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', marginBottom: '6px' }}>
                                 <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontSize: '13px', color: '#4f8ef7', fontWeight: 600 }}>{h.code}</div>
-                                    <div style={{ fontSize: '11px', color: '#8892a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name} · {h.shares.toLocaleString()} 股</div>
+                                    <div style={{ fontSize: '13px', color: 'var(--c-accent)', fontWeight: 600 }}>{h.code}</div>
+                                    <div style={{ fontSize: '11px', color: 'var(--c-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name} · {h.shares.toLocaleString()} 股</div>
                                 </div>
                                 {h.returnRate !== null ? (
-                                    <span style={{ fontSize: '13px', fontWeight: 600, color: h.returnRate >= 0 ? '#00c896' : '#ff5757', whiteSpace: 'nowrap' }}>
+                                    <span style={{ fontSize: '13px', fontWeight: 600, color: h.returnRate >= 0 ? 'var(--c-positive)' : 'var(--c-danger)', whiteSpace: 'nowrap' }}>
                                         {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
                                     </span>
                                 ) : (
-                                    <span style={{ fontSize: '12px', color: '#8892a4' }}>—</span>
+                                    <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>—</span>
                                 )}
                             </div>
                         ))
                     )}
                     {holdings.length > 6 && (
-                        <div style={{ fontSize: '12px', color: '#8892a4', textAlign: 'center', marginTop: '8px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--c-muted)', textAlign: 'center', marginTop: '8px' }}>
                             還有 {holdings.length - 6} 檔持倉...
                         </div>
                     )}
@@ -322,12 +322,12 @@ export default function DailyBrief() {
                     {/* 標題列 */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <Newspaper size={16} color="#4f8ef7" />
-                            <span style={{ fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>市場新聞</span>
-                            {lastNewsTime && <span style={{ fontSize: '12px', color: '#8892a4' }}>更新於 {lastNewsTime}</span>}
+                            <Newspaper size={16} color="var(--c-accent)" />
+                            <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)' }}>市場新聞</span>
+                            {lastNewsTime && <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>更新於 {lastNewsTime}</span>}
                         </div>
                         <button onClick={loadNews} disabled={newsLoading}
-                            style={{ background: 'none', border: '1px solid #2e3349', borderRadius: '8px', padding: '6px 12px', color: '#8892a4', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', opacity: newsLoading ? 0.6 : 1 }}>
+                            style={{ background: 'none', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '6px 12px', color: 'var(--c-muted)', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', opacity: newsLoading ? 0.6 : 1 }}>
                             <RefreshCw size={13} style={{ animation: newsLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {newsLoading ? '載入中...' : '重新整理'}
                         </button>
@@ -341,9 +341,9 @@ export default function DailyBrief() {
                                 style={{
                                     fontSize: '12px', padding: '4px 14px', borderRadius: '20px',
                                     border: '1px solid', cursor: 'pointer', transition: 'all 0.15s',
-                                    backgroundColor: selectedSources.size === 0 ? '#4f8ef7' : 'transparent',
-                                    borderColor: selectedSources.size === 0 ? '#4f8ef7' : '#2e3349',
-                                    color: selectedSources.size === 0 ? '#fff' : '#8892a4',
+                                    backgroundColor: selectedSources.size === 0 ? 'var(--c-accent)' : 'transparent',
+                                    borderColor: selectedSources.size === 0 ? 'var(--c-accent)' : 'var(--c-border)',
+                                    color: selectedSources.size === 0 ? '#fff' : 'var(--c-muted)',
                                 }}>
                                 全部 {selectedSources.size === 0 && <span style={{ opacity: 0.75 }}>({news.length})</span>}
                             </button>
@@ -357,9 +357,9 @@ export default function DailyBrief() {
                                         style={{
                                             fontSize: '12px', padding: '4px 14px', borderRadius: '20px',
                                             border: '1px solid', cursor: 'pointer', transition: 'all 0.15s',
-                                            backgroundColor: active ? '#4f8ef7' : 'transparent',
-                                            borderColor: active ? '#4f8ef7' : '#2e3349',
-                                            color: active ? '#fff' : '#8892a4',
+                                            backgroundColor: active ? 'var(--c-accent)' : 'transparent',
+                                            borderColor: active ? 'var(--c-accent)' : 'var(--c-border)',
+                                            color: active ? '#fff' : 'var(--c-muted)',
                                         }}>
                                         {src} <span style={{ opacity: 0.75 }}>({count})</span>
                                     </button>
@@ -369,16 +369,16 @@ export default function DailyBrief() {
                     )}
 
                     {newsError ? (
-                        <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4' }}>
-                            <AlertCircle size={24} style={{ marginBottom: '8px', color: '#ff5757' }} />
+                        <div style={{ textAlign: 'center', padding: '32px', color: 'var(--c-muted)' }}>
+                            <AlertCircle size={24} style={{ marginBottom: '8px', color: 'var(--c-danger)' }} />
                             <div style={{ fontSize: '14px' }}>新聞載入失敗，請稍後再試</div>
                         </div>
                     ) : newsLoading && news.length === 0 ? (
-                        <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4', fontSize: '14px' }}>
+                        <div style={{ textAlign: 'center', padding: '32px', color: 'var(--c-muted)', fontSize: '14px' }}>
                             正在搜尋最新市場資訊...
                         </div>
                     ) : filteredNews.length === 0 ? (
-                        <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4', fontSize: '14px' }}>
+                        <div style={{ textAlign: 'center', padding: '32px', color: 'var(--c-muted)', fontSize: '14px' }}>
                             此來源目前沒有新聞
                         </div>
                     ) : (
@@ -391,30 +391,30 @@ export default function DailyBrief() {
                                     rel="noopener noreferrer"
                                     style={{
                                         padding: '12px',
-                                        backgroundColor: '#0f1117',
+                                        backgroundColor: 'var(--c-bg)',
                                         borderRadius: '8px',
-                                        border: '1px solid #2e3349',
+                                        border: '1px solid var(--c-border)',
                                         textDecoration: 'none',
                                         display: 'block',
                                         transition: 'border-color 0.15s',
                                     }}
-                                    onMouseEnter={e => (e.currentTarget.style.borderColor = '#4f8ef7')}
-                                    onMouseLeave={e => (e.currentTarget.style.borderColor = '#2e3349')}
+                                    onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--c-accent)')}
+                                    onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--c-border)')}
                                 >
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                                        <span style={{ fontSize: '11px', backgroundColor: `${CATEGORY_COLORS[item.category] || '#8892a4'}20`, color: CATEGORY_COLORS[item.category] || '#8892a4', padding: '2px 8px', borderRadius: '10px', whiteSpace: 'nowrap' }}>
+                                        <span style={{ fontSize: '11px', backgroundColor: `${CATEGORY_COLORS[item.category] || 'var(--c-muted)'}20`, color: CATEGORY_COLORS[item.category] || 'var(--c-muted)', padding: '2px 8px', borderRadius: '10px', whiteSpace: 'nowrap' }}>
                                             {item.category}
                                         </span>
                                         {item.source && (
-                                            <span style={{ fontSize: '11px', color: '#8892a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                 {item.source}
                                             </span>
                                         )}
                                     </div>
-                                    <div style={{ fontSize: '13px', color: '#e2e8f0', fontWeight: 500, lineHeight: 1.5 }}>
+                                    <div style={{ fontSize: '13px', color: 'var(--c-text)', fontWeight: 500, lineHeight: 1.5 }}>
                                         {item.title}
                                     </div>
-                                    <div style={{ fontSize: '11px', color: '#4f8ef7', marginTop: '8px' }}>
+                                    <div style={{ fontSize: '11px', color: 'var(--c-accent)', marginTop: '8px' }}>
                                         閱讀原文 →
                                     </div>
                                 </a>
