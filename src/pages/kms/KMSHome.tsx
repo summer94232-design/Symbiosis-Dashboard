@@ -56,7 +56,7 @@ const NOTE_TEMPLATES: NoteTemplate[] = [
         titlePrefix: '交易日誌',
         hashtags: ['交易日誌'],
         content: (date) =>
-            `日期：${date}\n市場快照：\n今日觀察：\n今日思路：\n操作計畫：\n收盤覆盤：\n情緒狀態：\n明日重點：\n`,
+            `日期：${date}\n市場快照：大盤指數\n今日觀察：\n今日思路：\n操作計畫：\n收盤覆盤：\n情緒狀態：\n明日重點：\n`,
     },
     {
         id: 'stock-analysis',

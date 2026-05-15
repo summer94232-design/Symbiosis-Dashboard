@@ -1,6 +1,6 @@
 import { useState, useEffect, lazy, Suspense, memo } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
-import { LayoutDashboard, ArrowLeftRight, TrendingUp, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard, Folder } from 'lucide-react'
+import { LayoutDashboard, ArrowLeftRight, TrendingUp, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard, Folder, Wrench, Target } from 'lucide-react'
 import { getDocs, getDoc, orderBy, query } from 'firebase/firestore'
 import { kmsDB } from './lib/firebase'
 import { userCol, userDocNested } from './lib/userDB'
@@ -18,6 +18,7 @@ const HistoryPnL = lazy(() => import('./pages/invest/HistoryPnL'))
 const Watchlist = lazy(() => import('./pages/invest/Watchlist'))
 const MarginManager = lazy(() => import('./pages/invest/MarginManager'))
 const InvestSettings = lazy(() => import('./pages/invest/InvestSettings'))
+const SentimentTracker = lazy(() => import('./pages/invest/SentimentTracker'))
 const KMSHome = lazy(() => import('./pages/kms/KMSHome'))
 const KMSGraph = lazy(() => import('./pages/kms/KMSGraph'))
 const KMSTrash = lazy(() => import('./pages/kms/KMSTrash'))
@@ -33,9 +34,8 @@ const investNav = [
     { to: '/invest/trades', icon: ArrowLeftRight, label: '買賣紀錄' },
     { to: '/invest/holdings', icon: TrendingUp, label: '股票持倉' },
     { to: '/invest/watchlist', icon: TrendingUp, label: '選股追蹤' },
-    { to: '/invest/brief', icon: Newspaper, label: '今日簡報' },
     { to: '/invest/trend', icon: BarChart2, label: '資產趨勢' },
-    { to: '/invest/margin', icon: CreditCard, label: '融資管理' },
+    { to: '/invest/brief', icon: Newspaper, label: '每日重點' },    
 ]
 
 const investManageNav = [
@@ -44,6 +44,11 @@ const investManageNav = [
     { to: '/invest/dividend', icon: Scissors, label: '除權息' },
     { to: '/invest/review', icon: BarChart2, label: '年度復盤' },
     { to: '/invest/settings', icon: Settings, label: '設定與備份' },
+]
+
+const investToolsNav = [
+    { to: '/invest/margin', icon: CreditCard, label: '融資管理' },
+    { to: '/invest/sentiment', icon: Target, label: '觀點追蹤' },
 ]
 
 const calendarNav = [
@@ -162,6 +167,31 @@ interface SidebarProps {
     toggleNode: (path: string) => void
 }
 
+// ── 可收合群組元件（統一樣式，避免重複） ──────────────────────────────────
+function NavGroup({ label, icon: Icon, isOpen, onToggle, children }: {
+    label: string
+    icon: React.ElementType
+    isOpen: boolean
+    onToggle: () => void
+    children: React.ReactNode
+}) {
+    return (
+        <div style={{ marginTop: '4px' }}>
+            <button onClick={onToggle}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: 'var(--c-muted)', fontWeight: 400 }}>
+                <Icon size={15} style={{ flexShrink: 0 }} />
+                <span style={{ flex: 1, textAlign: 'left' }}>{label}</span>
+                {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+            </button>
+            {isOpen && (
+                <div style={{ marginLeft: '8px', borderLeft: '1px solid var(--c-border)', paddingLeft: '8px', marginBottom: '4px' }}>
+                    {children}
+                </div>
+            )}
+        </div>
+    )
+}
+
 const Sidebar = memo(({
     isMobile,
     setSidebarOpen,
@@ -176,7 +206,9 @@ const Sidebar = memo(({
     toggleNode,
 }: SidebarProps) => {
     const managePaths = investManageNav.map(n => n.to)
+    const toolsPaths = investToolsNav.map(n => n.to)
     const [manageOpen, setManageOpen] = useState(() => managePaths.some(p => window.location.pathname.startsWith(p)))
+    const [toolsOpen, setToolsOpen] = useState(() => toolsPaths.some(p => window.location.pathname.startsWith(p)))
 
     return (
     <aside style={{ width: '224px', minWidth: '224px', backgroundColor: 'var(--c-sidebar)', borderRight: '1px solid var(--c-border)', display: 'flex', flexDirection: 'column', height: '100vh', position: isMobile ? 'fixed' : 'relative', top: 0, left: 0, zIndex: 100 }}>
@@ -204,31 +236,43 @@ const Sidebar = memo(({
         <nav style={{ flex: 1, padding: '0 12px', overflowY: 'auto' }}>
             {currentSystem === 'invest' && (
                 <>
+                    {/* ── 主要頁面 ── */}
                     {investNav.map(({ to, icon: Icon, label }) => (
                         <NavLink key={to} to={to} end={to === '/invest'}
                             style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: isActive ? 'var(--c-accent)' : 'var(--c-muted)', fontWeight: isActive ? 600 : 400 })}>
                             <Icon size={16} /><span>{label}</span>
                         </NavLink>
                     ))}
-                    {/* ── 管理群組 ── */}
-                    <div style={{ marginTop: '4px' }}>
-                        <button onClick={() => setManageOpen(v => !v)}
-                            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: 'var(--c-muted)', fontWeight: 400 }}>
-                            <Folder size={15} style={{ flexShrink: 0 }} />
-                            <span style={{ flex: 1, textAlign: 'left' }}>帳戶管理</span>
-                            {manageOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                        </button>
-                        {manageOpen && (
-                            <div style={{ marginLeft: '8px', borderLeft: '1px solid var(--c-border)', paddingLeft: '8px', marginBottom: '4px' }}>
-                                {investManageNav.map(({ to, icon: Icon, label }) => (
-                                    <NavLink key={to} to={to}
-                                        style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: isActive ? 'var(--c-accent)' : 'var(--c-muted)', fontWeight: isActive ? 600 : 400 })}>
-                                        <Icon size={16} /><span>{label}</span>
-                                    </NavLink>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+
+                    {/* ── 工具群組 ── */}
+                    <NavGroup
+                        label="工具管理"
+                        icon={Wrench}
+                        isOpen={toolsOpen}
+                        onToggle={() => setToolsOpen(v => !v)}
+                    >
+                        {investToolsNav.map(({ to, icon: Icon, label }) => (
+                            <NavLink key={to} to={to}
+                                style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: isActive ? 'var(--c-accent)' : 'var(--c-muted)', fontWeight: isActive ? 600 : 400 })}>
+                                <Icon size={16} /><span>{label}</span>
+                            </NavLink>
+                        ))}
+                    </NavGroup>
+
+                    {/* ── 帳戶管理群組 ── */}
+                    <NavGroup
+                        label="帳戶管理"
+                        icon={Folder}
+                        isOpen={manageOpen}
+                        onToggle={() => setManageOpen(v => !v)}
+                    >
+                        {investManageNav.map(({ to, icon: Icon, label }) => (
+                            <NavLink key={to} to={to}
+                                style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: isActive ? 'var(--c-accent)' : 'var(--c-muted)', fontWeight: isActive ? 600 : 400 })}>
+                                <Icon size={16} /><span>{label}</span>
+                            </NavLink>
+                        ))}
+                    </NavGroup>
                 </>
             )}
 
@@ -327,7 +371,6 @@ export default function App() {
         if (isKMSHome) { setKmsExpanded(true) } else { setKmsExpanded(false); setSelectedTag('') }
     }, [isKMSHome])
 
-    // ★ 修復：移除 location.pathname，只在進入/離開 KMS 時載入一次
     useEffect(() => {
         if (!isKMS) return
         const loadTags = async () => {
@@ -343,7 +386,7 @@ export default function App() {
             setTagTree(sortTreeByOrder(rawTree, parentOrder, childOrder))
         }
         loadTags()
-    }, [isKMS]) // ← 移除了 location.pathname
+    }, [isKMS])
 
     const toggleNode = (path: string) => {
         setExpandedNodes(prev => {
@@ -399,6 +442,7 @@ export default function App() {
                             <Route path="/invest/review" element={<YearReview />} />
                             <Route path="/invest/brief" element={<DailyBrief />} />
                             <Route path="/invest/margin" element={<MarginManager />} />
+                            <Route path="/invest/sentiment" element={<SentimentTracker />} />
                             <Route path="/invest/settings" element={<InvestSettings />} />
                             <Route path="/kms" element={<KMSHome selectedTag={selectedTag} setSelectedTag={setSelectedTag} />} />
                             <Route path="/kms/tags" element={<KMSTags />} />

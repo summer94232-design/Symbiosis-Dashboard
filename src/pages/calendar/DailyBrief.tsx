@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react'
-import { collection, getDocs, query, orderBy } from 'firebase/firestore'
+import { getDocs, query, orderBy } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc, userDocNested } from '../../lib/userDB'
+import { userCol } from '../../lib/userDB'
 import { getDailyNews } from '../../lib/gemini'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS } from '../../lib/calendarData'
-import { calcPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
-import { RefreshCw, Calendar, CheckSquare, TrendingUp, Globe, Newspaper, AlertCircle } from 'lucide-react'
+import { RefreshCw, Calendar, CheckSquare, Globe, Newspaper, AlertCircle } from 'lucide-react'
 
 interface NewsItem {
     title: string
@@ -30,15 +29,6 @@ interface TaskItem {
     priority?: string
 }
 
-interface HoldingItem {
-    code: string
-    name: string
-    shares: number
-    currentPrice: number | null
-    avgCost: number
-    returnRate: number | null
-}
-
 const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
 const CATEGORY_COLORS: Record<string, string> = {
     市場: 'var(--c-positive)', 科技: '#a78bfa', 經濟: 'var(--c-warning)', 政治: 'var(--c-danger)'
@@ -55,7 +45,6 @@ export default function DailyBrief() {
     const [upcomingEvents, setUpcomingEvents] = useState<EventItem[]>([])
     const [todayTasks, setTodayTasks] = useState<TaskItem[]>([])
     const [overdueTasks, setOverdueTasks] = useState<TaskItem[]>([])
-    const [holdings, setHoldings] = useState<HoldingItem[]>([])
     const [dataLoading, setDataLoading] = useState(true)
     const [lastNewsTime, setLastNewsTime] = useState('')
     const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set())
@@ -63,12 +52,9 @@ export default function DailyBrief() {
     const loadData = async () => {
         setDataLoading(true)
         try {
-            const [personalSnap, taskSnap, tradesSnap, dividendsSnap, settingsSnap] = await Promise.all([
+            const [personalSnap, taskSnap] = await Promise.all([
                 getDocs(userCol(investDB, 'calendarEvents')),
                 getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc'))),
-                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(userCol(investDB, 'dividends')),
-                getDocs(userCol(investDB, 'settings'))
             ])
 
             // 行事曆事件
@@ -109,24 +95,6 @@ export default function DailyBrief() {
             setTodayTasks(tasks.filter(t => !t.done && t.dueDate === todayStr))
             setOverdueTasks(tasks.filter(t => !t.done && t.dueDate && t.dueDate < todayStr))
 
-            // 持倉
-            const priceData: Record<string, number> = settingsSnap.docs.find(d => d.id === 'lastPrices')?.data() || {}
-            const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
-            const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
-            const { holdings: positions } = calcPositions(trades, dividends)
-
-            const holdingList: HoldingItem[] = Object.values(positions)
-                .filter(pos => pos.shares > 0)
-                .map(pos => {
-                    const currentPrice = priceData[pos.code] ?? null
-                    const returnRate = currentPrice !== null
-                        ? ((currentPrice - pos.avgCost) / pos.avgCost) * 100
-                        : null
-                    return { code: pos.code, name: pos.name, shares: pos.shares, currentPrice, avgCost: pos.avgCost, returnRate }
-                })
-                .sort((a, b) => (b.returnRate ?? -999) - (a.returnRate ?? -999))
-
-            setHoldings(holdingList)
         } catch (err) { console.error(err) }
         setDataLoading(false)
     }
@@ -283,42 +251,8 @@ export default function DailyBrief() {
                     )}
                 </div>
 
-                {/* 持倉概覽 */}
-                <div style={card}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                        <TrendingUp size={16} color="var(--c-warning)" />
-                        <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)' }}>持倉概覽</span>
-                    </div>
-                    {dataLoading ? (
-                        <div style={{ color: 'var(--c-muted)', fontSize: '13px' }}>載入中...</div>
-                    ) : holdings.length === 0 ? (
-                        <div style={{ color: 'var(--c-muted)', fontSize: '13px' }}>目前無持倉</div>
-                    ) : (
-                        holdings.slice(0, 6).map(h => (
-                            <div key={h.code} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', marginBottom: '6px' }}>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontSize: '13px', color: 'var(--c-accent)', fontWeight: 600 }}>{h.code}</div>
-                                    <div style={{ fontSize: '11px', color: 'var(--c-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name} · {h.shares.toLocaleString()} 股</div>
-                                </div>
-                                {h.returnRate !== null ? (
-                                    <span style={{ fontSize: '13px', fontWeight: 600, color: h.returnRate >= 0 ? 'var(--c-positive)' : 'var(--c-danger)', whiteSpace: 'nowrap' }}>
-                                        {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
-                                    </span>
-                                ) : (
-                                    <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>—</span>
-                                )}
-                            </div>
-                        ))
-                    )}
-                    {holdings.length > 6 && (
-                        <div style={{ fontSize: '12px', color: 'var(--c-muted)', textAlign: 'center', marginTop: '8px' }}>
-                            還有 {holdings.length - 6} 檔持倉...
-                        </div>
-                    )}
-                </div>
-
                 {/* 市場新聞 */}
-                <div style={{ ...card, gridColumn: 'span 2' }}>
+                <div style={{ ...card, gridColumn: '1 / -1' }}>
                     {/* 標題列 */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

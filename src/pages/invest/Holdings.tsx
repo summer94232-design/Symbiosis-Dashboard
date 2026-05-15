@@ -184,7 +184,7 @@ export default function Holdings() {
                     <div>
                         <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>股票持倉</h1>
                         <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
-                            {lastUpdated ? `現價更新：${lastUpdated}` : '尚未更新現價，請點「更新現價」'}
+                            {lastUpdated ? `更新：${lastUpdated}` : '尚未更新現價，請點「更新現價」'}
                             {groupSaving && <span style={{ marginLeft: '8px', color: '#a78bfa' }}>· 族群儲存中...</span>}
                         </p>
                     </div>

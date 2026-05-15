@@ -443,7 +443,7 @@ export default function Dashboard() {
                     <div>
                         <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>儀表板</h1>
                         <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
-                            {lastUpdated ? `現價更新：${lastUpdated}` : '尚未更新現價，點「更新現價」取得最新報價'}
+                            {lastUpdated ? `更新：${lastUpdated}` : '尚未更新現價，點「更新現價」取得最新報價'}
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
