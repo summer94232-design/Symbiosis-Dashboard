@@ -1,6 +1,6 @@
 import { useState, useEffect, lazy, Suspense, memo } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
-import { LayoutDashboard, ArrowLeftRight, TrendingUp, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard } from 'lucide-react'
+import { LayoutDashboard, ArrowLeftRight, TrendingUp, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard, Folder } from 'lucide-react'
 import { getDocs, getDoc, orderBy, query } from 'firebase/firestore'
 import { kmsDB } from './lib/firebase'
 import { userCol, userDocNested } from './lib/userDB'
@@ -32,10 +32,13 @@ const investNav = [
     { to: '/invest', icon: LayoutDashboard, label: '儀表板' },
     { to: '/invest/trades', icon: ArrowLeftRight, label: '買賣紀錄' },
     { to: '/invest/holdings', icon: TrendingUp, label: '股票持倉' },
-    { to: '/invest/watchlist', icon: TrendingUp, label: '自選股追蹤' },
+    { to: '/invest/watchlist', icon: TrendingUp, label: '選股追蹤' },
     { to: '/invest/brief', icon: Newspaper, label: '今日簡報' },
     { to: '/invest/trend', icon: BarChart2, label: '資產趨勢' },
     { to: '/invest/margin', icon: CreditCard, label: '融資管理' },
+]
+
+const investManageNav = [
     { to: '/invest/history', icon: History, label: '歷史損益' },
     { to: '/invest/cashflow', icon: DollarSign, label: '出入金' },
     { to: '/invest/dividend', icon: Scissors, label: '除權息' },
@@ -171,7 +174,11 @@ const Sidebar = memo(({
     setSelectedTag,
     expandedNodes,
     toggleNode,
-}: SidebarProps) => (
+}: SidebarProps) => {
+    const managePaths = investManageNav.map(n => n.to)
+    const [manageOpen, setManageOpen] = useState(() => managePaths.some(p => window.location.pathname.startsWith(p)))
+
+    return (
     <aside style={{ width: '224px', minWidth: '224px', backgroundColor: 'var(--c-sidebar)', borderRight: '1px solid var(--c-border)', display: 'flex', flexDirection: 'column', height: '100vh', position: isMobile ? 'fixed' : 'relative', top: 0, left: 0, zIndex: 100 }}>
         <div style={{ padding: '20px', borderBottom: '1px solid var(--c-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div　>
@@ -196,12 +203,33 @@ const Sidebar = memo(({
 
         <nav style={{ flex: 1, padding: '0 12px', overflowY: 'auto' }}>
             {currentSystem === 'invest' && (
-                investNav.map(({ to, icon: Icon, label }) => (
-                    <NavLink key={to} to={to} end={to === '/invest'}
-                        style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: isActive ? 'var(--c-accent)' : 'var(--c-muted)', fontWeight: isActive ? 600 : 400 })}>
-                        <Icon size={16} /><span>{label}</span>
-                    </NavLink>
-                ))
+                <>
+                    {investNav.map(({ to, icon: Icon, label }) => (
+                        <NavLink key={to} to={to} end={to === '/invest'}
+                            style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: isActive ? 'var(--c-accent)' : 'var(--c-muted)', fontWeight: isActive ? 600 : 400 })}>
+                            <Icon size={16} /><span>{label}</span>
+                        </NavLink>
+                    ))}
+                    {/* ── 管理群組 ── */}
+                    <div style={{ marginTop: '4px' }}>
+                        <button onClick={() => setManageOpen(v => !v)}
+                            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: 'var(--c-muted)', fontWeight: 400 }}>
+                            <Folder size={15} style={{ flexShrink: 0 }} />
+                            <span style={{ flex: 1, textAlign: 'left' }}>帳戶管理</span>
+                            {manageOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                        </button>
+                        {manageOpen && (
+                            <div style={{ marginLeft: '8px', borderLeft: '1px solid var(--c-border)', paddingLeft: '8px', marginBottom: '4px' }}>
+                                {investManageNav.map(({ to, icon: Icon, label }) => (
+                                    <NavLink key={to} to={to}
+                                        style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: isActive ? 'var(--c-accent)' : 'var(--c-muted)', fontWeight: isActive ? 600 : 400 })}>
+                                        <Icon size={16} /><span>{label}</span>
+                                    </NavLink>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </>
             )}
 
             {currentSystem === 'calendar' && (
@@ -262,11 +290,12 @@ const Sidebar = memo(({
                 <LogOut size={14} />登出
             </button>
             <div style={{ textAlign: 'center', marginTop: '8px' }}>
-                <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>v26.5.14</span>
+                <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>v26.5.16</span>
             </div>
         </div>
     </aside>
-))
+    )
+})
 
 Sidebar.displayName = 'Sidebar'
 
