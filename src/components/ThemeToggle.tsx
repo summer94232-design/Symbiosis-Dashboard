@@ -1,5 +1,5 @@
 import { Moon, Sun } from 'lucide-react'
-import { useTheme } from './ThemeContext'
+import { useTheme } from '../ThemeContext'
 
 /**
  * 主題切換按鈕
