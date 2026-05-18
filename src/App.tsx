@@ -340,7 +340,7 @@ const Sidebar = memo(({
 
                 {/* ── 版本代號  ── */}
                 <div style={{ textAlign: 'center', marginTop: '8px' }}>
-                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>v26.5.18</span>
+                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>v26.5.19</span>
                 </div>
             </div>
         </aside>
