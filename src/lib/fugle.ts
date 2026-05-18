@@ -34,11 +34,11 @@ export async function getMultipleQuotes(symbols: string[]): Promise<Record<strin
   return results
 }
 
-// 取得歷史收盤價
+// 取得歷史收盤價（升序排列，舊→新，確保 MA 計算正確）
 export async function getHistoricalCandles(symbol: string, from: string, to: string) {
   try {
     const res = await fetch(
-      `https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/${symbol}?from=${from}&to=${to}`,
+      `https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/${symbol}?from=${from}&to=${to}&sort=asc`,
       { headers: { 'X-API-KEY': FUGLE_API_KEY } }
     )
     if (!res.ok) return null

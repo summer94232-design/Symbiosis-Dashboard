@@ -4,7 +4,7 @@ import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { calcPositions, type TradeRecord } from '../../lib/calc'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS, type CalendarEvent } from '../../lib/calendarData'
-import { Plus, X, ChevronLeft, ChevronRight, ExternalLink, Upload } from 'lucide-react'
+import { Plus, X, ChevronLeft, ChevronRight, ExternalLink, Upload, Pencil } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
 const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
@@ -45,6 +45,7 @@ export default function CalendarHome() {
     const [myStocksOnly, setMyStocksOnly] = useState(true)
     const [myStockCodes, setMyStockCodes] = useState<Set<string>>(new Set())
     const [form, setForm] = useState({ title: '', date: '', description: '', url: '', type: 'personal' as CalendarEvent['type'] })
+    const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null)
 
     const loadPersonal = async () => {
         const snap = await getDocs(query(userCol(investDB, 'calendarEvents'), orderBy('date', 'asc')))
@@ -413,6 +414,25 @@ export default function CalendarHome() {
         loadPersonal()
     }
 
+    const handleEditEvent = (ev: CalendarEvent) => {
+        setEditingEvent(ev)
+        setForm({ title: ev.title, date: ev.date, description: ev.description || '', url: ev.url || '', type: ev.type })
+    }
+
+    const handleUpdateEvent = async () => {
+        if (!editingEvent || !form.title || !form.date) return
+        await updateDoc(userDoc(investDB, 'calendarEvents', editingEvent.id), {
+            title: form.title,
+            date: form.date,
+            description: form.description,
+            url: form.url,
+            type: form.type,
+        })
+        setEditingEvent(null)
+        setForm({ title: '', date: '', description: '', url: '', type: 'personal' })
+        loadPersonal()
+    }
+
     // 刪除單筆法說會日期（從 root collection 操作）
     const handleDeleteInvestorDate = async (stockCode: string, isoDate: string) => {
         if (!confirm(`確定要刪除 ${stockCode} 在 ${isoDate} 的法說會？`)) return
@@ -582,13 +602,20 @@ export default function CalendarHome() {
                                                         <a href={ev.url} target="_blank" rel="noopener noreferrer"
                                                             style={{ color: '#4f8ef7', display: 'flex' }}><ExternalLink size={14} /></a>
                                                     )}
-                                                    {/* 手動建立的行程（存在 calendarEvents collection）才顯示刪除鈕 */}
+                                                    {/* 手動建立的行程（存在 calendarEvents collection）才顯示編輯／刪除鈕 */}
                                                     {['personal', 'tech', 'fomc', 'dividend', 'shareholder', 'futures'].includes(ev.type) && ev.id && !ev.id.startsWith('fomc-') && !ev.id.startsWith('gtc-') && !ev.id.startsWith('wwdc-') && !ev.id.startsWith('build-') && !ev.id.startsWith('google-io-') && !ev.id.startsWith('ces-') && !ev.id.startsWith('futures-') && !ev.id.startsWith('div-') && (
-                                                        <button onClick={() => handleDeleteEvent(ev.id)}
-                                                            style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer', padding: 0 }}
-                                                            title="刪除此行程">
-                                                            <X size={14} />
-                                                        </button>
+                                                        <>
+                                                            <button onClick={() => handleEditEvent(ev)}
+                                                                style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', padding: 0 }}
+                                                                title="編輯此行程">
+                                                                <Pencil size={13} />
+                                                            </button>
+                                                            <button onClick={() => handleDeleteEvent(ev.id)}
+                                                                style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer', padding: 0 }}
+                                                                title="刪除此行程">
+                                                                <X size={14} />
+                                                            </button>
+                                                        </>
                                                     )}
                                                     {ev.type === 'investor' && ev.stockCode && (
                                                         <button onClick={() => handleDeleteInvestorDate(ev.stockCode!, ev.date)}
@@ -617,6 +644,66 @@ export default function CalendarHome() {
                         </div>
                     )}
                 </div>
+
+                {/* 編輯行程 Modal */}
+                {editingEvent && (
+                    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                        <div style={{ ...card, width: '100%', maxWidth: '480px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                                <span style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0' }}>編輯行程</span>
+                                <button onClick={() => setEditingEvent(null)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                                {/* 類型選擇 */}
+                                <div>
+                                    <label style={lbl}>類型 *</label>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                        {([
+                                            ['personal', '個人行程'],
+                                            ['tech', '科技活動'],
+                                            ['fomc', 'FOMC'],
+                                            ['dividend', '除權息'],
+                                            ['shareholder', '股東會'],
+                                        ] as [CalendarEvent['type'], string][]).map(([t, label]) => (
+                                            <button key={t} onClick={() => setForm(f => ({ ...f, type: t }))}
+                                                style={{
+                                                    padding: '5px 14px', borderRadius: '20px', border: `1px solid`,
+                                                    borderColor: form.type === t ? EVENT_COLORS[t] : '#2e3349',
+                                                    backgroundColor: form.type === t ? `${EVENT_COLORS[t]}22` : 'transparent',
+                                                    color: form.type === t ? EVENT_COLORS[t] : '#8892a4',
+                                                    fontSize: '12px', cursor: 'pointer', fontWeight: form.type === t ? 600 : 400,
+                                                    display: 'flex', alignItems: 'center', gap: '5px'
+                                                }}>
+                                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: EVENT_COLORS[t], display: 'inline-block' }} />
+                                                {label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <label style={lbl}>標題 *</label>
+                                    <input style={inp} placeholder="行程標題" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+                                </div>
+                                <div>
+                                    <label style={lbl}>日期 *</label>
+                                    <input type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
+                                </div>
+                                <div>
+                                    <label style={lbl}>備註</label>
+                                    <input style={inp} placeholder="備註說明" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+                                </div>
+                                <div>
+                                    <label style={lbl}>連結</label>
+                                    <input style={inp} placeholder="https://..." value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} />
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '20px', justifyContent: 'flex-end' }}>
+                                <button style={btn('#2e3349')} onClick={() => setEditingEvent(null)}><X size={14} />取消</button>
+                                <button style={{ ...btn(EVENT_COLORS[form.type] || '#4f8ef7') }} onClick={handleUpdateEvent}><Pencil size={14} />儲存</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* xlsx 匯入法說會 Modal */}
                 {showXlsxImport && (

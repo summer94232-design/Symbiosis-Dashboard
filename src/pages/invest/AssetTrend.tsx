@@ -13,11 +13,12 @@ interface SnapshotRecord {
     totalAssets: number
     marketValue: number
     cash: number
+    marginDebt?: number  // 融資借款（負債），記錄用，總資產已扣除
 }
 
 const emptySnap: SnapshotRecord = {
     date: new Date().toISOString().split('T')[0],
-    totalAssets: 0, marketValue: 0, cash: 0
+    totalAssets: 0, marketValue: 0, cash: 0, marginDebt: 0
 }
 
 // ── 樣式常數 ──────────────────────────────────────────────────────────────
@@ -62,6 +63,32 @@ const ReturnTooltip = ({ active, payload, label }: any) => {
             )}
         </div>
     )
+}
+
+// ── 融資借款計算（從交易紀錄彙總現有借款）────────────────────────────────
+
+function calcMarginDebt(trades: TradeRecord[]): number {
+    const marginMap: Record<string, { shares: number; marginAmount: number }> = {}
+    for (const t of trades) {
+        if (!t.isMargin) continue
+        if (!marginMap[t.code]) {
+            marginMap[t.code] = { shares: 0, marginAmount: 0 }
+        }
+        const pos = marginMap[t.code]
+        if (t.type === 'buy') {
+            const stockVal = t.price * t.shares
+            const mAmt = (t as any).marginAmount ?? Math.floor(stockVal * ((t as any).marginRatio ?? 0.6))
+            pos.shares += t.shares
+            pos.marginAmount += mAmt
+        } else if (t.type === 'sell' && pos.shares > 0) {
+            const ratio = t.shares / pos.shares
+            pos.marginAmount -= pos.marginAmount * ratio
+            pos.shares -= t.shares
+        }
+    }
+    return Object.values(marginMap)
+        .filter(m => m.shares > 0 && m.marginAmount > 0)
+        .reduce((s, m) => s + m.marginAmount, 0)
 }
 
 // ── 主元件 ────────────────────────────────────────────────────────────────
@@ -174,6 +201,8 @@ export default function AssetTrend() {
         return { marketValue, missing }
     }
 
+    // ── 自動帶入（含扣除融資借款）────────────────────────────────────────
+
     const handleAutoFill = async () => {
         setAutoLoading(true)
         setMissingPriceCodes([])
@@ -195,17 +224,23 @@ export default function AssetTrend() {
             setMissingPriceCodes(missing)
 
             const cash = calcAvailableCash(cashRecords, trades)
-            const totalAssets = marketValue + cash
+
+            // ✅ 計算融資借款並從總資產扣除，呈現真實淨值
+            const marginDebt = calcMarginDebt(trades)
+            const totalAssets = marketValue + cash - marginDebt
 
             setForm(f => ({
                 ...f,
                 totalAssets: Math.round(totalAssets),
                 marketValue: Math.round(marketValue),
-                cash: Math.round(cash)
+                cash: Math.round(cash),
+                marginDebt: Math.round(marginDebt),
             }))
         } catch (err) { console.error(err) }
         setAutoLoading(false)
     }
+
+    // ── 儲存今日快照（含扣除融資借款）───────────────────────────────────
 
     const saveToday = async () => {
         setSaving(true)
@@ -228,14 +263,18 @@ export default function AssetTrend() {
             setMissingPriceCodes(missing)
 
             const cash = calcAvailableCash(cashRecords, trades)
-            const totalAssets = marketValue + cash
+
+            // ✅ 計算融資借款並從總資產扣除，呈現真實淨值
+            const marginDebt = calcMarginDebt(trades)
+            const totalAssets = marketValue + cash - marginDebt
             const today = new Date().toISOString().split('T')[0]
 
             await setDoc(userDoc(investDB, 'assetSnapshots', today), {
                 date: today,
                 totalAssets: Math.round(totalAssets),
                 marketValue: Math.round(marketValue),
-                cash: Math.round(cash)
+                cash: Math.round(cash),
+                marginDebt: Math.round(marginDebt),
             })
             await loadSnapshots()
         } catch (err) { console.error(err) }
@@ -354,16 +393,19 @@ export default function AssetTrend() {
 
                 {/* ── 最新數字摘要 ── */}
                 {latest && (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '24px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '24px' }}>
                         {[
-                            { label: '總資產', value: latest.totalAssets, color: 'var(--c-accent)' },
+                            { label: '總淨值', value: latest.totalAssets, color: 'var(--c-accent)' },
                             { label: '股票市值', value: latest.marketValue, color: 'var(--c-positive)' },
                             { label: '現金', value: latest.cash, color: 'var(--c-warning)' },
+                            ...(latest.marginDebt && latest.marginDebt > 0
+                                ? [{ label: '融資借款', value: latest.marginDebt, color: 'var(--c-danger)' }]
+                                : []),
                         ].map(item => (
                             <div key={item.label} style={card}>
                                 <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '6px' }}>{item.label}</div>
                                 <div style={{ fontSize: '20px', fontWeight: 700, color: item.color }}>
-                                    ${item.value.toLocaleString()}
+                                    {item.label === '融資借款' ? '-' : ''}${item.value.toLocaleString()}
                                 </div>
                             </div>
                         ))}
@@ -478,7 +520,7 @@ export default function AssetTrend() {
                         </div>
                     ) : chartMode === 'absolute' ? (
 
-                        // ── 金額模式：只顯示總資產 ──
+                        // ── 金額模式：只顯示總資產（淨值）──
                         <ResponsiveContainer width="100%" height={320}>
                             <LineChart data={filtered} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="var(--c-border)" />
@@ -493,7 +535,7 @@ export default function AssetTrend() {
                                 <Line
                                     type="monotone"
                                     dataKey="totalAssets"
-                                    name="總資產"
+                                    name="總淨值"
                                     stroke="var(--c-accent)"
                                     strokeWidth={2.5}
                                     dot={false}
@@ -572,7 +614,9 @@ export default function AssetTrend() {
                                 </button>
                             </div>
                         </div>
-                        <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '0 0 16px' }}>點「自動帶入」會從 Firebase 計算目前持倉市值與現金</p>
+                        <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '0 0 16px' }}>
+                            點「自動帶入」會從 Firebase 計算目前持倉市值與現金，並自動扣除融資借款
+                        </p>
 
                         {missingPriceCodes.length > 0 && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'rgba(245,166,35,0.1)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: 'var(--c-warning)' }}>
@@ -587,7 +631,7 @@ export default function AssetTrend() {
                                 <input type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
                             </div>
                             <div>
-                                <label style={lbl}>總資產</label>
+                                <label style={lbl}>總淨值（已扣融資）</label>
                                 <input type="number" style={inp} placeholder="0" value={form.totalAssets || ''} onChange={e => setForm(f => ({ ...f, totalAssets: parseFloat(e.target.value) || 0 }))} />
                             </div>
                             <div>
@@ -597,6 +641,23 @@ export default function AssetTrend() {
                             <div>
                                 <label style={lbl}>現金</label>
                                 <input type="number" style={inp} placeholder="0" value={form.cash || ''} onChange={e => setForm(f => ({ ...f, cash: parseFloat(e.target.value) || 0 }))} />
+                            </div>
+                            <div>
+                                <label style={lbl}>融資借款（負債）</label>
+                                <input
+                                    type="number"
+                                    style={{ ...inp, color: 'var(--c-danger)' }}
+                                    placeholder="0"
+                                    value={form.marginDebt || ''}
+                                    onChange={e => {
+                                        const debt = parseFloat(e.target.value) || 0
+                                        setForm(f => ({
+                                            ...f,
+                                            marginDebt: debt,
+                                            totalAssets: Math.round(f.marketValue + f.cash - debt),
+                                        }))
+                                    }}
+                                />
                             </div>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
@@ -624,9 +685,10 @@ export default function AssetTrend() {
                                 <thead>
                                     <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
                                         <th style={{ padding: '8px 12px', color: 'var(--c-muted)', fontWeight: 500, textAlign: 'left', whiteSpace: 'nowrap' }}>日期</th>
-                                        <th style={{ padding: '8px 12px', color: 'var(--c-muted)', fontWeight: 500, textAlign: 'right', whiteSpace: 'nowrap' }}>總資產</th>
+                                        <th style={{ padding: '8px 12px', color: 'var(--c-muted)', fontWeight: 500, textAlign: 'right', whiteSpace: 'nowrap' }}>總淨值</th>
                                         <th style={{ padding: '8px 12px', color: 'var(--c-muted)', fontWeight: 500, textAlign: 'right', whiteSpace: 'nowrap' }}>股票市值</th>
                                         <th style={{ padding: '8px 12px', color: 'var(--c-muted)', fontWeight: 500, textAlign: 'right', whiteSpace: 'nowrap' }}>現金</th>
+                                        <th style={{ padding: '8px 12px', color: 'var(--c-muted)', fontWeight: 500, textAlign: 'right', whiteSpace: 'nowrap' }}>融資借款</th>
                                         <th style={{ padding: '8px 12px', color: 'var(--c-muted)', fontWeight: 500, textAlign: 'center', whiteSpace: 'nowrap' }}>操作</th>
                                     </tr>
                                 </thead>
@@ -637,6 +699,9 @@ export default function AssetTrend() {
                                             <td style={{ padding: '10px 12px', color: 'var(--c-accent)', fontWeight: 600, textAlign: 'right' }}>${s.totalAssets.toLocaleString()}</td>
                                             <td style={{ padding: '10px 12px', color: 'var(--c-positive)', textAlign: 'right' }}>${s.marketValue.toLocaleString()}</td>
                                             <td style={{ padding: '10px 12px', color: 'var(--c-warning)', textAlign: 'right' }}>${s.cash.toLocaleString()}</td>
+                                            <td style={{ padding: '10px 12px', color: s.marginDebt && s.marginDebt > 0 ? 'var(--c-danger)' : 'var(--c-muted)', textAlign: 'right' }}>
+                                                {s.marginDebt && s.marginDebt > 0 ? `-$${s.marginDebt.toLocaleString()}` : '—'}
+                                            </td>
                                             <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                                                 <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
                                                     <button

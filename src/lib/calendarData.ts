@@ -30,13 +30,6 @@ export const FOMC_DATES: CalendarEvent[] = [
 
 // 重要科技活動
 export const TECH_EVENTS: CalendarEvent[] = [
-    { id: 'gtc-2025', date: '2025-03-17', title: 'NVIDIA GTC 2025', type: 'tech', description: 'NVIDIA 年度開發者大會', url: 'https://www.nvidia.com/gtc/' },
-    { id: 'wwdc-2025', date: '2025-06-09', title: 'Apple WWDC 2025', type: 'tech', description: 'Apple 全球開發者大會' },
-    { id: 'build-2025', date: '2025-05-19', title: 'Microsoft Build 2025', type: 'tech', description: 'Microsoft 開發者大會' },
-    { id: 'google-io-2025', date: '2025-05-14', title: 'Google I/O 2025', type: 'tech', description: 'Google 開發者大會' },
-    { id: 'gtc-2026', date: '2026-03-16', title: 'NVIDIA GTC 2026', type: 'tech', description: 'NVIDIA 年度開發者大會' },
-    { id: 'wwdc-2026', date: '2026-06-08', title: 'Apple WWDC 2026', type: 'tech', description: 'Apple 全球開發者大會' },
-    { id: 'ces-2026', date: '2026-01-06', title: 'CES 2026', type: 'tech', description: '國際消費電子展', url: 'https://www.ces.tech/' },
 ]
 
 // 計算台灣期貨結算日（每月第三個週三）

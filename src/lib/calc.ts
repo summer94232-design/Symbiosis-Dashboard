@@ -24,6 +24,14 @@ export function calcTax(price: number, shares: number, code: string): number {
     return Math.floor(amount * rate)
 }
 
+/**
+ * 計算融資借款金額（無條件捨去至千元整數）
+ * 券商實際撥款以千元為單位，多出的部分算入自備款
+ */
+export function calcMarginDebt(totalPrice: number, marginRatio: number): number {
+    return Math.floor(totalPrice * marginRatio / 1000) * 1000
+}
+
 export interface TradeRecord {
     date: string
     type: 'buy' | 'sell'
@@ -179,6 +187,9 @@ export interface MarginSimResult {
  * @param buyPrice            試算買入價格
  * @param buyShares           試算加碼股數
  * @param marginRatio         融資成數（預設 0.6 = 六成）
+ *
+ * ✅ 修正：融資借款金額無條件捨去至千元整數，與券商實際撥款邏輯一致
+ *    例：75.50 × 2000 × 0.6 = 90,600 → 實際借款 90,000，差額 600 歸入自備款
  */
 export function simulateMarginBuy(
     currentMarketValue: number,
@@ -188,9 +199,9 @@ export function simulateMarginBuy(
     marginRatio: number = 0.6
 ): MarginSimResult {
     const totalPrice = buyPrice * buyShares
-    const addedDebt = totalPrice * marginRatio
+    const addedDebt = calcMarginDebt(totalPrice, marginRatio)  // ✅ 捨去至千元
     const fee = calcFee(buyPrice, buyShares)
-    const addedEquity = totalPrice * (1 - marginRatio) + fee
+    const addedEquity = totalPrice - addedDebt + fee            // ✅ 自備款 = 總價 - 實際借款 + 手續費
 
     const newMarketValue = currentMarketValue + totalPrice
     const newDebt = currentDebt + addedDebt

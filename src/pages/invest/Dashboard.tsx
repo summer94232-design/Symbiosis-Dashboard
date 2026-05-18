@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { collection, getDocs, orderBy, query, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
-import { calcPositions, calcAvailableCash, simulateMarginBuy, type TradeRecord, type DividendRecord } from '../../lib/calc'
+import { calcPositions, calcAvailableCash, simulateMarginBuy, calcMarginDebt, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useNavigate } from 'react-router-dom'
@@ -243,7 +243,10 @@ export default function Dashboard() {
                 const pos = marginMap[code]
                 if (t.type === 'buy') {
                     const stockVal = t.price * t.shares
-                    const mAmt = (t as any).marginAmount ?? Math.floor(stockVal * ((t as any).marginRatio ?? 0.6))
+                    // ✅ 修正：永遠用 calcMarginDebt 重算（捨去至千元），不信任舊存的 marginAmount
+                    // 舊資料可能存了未捨去的值（如 90600），導致與券商對不上
+                    const marginRatio = (t as any).marginRatio ?? 0.6
+                    const mAmt = calcMarginDebt(stockVal, marginRatio)
                     pos.shares += t.shares
                     pos.marginAmount += mAmt
                     pos.marginCost += stockVal
@@ -443,7 +446,7 @@ export default function Dashboard() {
                     <div>
                         <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>儀表板</h1>
                         <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
-                            {lastUpdated ? `更新：${lastUpdated}` : '尚未更新現價，點「更新現價」取得最新報價'}
+                            {lastUpdated ? `現價更新：${lastUpdated}` : '尚未更新現價，點「更新現價」取得最新報價'}
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>

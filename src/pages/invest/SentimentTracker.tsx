@@ -3,7 +3,7 @@ import { addDoc, getDocs, deleteDoc, orderBy, query } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { getQuote, extractPrice } from '../../lib/fugle'
-import { Plus, Trash2, RefreshCw, TrendingUp, TrendingDown, Target, Minus } from 'lucide-react'
+import { Plus, Trash2, RefreshCw, TrendingUp, TrendingDown, Target, Minus, ChevronDown, ChevronRight } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -12,11 +12,17 @@ interface SentimentRecord {
     code: string
     name: string
     direction: 'bull' | 'bear'
-    recordPrice: number       // 記錄當天的股價
-    currentPrice?: number     // 即時現價（前端 state，不存 Firebase）
+    recordPrice: number
+    currentPrice?: number
     reason: string
-    createdAt: string         // ISO date string YYYY-MM-DD
-    createdTs: number         // timestamp for ordering
+    createdAt: string
+    createdTs: number
+}
+
+interface StockGroup {
+    code: string
+    name: string
+    records: SentimentRecord[]
 }
 
 // ── 樣式常數 ───────────────────────────────────────────────────────────────
@@ -69,18 +75,47 @@ function calcVerdict(record: SentimentRecord): { verdict: Verdict; changePct: nu
     const cur = record.currentPrice
     if (!cur || !record.recordPrice) return { verdict: 'pending', changePct: null }
     const changePct = ((cur - record.recordPrice) / record.recordPrice) * 100
-    const threshold = 0.3 // 0.3% 以內算平手
+    const threshold = 0.3
     if (Math.abs(changePct) < threshold) return { verdict: 'draw', changePct }
     if (record.direction === 'bull') return { verdict: changePct > 0 ? 'win' : 'lose', changePct }
     return { verdict: changePct < 0 ? 'win' : 'lose', changePct }
 }
 
-// ── 天數計算 ───────────────────────────────────────────────────────────────
-
 function daysSince(dateStr: string): number {
     const now = new Date()
     const created = new Date(dateStr)
     return Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24))
+}
+
+const verdictStyle = (v: Verdict): React.CSSProperties => ({
+    fontSize: '11px',
+    fontWeight: 700,
+    padding: '2px 8px',
+    borderRadius: '20px',
+    backgroundColor:
+        v === 'win' ? 'rgba(0,200,150,0.15)' :
+            v === 'lose' ? 'rgba(255,87,87,0.15)' :
+                v === 'draw' ? 'rgba(245,166,35,0.15)' :
+                    'rgba(136,146,164,0.15)',
+    color:
+        v === 'win' ? '#00c896' :
+            v === 'lose' ? '#ff5757' :
+                v === 'draw' ? '#f5a623' :
+                    '#8892a4',
+})
+
+const verdictLabel = (v: Verdict) =>
+    v === 'win' ? '✓ 勝' : v === 'lose' ? '✗ 敗' : v === 'draw' ? '— 平' : '待定'
+
+// ── 群組勝率計算 ────────────────────────────────────────────────────────────
+
+function calcGroupStats(records: SentimentRecord[]) {
+    const settled = records.filter(r => r.currentPrice && r.recordPrice)
+    const wins = settled.filter(r => calcVerdict(r).verdict === 'win').length
+    const loses = settled.filter(r => calcVerdict(r).verdict === 'lose').length
+    const draws = settled.filter(r => calcVerdict(r).verdict === 'draw').length
+    const winRate = settled.length > 0 ? Math.round((wins / settled.length) * 100) : null
+    return { wins, loses, draws, total: records.length, settled: settled.length, winRate }
 }
 
 // ── 主元件 ─────────────────────────────────────────────────────────────────
@@ -93,8 +128,8 @@ export default function SentimentTracker() {
     const [saving, setSaving] = useState(false)
     const [stockDict, setStockDict] = useState<Record<string, string>>({})
     const [lastUpdated, setLastUpdated] = useState('')
-    const [filterDir, setFilterDir] = useState<'all' | 'bull' | 'bear'>('all')
     const [deletingId, setDeletingId] = useState<string | null>(null)
+    const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
     const [form, setForm] = useState({
         code: '',
@@ -114,13 +149,34 @@ export default function SentimentTracker() {
         const dict: Record<string, string> = {}
         dictSnap.docs.forEach(d => { dict[d.id] = d.data().name })
         setStockDict(dict)
-
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as SentimentRecord))
         setRecords(data)
         setLoading(false)
     }, [])
 
     useEffect(() => { load() }, [load])
+
+    // ── 群組化（依股票代號分組，組內依時間新→舊） ───────────────────────────
+
+    const groups: StockGroup[] = (() => {
+        const map: Record<string, StockGroup> = {}
+        records.forEach(r => {
+            if (!map[r.code]) map[r.code] = { code: r.code, name: r.name, records: [] }
+            map[r.code].records.push(r)
+        })
+        // 群組排序：依最新一筆記錄時間排
+        return Object.values(map).sort((a, b) =>
+            (b.records[0]?.createdTs ?? 0) - (a.records[0]?.createdTs ?? 0)
+        )
+    })()
+
+    const toggleGroup = (code: string) => {
+        setExpandedGroups(prev => {
+            const next = new Set(prev)
+            if (next.has(code)) next.delete(code); else next.add(code)
+            return next
+        })
+    }
 
     // ── 更新現價 ────────────────────────────────────────────────────────────
 
@@ -150,10 +206,8 @@ export default function SentimentTracker() {
         if (!form.code.trim()) return
         setSaving(true)
         try {
-            // 先抓當下股價作為記錄基準價
             const quote = await getQuote(form.code.toUpperCase())
             const recordPrice = extractPrice(quote) ?? 0
-
             const now = new Date()
             const newRecord: Omit<SentimentRecord, 'id'> = {
                 code: form.code.toUpperCase(),
@@ -168,12 +222,6 @@ export default function SentimentTracker() {
             setForm({ code: '', name: '', direction: 'bull', reason: '' })
             setShowForm(false)
             await load()
-            // 順便用剛拿到的現價更新 state
-            if (recordPrice > 0) {
-                setRecords(prev => prev.map(r =>
-                    r.code === newRecord.code ? { ...r, currentPrice: recordPrice } : r
-                ))
-            }
         } finally {
             setSaving(false)
         }
@@ -193,66 +241,41 @@ export default function SentimentTracker() {
         setDeletingId(null)
     }
 
-    // ── 勝率統計 ────────────────────────────────────────────────────────────
+    // ── 整體統計（所有記錄加總） ─────────────────────────────────────────────
 
-    const withPrice = records.filter(r => r.currentPrice && r.recordPrice)
-    const wins = withPrice.filter(r => calcVerdict(r).verdict === 'win').length
-    const loses = withPrice.filter(r => calcVerdict(r).verdict === 'lose').length
-    const draws = withPrice.filter(r => calcVerdict(r).verdict === 'draw').length
-    const winRate = withPrice.length > 0 ? Math.round((wins / withPrice.length) * 100) : null
+    const allSettled = records.filter(r => r.currentPrice && r.recordPrice)
+    const allWins = allSettled.filter(r => calcVerdict(r).verdict === 'win').length
+    const allLoses = allSettled.filter(r => calcVerdict(r).verdict === 'lose').length
+    const allDraws = allSettled.filter(r => calcVerdict(r).verdict === 'draw').length
+    const overallWinRate = allSettled.length > 0 ? Math.round((allWins / allSettled.length) * 100) : null
+
+    // 每檔股票平均勝率（各檔 winRate 加總 / 有 winRate 的檔數）
+    const groupWinRates = groups
+        .map(g => calcGroupStats(g.records).winRate)
+        .filter((r): r is number => r !== null)
+    const avgStockWinRate = groupWinRates.length > 0
+        ? Math.round(groupWinRates.reduce((a, b) => a + b, 0) / groupWinRates.length)
+        : null
 
     const bullRecords = records.filter(r => r.direction === 'bull')
     const bearRecords = records.filter(r => r.direction === 'bear')
-    const bullWins = bullRecords.filter(r => r.currentPrice && calcVerdict(r).verdict === 'win').length
-    const bullTotal = bullRecords.filter(r => r.currentPrice && r.recordPrice).length
-    const bearWins = bearRecords.filter(r => r.currentPrice && calcVerdict(r).verdict === 'win').length
-    const bearTotal = bearRecords.filter(r => r.currentPrice && r.recordPrice).length
-
-    // ── 過濾 ────────────────────────────────────────────────────────────────
-
-    const filtered = filterDir === 'all' ? records
-        : records.filter(r => r.direction === filterDir)
-
-    // ── 輔助渲染 ────────────────────────────────────────────────────────────
-
-    const verdictStyle = (v: Verdict): React.CSSProperties => ({
-        fontSize: '11px',
-        fontWeight: 700,
-        padding: '2px 8px',
-        borderRadius: '20px',
-        backgroundColor:
-            v === 'win' ? 'rgba(0,200,150,0.15)' :
-            v === 'lose' ? 'rgba(255,87,87,0.15)' :
-            v === 'draw' ? 'rgba(245,166,35,0.15)' :
-            'rgba(136,146,164,0.15)',
-        color:
-            v === 'win' ? '#00c896' :
-            v === 'lose' ? '#ff5757' :
-            v === 'draw' ? '#f5a623' :
-            '#8892a4',
-    })
-
-    const verdictLabel = (v: Verdict) =>
-        v === 'win' ? '✓ 勝' : v === 'lose' ? '✗ 敗' : v === 'draw' ? '— 平' : '待定'
 
     // ── Render ──────────────────────────────────────────────────────────────
 
     return (
         <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '960px', margin: '0 auto' }}>
+            <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
             {/* ── 標題列 ── */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
                     <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>觀點追蹤</h1>
-                    <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>記錄每天對股票的看多/看空，滾動追蹤勝率</p>
+                    <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>記錄每次對股票的看多/看空，追蹤波段判斷勝率</p>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                     {lastUpdated && <span style={{ fontSize: '11px', color: '#8892a4' }}>更新：{lastUpdated}</span>}
-                    <button
-                        onClick={handleRefreshPrices}
-                        disabled={priceLoading || records.length === 0}
-                        style={btn('#2e3349', { opacity: priceLoading ? 0.6 : 1 })}
-                    >
+                    <button onClick={handleRefreshPrices} disabled={priceLoading || records.length === 0}
+                        style={btn('#2e3349', { opacity: priceLoading ? 0.6 : 1 })}>
                         <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
                         更新現價
                     </button>
@@ -262,20 +285,32 @@ export default function SentimentTracker() {
                 </div>
             </div>
 
-            <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
-
             {/* ── 統計卡片 ── */}
             {records.length > 0 && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-                    {/* 總勝率 */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+
+                    {/* 整體勝率（所有記錄加總） */}
                     <div style={{ ...card, textAlign: 'center' }}>
                         <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '6px' }}>整體勝率</div>
-                        <div style={{ fontSize: '28px', fontWeight: 800, color: winRate !== null ? (winRate >= 50 ? '#00c896' : '#ff5757') : '#8892a4' }}>
-                            {winRate !== null ? `${winRate}%` : '—'}
+                        <div style={{ fontSize: '26px', fontWeight: 800, color: overallWinRate !== null ? (overallWinRate >= 50 ? '#00c896' : '#ff5757') : '#8892a4' }}>
+                            {overallWinRate !== null ? `${overallWinRate}%` : '—'}
                         </div>
                         <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '4px' }}>
-                            {withPrice.length > 0 ? `${wins}勝 ${loses}敗 ${draws}平` : '尚無現價資料'}
+                            {allSettled.length > 0 ? `${allWins}勝 ${allLoses}敗 ${allDraws}平` : '更新現價後顯示'}
                         </div>
+                        <div style={{ fontSize: '10px', color: '#8892a4', marginTop: '2px', opacity: 0.6 }}>所有記錄加總</div>
+                    </div>
+
+                    {/* 每檔平均勝率 */}
+                    <div style={{ ...card, textAlign: 'center' }}>
+                        <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '6px' }}>每檔平均勝率</div>
+                        <div style={{ fontSize: '26px', fontWeight: 800, color: avgStockWinRate !== null ? (avgStockWinRate >= 50 ? '#00c896' : '#ff5757') : '#8892a4' }}>
+                            {avgStockWinRate !== null ? `${avgStockWinRate}%` : '—'}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '4px' }}>
+                            {groupWinRates.length > 0 ? `${groupWinRates.length} 檔有結果` : '更新現價後顯示'}
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#8892a4', marginTop: '2px', opacity: 0.6 }}>各檔勝率加權平均</div>
                     </div>
 
                     {/* 看多勝率 */}
@@ -283,12 +318,15 @@ export default function SentimentTracker() {
                         <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
                             <TrendingUp size={12} color="#00c896" />看多勝率
                         </div>
-                        <div style={{ fontSize: '28px', fontWeight: 800, color: '#00c896' }}>
-                            {bullTotal > 0 ? `${Math.round((bullWins / bullTotal) * 100)}%` : '—'}
-                        </div>
-                        <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '4px' }}>
-                            {bullTotal > 0 ? `${bullWins}勝 / ${bullTotal}筆` : `共 ${bullRecords.length} 筆`}
-                        </div>
+                        {(() => {
+                            const s = bullRecords.filter(r => r.currentPrice && r.recordPrice)
+                            const w = s.filter(r => calcVerdict(r).verdict === 'win').length
+                            const rate = s.length > 0 ? Math.round((w / s.length) * 100) : null
+                            return <>
+                                <div style={{ fontSize: '26px', fontWeight: 800, color: '#00c896' }}>{rate !== null ? `${rate}%` : '—'}</div>
+                                <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '4px' }}>{s.length > 0 ? `${w}勝 / ${s.length}筆` : `共 ${bullRecords.length} 筆`}</div>
+                            </>
+                        })()}
                     </div>
 
                     {/* 看空勝率 */}
@@ -296,21 +334,22 @@ export default function SentimentTracker() {
                         <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
                             <TrendingDown size={12} color="#ff5757" />看空勝率
                         </div>
-                        <div style={{ fontSize: '28px', fontWeight: 800, color: '#ff5757' }}>
-                            {bearTotal > 0 ? `${Math.round((bearWins / bearTotal) * 100)}%` : '—'}
-                        </div>
-                        <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '4px' }}>
-                            {bearTotal > 0 ? `${bearWins}勝 / ${bearTotal}筆` : `共 ${bearRecords.length} 筆`}
-                        </div>
+                        {(() => {
+                            const s = bearRecords.filter(r => r.currentPrice && r.recordPrice)
+                            const w = s.filter(r => calcVerdict(r).verdict === 'win').length
+                            const rate = s.length > 0 ? Math.round((w / s.length) * 100) : null
+                            return <>
+                                <div style={{ fontSize: '26px', fontWeight: 800, color: '#ff5757' }}>{rate !== null ? `${rate}%` : '—'}</div>
+                                <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '4px' }}>{s.length > 0 ? `${w}勝 / ${s.length}筆` : `共 ${bearRecords.length} 筆`}</div>
+                            </>
+                        })()}
                     </div>
 
-                    {/* 總記錄數 */}
+                    {/* 總記錄 */}
                     <div style={{ ...card, textAlign: 'center' }}>
-                        <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '6px' }}>總記錄數</div>
-                        <div style={{ fontSize: '28px', fontWeight: 800, color: '#e2e8f0' }}>{records.length}</div>
-                        <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '4px' }}>
-                            多 {bullRecords.length} · 空 {bearRecords.length}
-                        </div>
+                        <div style={{ fontSize: '11px', color: '#8892a4', marginBottom: '6px' }}>追蹤中</div>
+                        <div style={{ fontSize: '26px', fontWeight: 800, color: '#e2e8f0' }}>{groups.length}<span style={{ fontSize: '13px', fontWeight: 400, color: '#8892a4' }}> 檔</span></div>
+                        <div style={{ fontSize: '11px', color: '#8892a4', marginTop: '4px' }}>{records.length} 筆記錄</div>
                     </div>
                 </div>
             )}
@@ -338,15 +377,9 @@ export default function SentimentTracker() {
                                         style={{
                                             flex: 1, padding: '8px', borderRadius: '8px', border: '1px solid',
                                             cursor: 'pointer', fontSize: '13px', fontWeight: 600,
-                                            borderColor: form.direction === dir
-                                                ? (dir === 'bull' ? '#00c896' : '#ff5757')
-                                                : '#2e3349',
-                                            backgroundColor: form.direction === dir
-                                                ? (dir === 'bull' ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)')
-                                                : '#0f1117',
-                                            color: form.direction === dir
-                                                ? (dir === 'bull' ? '#00c896' : '#ff5757')
-                                                : '#8892a4',
+                                            borderColor: form.direction === dir ? (dir === 'bull' ? '#00c896' : '#ff5757') : '#2e3349',
+                                            backgroundColor: form.direction === dir ? (dir === 'bull' ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)') : '#0f1117',
+                                            color: form.direction === dir ? (dir === 'bull' ? '#00c896' : '#ff5757') : '#8892a4',
                                             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
                                         }}>
                                         {dir === 'bull' ? <><TrendingUp size={13} />看多</> : <><TrendingDown size={13} />看空</>}
@@ -372,37 +405,10 @@ export default function SentimentTracker() {
                 </div>
             )}
 
-            {/* ── 過濾列 ── */}
-            {records.length > 0 && (
-                <div style={{ display: 'flex', gap: '6px', marginBottom: '16px' }}>
-                    {(['all', 'bull', 'bear'] as const).map(dir => (
-                        <button key={dir} onClick={() => setFilterDir(dir)}
-                            style={{
-                                padding: '6px 14px', borderRadius: '20px', border: '1px solid',
-                                cursor: 'pointer', fontSize: '12px', fontWeight: filterDir === dir ? 600 : 400,
-                                borderColor: filterDir === dir
-                                    ? dir === 'bull' ? '#00c896' : dir === 'bear' ? '#ff5757' : '#4f8ef7'
-                                    : '#2e3349',
-                                backgroundColor: filterDir === dir
-                                    ? dir === 'bull' ? 'rgba(0,200,150,0.1)' : dir === 'bear' ? 'rgba(255,87,87,0.1)' : 'rgba(79,142,247,0.1)'
-                                    : 'transparent',
-                                color: filterDir === dir
-                                    ? dir === 'bull' ? '#00c896' : dir === 'bear' ? '#ff5757' : '#4f8ef7'
-                                    : '#8892a4',
-                            }}>
-                            {dir === 'all' ? '全部' : dir === 'bull' ? '▲ 看多' : '▼ 看空'}
-                            <span style={{ marginLeft: '4px', opacity: 0.7 }}>
-                                {dir === 'all' ? records.length : dir === 'bull' ? bullRecords.length : bearRecords.length}
-                            </span>
-                        </button>
-                    ))}
-                </div>
-            )}
-
-            {/* ── 記錄列表 ── */}
+            {/* ── 群組列表 ── */}
             {loading ? (
                 <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div>
-            ) : filtered.length === 0 ? (
+            ) : groups.length === 0 ? (
                 <div style={{ ...card, textAlign: 'center', padding: '48px' }}>
                     <Target size={32} color="#2e3349" style={{ marginBottom: '12px' }} />
                     <p style={{ color: '#8892a4', margin: 0 }}>尚無觀點記錄</p>
@@ -410,106 +416,149 @@ export default function SentimentTracker() {
                 </div>
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {filtered.map(record => {
-                        const { verdict, changePct } = calcVerdict(record)
-                        const days = daysSince(record.createdAt)
-                        const isLosingBull = record.direction === 'bull' && verdict === 'lose'
-                        const isLosingBear = record.direction === 'bear' && verdict === 'lose'
-                        const dirColor = record.direction === 'bull' ? '#00c896' : '#ff5757'
+                    {groups.map(group => {
+                        const isExpanded = expandedGroups.has(group.code)
+                        const stats = calcGroupStats(group.records)
+                        const currentPrice = group.records[0]?.currentPrice
 
                         return (
-                            <div key={record.id} style={{
-                                ...card,
-                                borderLeft: `3px solid ${record.direction === 'bull' ? '#00c896' : '#ff5757'}`,
-                                position: 'relative',
-                            }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
-                                    {/* 左側：股票資訊 */}
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                                        {/* 方向 badge */}
-                                        <div style={{
-                                            display: 'flex', alignItems: 'center', gap: '4px',
-                                            backgroundColor: record.direction === 'bull' ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)',
-                                            color: dirColor, borderRadius: '8px', padding: '4px 10px',
-                                            fontSize: '13px', fontWeight: 700,
-                                        }}>
-                                            {record.direction === 'bull'
-                                                ? <TrendingUp size={13} />
-                                                : <TrendingDown size={13} />}
-                                            {record.direction === 'bull' ? '看多' : '看空'}
-                                        </div>
+                            <div key={group.code} style={{ ...card, padding: 0, overflow: 'hidden' }}>
 
-                                        {/* 股票名稱 */}
-                                        <div>
-                                            <span style={{ fontWeight: 700, color: '#e2e8f0', fontSize: '15px' }}>{record.code}</span>
-                                            {record.name && record.name !== record.code && (
-                                                <span style={{ color: '#8892a4', fontSize: '13px', marginLeft: '6px' }}>{record.name}</span>
-                                            )}
-                                        </div>
+                                {/* ── 群組標題（點擊收合/展開） ── */}
+                                <div
+                                    onClick={() => toggleGroup(group.code)}
+                                    style={{ padding: '16px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}
+                                >
+                                    {/* 展開箭頭 */}
+                                    <span style={{ color: '#8892a4', display: 'flex', flexShrink: 0 }}>
+                                        {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                                    </span>
 
-                                        {/* 勝負 badge */}
-                                        <span style={verdictStyle(verdict)}>{verdictLabel(verdict)}</span>
+                                    {/* 股票代號 + 名稱 */}
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <span style={{ fontWeight: 700, color: '#e2e8f0', fontSize: '15px' }}>{group.code}</span>
+                                        {group.name && group.name !== group.code && (
+                                            <span style={{ color: '#8892a4', fontSize: '13px', marginLeft: '8px' }}>{group.name}</span>
+                                        )}
                                     </div>
 
-                                    {/* 右側：價格與操作 */}
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-                                        {/* 價格對比 */}
-                                        <div style={{ textAlign: 'right' }}>
-                                            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                                                <div>
-                                                    <div style={{ fontSize: '10px', color: '#8892a4' }}>記錄價</div>
-                                                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>
-                                                        {record.recordPrice > 0 ? `$${record.recordPrice.toFixed(2)}` : '—'}
-                                                    </div>
-                                                </div>
-                                                <Minus size={12} color="#2e3349" />
-                                                <div>
-                                                    <div style={{ fontSize: '10px', color: '#8892a4' }}>現價</div>
-                                                    <div style={{ fontSize: '14px', fontWeight: 600, color: record.currentPrice ? '#e2e8f0' : '#8892a4' }}>
-                                                        {record.currentPrice ? `$${record.currentPrice.toFixed(2)}` : '—'}
-                                                    </div>
-                                                </div>
-                                                {changePct !== null && (
-                                                    <div style={{
-                                                        fontSize: '13px', fontWeight: 700,
-                                                        color: changePct > 0 ? '#00c896' : changePct < 0 ? '#ff5757' : '#8892a4',
-                                                    }}>
-                                                        {changePct > 0 ? '+' : ''}{changePct.toFixed(2)}%
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        {/* 刪除 */}
-                                        <button
-                                            onClick={() => record.id && handleDelete(record.id)}
-                                            disabled={deletingId === record.id}
-                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8892a4', padding: '4px', display: 'flex', opacity: deletingId === record.id ? 0.4 : 1 }}
-                                            onMouseEnter={e => (e.currentTarget.style.color = '#ff5757')}
-                                            onMouseLeave={e => (e.currentTarget.style.color = '#8892a4')}
-                                        >
-                                            <Trash2 size={15} />
-                                        </button>
+                                    {/* 勝率 badge */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                                        {stats.winRate !== null && (
+                                            <span style={{
+                                                fontSize: '13px', fontWeight: 700,
+                                                color: stats.winRate >= 50 ? '#00c896' : '#ff5757',
+                                                backgroundColor: stats.winRate >= 50 ? 'rgba(0,200,150,0.1)' : 'rgba(255,87,87,0.1)',
+                                                padding: '2px 10px', borderRadius: '20px',
+                                            }}>
+                                                {stats.winRate}%
+                                            </span>
+                                        )}
+                                        <span style={{ fontSize: '12px', color: '#8892a4' }}>
+                                            {stats.settled > 0
+                                                ? `${stats.wins}勝 ${stats.loses}敗${stats.draws > 0 ? ` ${stats.draws}平` : ''}`
+                                                : `${stats.total}筆`}
+                                        </span>
+                                        {currentPrice && (
+                                            <span style={{ fontSize: '12px', color: '#e2e8f0', backgroundColor: '#0f1117', padding: '2px 8px', borderRadius: '6px' }}>
+                                                現價 ${currentPrice.toFixed(2)}
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
 
-                                {/* 理由 */}
-                                {record.reason && (
-                                    <div style={{
-                                        marginTop: '10px', padding: '8px 12px',
-                                        backgroundColor: '#0f1117', borderRadius: '8px',
-                                        fontSize: '13px', color: '#8892a4', lineHeight: 1.5,
-                                        borderLeft: `2px solid ${dirColor}`,
-                                    }}>
-                                        {record.reason}
+                                {/* ── 展開內容：每筆記錄 ── */}
+                                {isExpanded && (
+                                    <div style={{ borderTop: '1px solid #2e3349' }}>
+                                        {group.records.map((record, idx) => {
+                                            const { verdict, changePct } = calcVerdict(record)
+                                            const days = daysSince(record.createdAt)
+                                            const dirColor = record.direction === 'bull' ? '#00c896' : '#ff5757'
+
+                                            return (
+                                                <div key={record.id} style={{
+                                                    padding: '14px 20px',
+                                                    borderBottom: idx < group.records.length - 1 ? '1px solid #1e2235' : 'none',
+                                                    borderLeft: `3px solid ${dirColor}`,
+                                                    backgroundColor: '#141720',
+                                                }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
+                                                        {/* 左側 */}
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                                            {/* 方向 badge */}
+                                                            <div style={{
+                                                                display: 'flex', alignItems: 'center', gap: '4px',
+                                                                backgroundColor: record.direction === 'bull' ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)',
+                                                                color: dirColor, borderRadius: '6px', padding: '3px 8px',
+                                                                fontSize: '12px', fontWeight: 700,
+                                                            }}>
+                                                                {record.direction === 'bull' ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                                                                {record.direction === 'bull' ? '看多' : '看空'}
+                                                            </div>
+
+                                                            {/* 勝負 */}
+                                                            <span style={verdictStyle(verdict)}>{verdictLabel(verdict)}</span>
+
+                                                            {/* 日期 + 天數 */}
+                                                            <span style={{ fontSize: '12px', color: '#8892a4' }}>
+                                                                {record.createdAt}
+                                                                <span style={{ marginLeft: '6px', opacity: 0.6 }}>（{days}天前）</span>
+                                                            </span>
+                                                        </div>
+
+                                                        {/* 右側：價格 + 刪除 */}
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                                                <div style={{ textAlign: 'center' }}>
+                                                                    <div style={{ fontSize: '10px', color: '#8892a4' }}>記錄價</div>
+                                                                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>
+                                                                        {record.recordPrice > 0 ? `$${record.recordPrice.toFixed(2)}` : '—'}
+                                                                    </div>
+                                                                </div>
+                                                                <Minus size={10} color="#2e3349" />
+                                                                <div style={{ textAlign: 'center' }}>
+                                                                    <div style={{ fontSize: '10px', color: '#8892a4' }}>現價</div>
+                                                                    <div style={{ fontSize: '13px', fontWeight: 600, color: record.currentPrice ? '#e2e8f0' : '#8892a4' }}>
+                                                                        {record.currentPrice ? `$${record.currentPrice.toFixed(2)}` : '—'}
+                                                                    </div>
+                                                                </div>
+                                                                {changePct !== null && (
+                                                                    <div style={{
+                                                                        fontSize: '12px', fontWeight: 700,
+                                                                        color: changePct > 0 ? '#00c896' : changePct < 0 ? '#ff5757' : '#8892a4',
+                                                                    }}>
+                                                                        {changePct > 0 ? '+' : ''}{changePct.toFixed(2)}%
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            <button
+                                                                onClick={e => { e.stopPropagation(); record.id && handleDelete(record.id) }}
+                                                                disabled={deletingId === record.id}
+                                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8892a4', padding: '4px', display: 'flex', opacity: deletingId === record.id ? 0.4 : 1 }}
+                                                                onMouseEnter={e => (e.currentTarget.style.color = '#ff5757')}
+                                                                onMouseLeave={e => (e.currentTarget.style.color = '#8892a4')}
+                                                            >
+                                                                <Trash2 size={14} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* 理由 */}
+                                                    {record.reason && (
+                                                        <div style={{
+                                                            marginTop: '8px', padding: '6px 10px',
+                                                            backgroundColor: '#0f1117', borderRadius: '6px',
+                                                            fontSize: '12px', color: '#8892a4', lineHeight: 1.5,
+                                                            borderLeft: `2px solid ${dirColor}`,
+                                                        }}>
+                                                            {record.reason}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )
+                                        })}
                                     </div>
                                 )}
-
-                                {/* 時間資訊 */}
-                                <div style={{ marginTop: '8px', fontSize: '11px', color: '#8892a4', display: 'flex', gap: '12px' }}>
-                                    <span>📅 記錄於 {record.createdAt}</span>
-                                    <span>⏱ 已過 {days} 天</span>
-                                </div>
                             </div>
                         )
                     })}

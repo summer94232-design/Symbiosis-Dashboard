@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { addDoc, getDocs, updateDoc, deleteDoc, orderBy, query, setDoc, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
-import { calcFee, calcTax, isETF } from '../../lib/calc'
+import { calcFee, calcTax, isETF, calcMarginDebt } from '../../lib/calc'
 import { Pencil, Trash2, X, Check, Upload, Search, ChevronDown, ChevronUp } from 'lucide-react'
 
 interface Trade {
@@ -155,7 +155,7 @@ export default function Trades() {
         if (f.type === 'buy' && f.isMargin) {
             // 融資買入：total = 自備款 + 手續費（不含融資借款部分）
             const stockValue = f.price * f.shares
-            const marginAmt = Math.floor(stockValue * (f.marginRatio ?? 0.6))
+            const marginAmt = calcMarginDebt(stockValue, f.marginRatio ?? 0.6)
             return stockValue - marginAmt + f.fee
         }
         return f.type === 'buy' ? f.price * f.shares + f.fee : f.price * f.shares - f.fee - f.tax
@@ -169,7 +169,7 @@ export default function Trades() {
                     u.fee = calcFee(u.price, u.shares)
                     u.tax = u.type === 'sell' ? calcTax(u.price, u.shares, u.code) : 0
                     if (u.type === 'buy' && u.isMargin) {
-                        u.marginAmount = Math.floor(u.price * u.shares * (u.marginRatio ?? 0.6))
+                        u.marginAmount = calcMarginDebt(u.price * u.shares, u.marginRatio ?? 0.6)
                     }
                 }
             }
