@@ -1,6 +1,6 @@
 import { useState, useEffect, lazy, Suspense, memo } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
-import { LayoutDashboard, ArrowLeftRight, TrendingUp, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard, Folder, Wrench, Target, Map } from 'lucide-react'
+import { LayoutDashboard, ArrowLeftRight, TrendingUp, TrendingDown, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard, Folder, Wrench, Target, Map } from 'lucide-react'
 import { getDocs, getDoc, orderBy, query } from 'firebase/firestore'
 import { kmsDB } from './lib/firebase'
 import { userCol, userDocNested } from './lib/userDB'
@@ -20,6 +20,7 @@ const MarginManager = lazy(() => import('./pages/invest/MarginManager'))
 const InvestSettings = lazy(() => import('./pages/invest/InvestSettings'))
 const SentimentTracker = lazy(() => import('./pages/invest/SentimentTracker'))
 const IndustryMap = lazy(() => import('./pages/invest/IndustryMap'))
+const SoldTracker = lazy(() => import('./pages/invest/SoldTracker'))
 const KMSHome = lazy(() => import('./pages/kms/KMSHome'))
 const KMSGraph = lazy(() => import('./pages/kms/KMSGraph'))
 const KMSTrash = lazy(() => import('./pages/kms/KMSTrash'))
@@ -51,6 +52,7 @@ const investToolsNav = [
     { to: '/invest/margin', icon: CreditCard, label: '融資管理' },
     { to: '/invest/sentiment', icon: Target, label: '觀點追蹤' },
     { to: '/invest/industry', icon: Map, label: '產業地圖' },
+    { to: '/invest/sold-tracker', icon: TrendingDown, label: '賣出追蹤' },
 ]
 
 const calendarNav = [
@@ -448,6 +450,7 @@ export default function App() {
                                 <Route path="/invest/margin" element={<MarginManager />} />
                                 <Route path="/invest/sentiment" element={<SentimentTracker />} />
                                 <Route path="/invest/industry" element={<IndustryMap />} />
+                                <Route path="/invest/sold-tracker" element={<SoldTracker />} />
                                 <Route path="/invest/settings" element={<InvestSettings />} />
                                 <Route path="/kms" element={<KMSHome selectedTag={selectedTag} setSelectedTag={setSelectedTag} />} />
                                 <Route path="/kms/tags" element={<KMSTags />} />

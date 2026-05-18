@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { addDoc, getDocs, deleteDoc, orderBy, query } from 'firebase/firestore'
+import { addDoc, getDocs, deleteDoc, updateDoc, orderBy, query } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { getQuote, extractPrice } from '../../lib/fugle'
-import { Plus, Trash2, RefreshCw, TrendingUp, TrendingDown, Target, Minus, ChevronDown, ChevronRight } from 'lucide-react'
+import { Plus, Trash2, RefreshCw, TrendingUp, TrendingDown, Target, Minus, ChevronDown, ChevronRight, Pencil, Check, X } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -130,6 +130,9 @@ export default function SentimentTracker() {
     const [lastUpdated, setLastUpdated] = useState('')
     const [deletingId, setDeletingId] = useState<string | null>(null)
     const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+    const [editingId, setEditingId] = useState<string | null>(null)
+    const [editForm, setEditForm] = useState<{ direction: 'bull' | 'bear'; recordPrice: string; reason: string }>({ direction: 'bull', recordPrice: '', reason: '' })
+    const [savingEditId, setSavingEditId] = useState<string | null>(null)
 
     const [form, setForm] = useState({
         code: '',
@@ -241,7 +244,35 @@ export default function SentimentTracker() {
         setDeletingId(null)
     }
 
-    // ── 整體統計（所有記錄加總） ─────────────────────────────────────────────
+    // ── 編輯整筆記錄 ─────────────────────────────────────────────────────────
+
+    const handleStartEdit = (record: SentimentRecord) => {
+        setEditingId(record.id!)
+        setEditForm({
+            direction: record.direction,
+            recordPrice: record.recordPrice > 0 ? String(record.recordPrice) : '',
+            reason: record.reason ?? '',
+        })
+    }
+
+    const handleSaveEdit = async (record: SentimentRecord) => {
+        const price = parseFloat(editForm.recordPrice)
+        if (isNaN(price) || price <= 0) return
+        setSavingEditId(record.id!)
+        try {
+            const updates = {
+                direction: editForm.direction,
+                recordPrice: price,
+                reason: editForm.reason,
+            }
+            await updateDoc(userDoc(investDB, 'sentiments', record.id!), updates)
+            setRecords(prev => prev.map(r => r.id === record.id ? { ...r, ...updates } : r))
+            setEditingId(null)
+        } finally {
+            setSavingEditId(null)
+        }
+    }
+
 
     const allSettled = records.filter(r => r.currentPrice && r.recordPrice)
     const allWins = allSettled.filter(r => calcVerdict(r).verdict === 'win').length
@@ -482,77 +513,149 @@ export default function SentimentTracker() {
                                                     borderLeft: `3px solid ${dirColor}`,
                                                     backgroundColor: '#141720',
                                                 }}>
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
-                                                        {/* 左側 */}
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                                                            {/* 方向 badge */}
-                                                            <div style={{
-                                                                display: 'flex', alignItems: 'center', gap: '4px',
-                                                                backgroundColor: record.direction === 'bull' ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)',
-                                                                color: dirColor, borderRadius: '6px', padding: '3px 8px',
-                                                                fontSize: '12px', fontWeight: 700,
-                                                            }}>
-                                                                {record.direction === 'bull' ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                                                                {record.direction === 'bull' ? '看多' : '看空'}
+                                                    {editingId === record.id ? (
+                                                        /* ── 編輯模式 ── */
+                                                        <div onClick={e => e.stopPropagation()}>
+                                                            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '12px', alignItems: 'start', marginBottom: '10px' }}>
+                                                                {/* 方向 */}
+                                                                <div>
+                                                                    <div style={{ fontSize: '10px', color: '#8892a4', marginBottom: '4px' }}>方向</div>
+                                                                    <div style={{ display: 'flex', gap: '6px' }}>
+                                                                        {(['bull', 'bear'] as const).map(dir => (
+                                                                            <button key={dir} onClick={() => setEditForm(f => ({ ...f, direction: dir }))}
+                                                                                style={{
+                                                                                    padding: '5px 12px', borderRadius: '6px', border: '1px solid',
+                                                                                    cursor: 'pointer', fontSize: '12px', fontWeight: 600,
+                                                                                    borderColor: editForm.direction === dir ? (dir === 'bull' ? '#00c896' : '#ff5757') : '#2e3349',
+                                                                                    backgroundColor: editForm.direction === dir ? (dir === 'bull' ? 'rgba(0,200,150,0.15)' : 'rgba(255,87,87,0.15)') : '#0f1117',
+                                                                                    color: editForm.direction === dir ? (dir === 'bull' ? '#00c896' : '#ff5757') : '#8892a4',
+                                                                                    display: 'flex', alignItems: 'center', gap: '4px',
+                                                                                }}>
+                                                                                {dir === 'bull' ? <><TrendingUp size={11} />看多</> : <><TrendingDown size={11} />看空</>}
+                                                                            </button>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                                {/* 記錄價 */}
+                                                                <div>
+                                                                    <div style={{ fontSize: '10px', color: '#8892a4', marginBottom: '4px' }}>記錄價</div>
+                                                                    <input
+                                                                        autoFocus
+                                                                        type="number"
+                                                                        value={editForm.recordPrice}
+                                                                        onChange={e => setEditForm(f => ({ ...f, recordPrice: e.target.value }))}
+                                                                        style={{ ...inp, fontSize: '13px', padding: '5px 10px', border: '1px solid #4f8ef7' }}
+                                                                    />
+                                                                </div>
                                                             </div>
-
-                                                            {/* 勝負 */}
-                                                            <span style={verdictStyle(verdict)}>{verdictLabel(verdict)}</span>
-
-                                                            {/* 日期 + 天數 */}
-                                                            <span style={{ fontSize: '12px', color: '#8892a4' }}>
-                                                                {record.createdAt}
-                                                                <span style={{ marginLeft: '6px', opacity: 0.6 }}>（{days}天前）</span>
-                                                            </span>
+                                                            {/* 理由 */}
+                                                            <div style={{ marginBottom: '10px' }}>
+                                                                <div style={{ fontSize: '10px', color: '#8892a4', marginBottom: '4px' }}>理由/想法</div>
+                                                                <textarea
+                                                                    value={editForm.reason}
+                                                                    onChange={e => setEditForm(f => ({ ...f, reason: e.target.value }))}
+                                                                    style={{ ...inp, fontSize: '12px', minHeight: '60px', resize: 'vertical', padding: '6px 10px' }}
+                                                                />
+                                                            </div>
+                                                            {/* 操作按鈕 */}
+                                                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                                                <button onClick={() => setEditingId(null)}
+                                                                    style={btn('#2e3349', { fontSize: '12px', padding: '6px 12px' })}>
+                                                                    <X size={12} />取消
+                                                                </button>
+                                                                <button onClick={() => handleSaveEdit(record)}
+                                                                    disabled={savingEditId === record.id || !editForm.recordPrice}
+                                                                    style={btn('#4f8ef7', { fontSize: '12px', padding: '6px 12px', opacity: savingEditId === record.id ? 0.6 : 1 })}>
+                                                                    <Check size={12} />{savingEditId === record.id ? '儲存中...' : '儲存'}
+                                                                </button>
+                                                            </div>
                                                         </div>
-
-                                                        {/* 右側：價格 + 刪除 */}
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                                                                <div style={{ textAlign: 'center' }}>
-                                                                    <div style={{ fontSize: '10px', color: '#8892a4' }}>記錄價</div>
-                                                                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>
-                                                                        {record.recordPrice > 0 ? `$${record.recordPrice.toFixed(2)}` : '—'}
-                                                                    </div>
-                                                                </div>
-                                                                <Minus size={10} color="#2e3349" />
-                                                                <div style={{ textAlign: 'center' }}>
-                                                                    <div style={{ fontSize: '10px', color: '#8892a4' }}>現價</div>
-                                                                    <div style={{ fontSize: '13px', fontWeight: 600, color: record.currentPrice ? '#e2e8f0' : '#8892a4' }}>
-                                                                        {record.currentPrice ? `$${record.currentPrice.toFixed(2)}` : '—'}
-                                                                    </div>
-                                                                </div>
-                                                                {changePct !== null && (
+                                                    ) : (
+                                                        /* ── 檢視模式 ── */
+                                                        <>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
+                                                                {/* 左側 */}
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                                                    {/* 方向 badge */}
                                                                     <div style={{
+                                                                        display: 'flex', alignItems: 'center', gap: '4px',
+                                                                        backgroundColor: record.direction === 'bull' ? 'rgba(0,200,150,0.12)' : 'rgba(255,87,87,0.12)',
+                                                                        color: dirColor, borderRadius: '6px', padding: '3px 8px',
                                                                         fontSize: '12px', fontWeight: 700,
-                                                                        color: changePct > 0 ? '#00c896' : changePct < 0 ? '#ff5757' : '#8892a4',
                                                                     }}>
-                                                                        {changePct > 0 ? '+' : ''}{changePct.toFixed(2)}%
+                                                                        {record.direction === 'bull' ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                                                                        {record.direction === 'bull' ? '看多' : '看空'}
                                                                     </div>
-                                                                )}
-                                                            </div>
-                                                            <button
-                                                                onClick={e => { e.stopPropagation(); record.id && handleDelete(record.id) }}
-                                                                disabled={deletingId === record.id}
-                                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8892a4', padding: '4px', display: 'flex', opacity: deletingId === record.id ? 0.4 : 1 }}
-                                                                onMouseEnter={e => (e.currentTarget.style.color = '#ff5757')}
-                                                                onMouseLeave={e => (e.currentTarget.style.color = '#8892a4')}
-                                                            >
-                                                                <Trash2 size={14} />
-                                                            </button>
-                                                        </div>
-                                                    </div>
 
-                                                    {/* 理由 */}
-                                                    {record.reason && (
-                                                        <div style={{
-                                                            marginTop: '8px', padding: '6px 10px',
-                                                            backgroundColor: '#0f1117', borderRadius: '6px',
-                                                            fontSize: '12px', color: '#8892a4', lineHeight: 1.5,
-                                                            borderLeft: `2px solid ${dirColor}`,
-                                                        }}>
-                                                            {record.reason}
-                                                        </div>
+                                                                    {/* 勝負 */}
+                                                                    <span style={verdictStyle(verdict)}>{verdictLabel(verdict)}</span>
+
+                                                                    {/* 日期 + 天數 */}
+                                                                    <span style={{ fontSize: '12px', color: '#8892a4' }}>
+                                                                        {record.createdAt}
+                                                                        <span style={{ marginLeft: '6px', opacity: 0.6 }}>（{days}天前）</span>
+                                                                    </span>
+                                                                </div>
+
+                                                                {/* 右側：價格 + 編輯 + 刪除 */}
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                                                        <div style={{ textAlign: 'center' }}>
+                                                                            <div style={{ fontSize: '10px', color: '#8892a4' }}>記錄價</div>
+                                                                            <div style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>
+                                                                                {record.recordPrice > 0 ? `$${record.recordPrice.toFixed(2)}` : '—'}
+                                                                            </div>
+                                                                        </div>
+                                                                        <Minus size={10} color="#2e3349" />
+                                                                        <div style={{ textAlign: 'center' }}>
+                                                                            <div style={{ fontSize: '10px', color: '#8892a4' }}>現價</div>
+                                                                            <div style={{ fontSize: '13px', fontWeight: 600, color: record.currentPrice ? '#e2e8f0' : '#8892a4' }}>
+                                                                                {record.currentPrice ? `$${record.currentPrice.toFixed(2)}` : '—'}
+                                                                            </div>
+                                                                        </div>
+                                                                        {changePct !== null && (
+                                                                            <div style={{
+                                                                                fontSize: '12px', fontWeight: 700,
+                                                                                color: changePct > 0 ? '#00c896' : changePct < 0 ? '#ff5757' : '#8892a4',
+                                                                            }}>
+                                                                                {changePct > 0 ? '+' : ''}{changePct.toFixed(2)}%
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                    {/* 編輯按鈕 */}
+                                                                    <button
+                                                                        onClick={e => { e.stopPropagation(); handleStartEdit(record) }}
+                                                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8892a4', padding: '4px', display: 'flex', opacity: 0.6 }}
+                                                                        onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                                                                        onMouseLeave={e => (e.currentTarget.style.opacity = '0.6')}
+                                                                    >
+                                                                        <Pencil size={14} />
+                                                                    </button>
+                                                                    {/* 刪除按鈕 */}
+                                                                    <button
+                                                                        onClick={e => { e.stopPropagation(); record.id && handleDelete(record.id) }}
+                                                                        disabled={deletingId === record.id}
+                                                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8892a4', padding: '4px', display: 'flex', opacity: deletingId === record.id ? 0.4 : 1 }}
+                                                                        onMouseEnter={e => (e.currentTarget.style.color = '#ff5757')}
+                                                                        onMouseLeave={e => (e.currentTarget.style.color = '#8892a4')}
+                                                                    >
+                                                                        <Trash2 size={14} />
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* 理由 */}
+                                                            {record.reason && (
+                                                                <div style={{
+                                                                    marginTop: '8px', padding: '6px 10px',
+                                                                    backgroundColor: '#0f1117', borderRadius: '6px',
+                                                                    fontSize: '12px', color: '#8892a4', lineHeight: 1.5,
+                                                                    borderLeft: `2px solid ${dirColor}`,
+                                                                }}>
+                                                                    {record.reason}
+                                                                </div>
+                                                            )}
+                                                        </>
                                                     )}
                                                 </div>
                                             )

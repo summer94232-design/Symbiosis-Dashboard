@@ -58,6 +58,21 @@ interface Task {
 const PRIORITY_COLORS = { high: 'var(--c-danger)', medium: 'var(--c-warning)', low: 'var(--c-positive)' }
 const PRIORITY_LABELS = { high: '高', medium: '中', low: '低' }
 
+// ── 賣出追蹤通知（固定值：14天內賣出、漲超10%）─────────────────────────────
+const SOLD_WATCH_DAYS = 14
+const SOLD_RISE_THRESHOLD = 10  // %
+
+interface SoldAlert {
+    code: string
+    name: string
+    date: string
+    soldPrice: number
+    shares: number
+    currentPrice: number
+    changePct: number
+    opportunityCost: number
+}
+
 // 族群圓餅圖 active label
 function renderCustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) {
     if (percent < 0.05) return null
@@ -132,6 +147,7 @@ export default function Dashboard() {
     const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
     const [reloadCooldown, setReloadCooldown] = useState(0) // 秒數倒數
     const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    const [showReloadConfirm, setShowReloadConfirm] = useState(false)
 
     const [upcomingEvents, setUpcomingEvents] = useState<CalendarEvent[]>([])
     const [tasks, setTasks] = useState<Task[]>([])
@@ -145,6 +161,9 @@ export default function Dashboard() {
         marginCost: number    // 融資買入時股票總市值（用於計算原始成本）
     }
     const [marginPositions, setMarginPositions] = useState<MarginPosition[]>([])
+    const [soldAlerts, setSoldAlerts] = useState<SoldAlert[]>([])
+    // sell trades 快取，供 updatePrices 掃描通知用（不重複讀 Firebase）
+    const [sellTradesCache, setSellTradesCache] = useState<Array<{ date: string; code: string; name: string; price: number; shares: number }>>([])
 
     // 融資加碼試算 state
     const [simOpen, setSimOpen] = useState(false)
@@ -176,6 +195,17 @@ export default function Dashboard() {
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
             const cashRecords = cashSnap.docs.map(d => d.data() as CashRecord)
+
+            // 快取賣出紀錄（日期在 SOLD_WATCH_DAYS 內），供 updatePrices 掃描通知
+            const today0 = new Date().toISOString().split('T')[0]
+            const sellCache = trades
+                .filter(t => t.type === 'sell')
+                .map(t => ({ date: t.date, code: t.code, name: t.name, price: t.price, shares: t.shares }))
+                .filter(t => {
+                    const d = Math.floor((Date.now() - new Date(t.date).getTime()) / 86400000)
+                    return d <= SOLD_WATCH_DAYS
+                })
+            setSellTradesCache(sellCache)
 
             const { holdings: positions, realized } = calcPositions(trades, dividends)
             setRealizedPnL(realized.reduce((s, r) => s + r.realized, 0))
@@ -275,7 +305,10 @@ export default function Dashboard() {
 
     // ✅ 修正：委託 PriceContext 更新，結果自動同步到 Holdings、Watchlist 等所有頁面
     const updatePrices = async () => {
-        const symbols = holdings.map(h => h.code)
+        // 持倉代號 + 近期賣出代號（賣出追蹤通知需要）一併查詢，不額外呼叫 Firebase
+        const holdingCodes = holdings.map(h => h.code)
+        const sellCodes = sellTradesCache.map(t => t.code)
+        const symbols = [...new Set([...holdingCodes, ...sellCodes])]
         if (symbols.length === 0) return
         const quotes = await ctxUpdatePrices(symbols)
 
@@ -298,6 +331,27 @@ export default function Dashboard() {
         setHoldings(updated)
         setHasPrice(priceAvailable)
         setLastUpdated(new Date().toLocaleString('zh-TW'))
+
+        // ── 掃描賣出追蹤通知（零額外 Firebase 讀取，直接用本次 quotes）──
+        const alerts: SoldAlert[] = sellTradesCache
+            .filter(t => {
+                const p = quotes[t.code]
+                if (typeof p !== 'number' || p <= 0) return false
+                const pct = ((p - t.price) / t.price) * 100
+                return pct >= SOLD_RISE_THRESHOLD
+            })
+            .map(t => {
+                const currentPrice = quotes[t.code] as number
+                const changePct = ((currentPrice - t.price) / t.price) * 100
+                return {
+                    code: t.code, name: t.name, date: t.date,
+                    soldPrice: t.price, shares: t.shares,
+                    currentPrice, changePct,
+                    opportunityCost: Math.round((currentPrice - t.price) * t.shares),
+                }
+            })
+            .sort((a, b) => b.changePct - a.changePct)
+        setSoldAlerts(alerts)
     }
 
     // ✅ 優化：直接呼叫，移除不必要的 setTimeout 延遲
@@ -312,6 +366,11 @@ export default function Dashboard() {
     // 重新載入加 30 秒 cooldown，防止連續點擊觸發多次全量讀取
     const handleReload = () => {
         if (reloadCooldown > 0 || loading) return
+        setShowReloadConfirm(true)
+    }
+
+    const confirmReload = () => {
+        setShowReloadConfirm(false)
         void loadData()
         setReloadCooldown(30)
         cooldownTimerRef.current = setInterval(() => {
@@ -450,15 +509,33 @@ export default function Dashboard() {
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
-                        <button
-                            onClick={handleReload}
-                            disabled={loading || reloadCooldown > 0}
-                            title={reloadCooldown > 0 ? `請稍候 ${reloadCooldown} 秒後再試` : '重新載入資料'}
-                            style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 14px', color: reloadCooldown > 0 ? 'var(--c-muted)' : 'var(--c-text)', fontSize: '13px', cursor: reloadCooldown > 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', opacity: reloadCooldown > 0 ? 0.6 : 1 }}
-                        >
-                            <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
-                            {reloadCooldown > 0 ? `${reloadCooldown}s` : '重新載入'}
-                        </button>
+                        <div style={{ position: 'relative' }}>
+                            <button
+                                onClick={handleReload}
+                                disabled={loading || reloadCooldown > 0}
+                                title={reloadCooldown > 0 ? `請稍候 ${reloadCooldown} 秒後再試` : '重新載入資料'}
+                                style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 14px', color: reloadCooldown > 0 ? 'var(--c-muted)' : 'var(--c-text)', fontSize: '13px', cursor: reloadCooldown > 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', opacity: reloadCooldown > 0 ? 0.6 : 1 }}
+                            >
+                                <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+                                {reloadCooldown > 0 ? `${reloadCooldown}s` : '重新載入'}
+                            </button>
+                            {showReloadConfirm && (
+                                <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '10px', padding: '14px 16px', zIndex: 50, minWidth: '200px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
+                                    <div style={{ fontSize: '13px', color: 'var(--c-text)', marginBottom: '12px', fontWeight: 600 }}>確認重新載入？</div>
+                                    <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '12px' }}>將重新從資料庫讀取所有資料</div>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                        <button onClick={confirmReload}
+                                            style={{ flex: 1, backgroundColor: 'var(--c-accent)', border: 'none', borderRadius: '6px', padding: '6px 0', color: '#fff', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}>
+                                            確認
+                                        </button>
+                                        <button onClick={() => setShowReloadConfirm(false)}
+                                            style={{ flex: 1, backgroundColor: 'transparent', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '6px 0', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}>
+                                            取消
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                         <button
                             onClick={() => void updatePrices()}
                             disabled={priceLoading || loading}
@@ -469,6 +546,50 @@ export default function Dashboard() {
                         </button>
                     </div>
                 </div>
+
+                {/* ── 賣出追蹤通知卡片（有觸發才顯示）── */}
+                {soldAlerts.length > 0 && (
+                    <div style={{
+                        border: '1px solid color-mix(in srgb, var(--c-danger) 40%, transparent)',
+                        borderRadius: '12px', padding: '14px 18px', marginBottom: '20px',
+                        backgroundColor: 'color-mix(in srgb, var(--c-danger) 6%, transparent)',
+                        cursor: 'pointer',
+                    }} onClick={() => navigate('/invest/sold-tracker')}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: soldAlerts.length > 0 ? '12px' : '0' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--c-danger)', fontWeight: 700, fontSize: '14px' }}>
+                                <TrendingDown size={15} />
+                                賣出追蹤通知（{soldAlerts.length} 筆）
+                                <span style={{ fontSize: '11px', fontWeight: 400, color: 'var(--c-muted)' }}>
+                                    · {SOLD_WATCH_DAYS} 天內賣出，現價漲超 {SOLD_RISE_THRESHOLD}%
+                                </span>
+                            </div>
+                            <span style={{ fontSize: '11px', color: 'var(--c-accent)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                查看詳情 →
+                            </span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {soldAlerts.map(a => (
+                                <div key={a.code + a.date} style={{
+                                    display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap',
+                                    backgroundColor: 'var(--c-card)', borderRadius: '8px', padding: '8px 14px',
+                                    border: '1px solid color-mix(in srgb, var(--c-danger) 20%, transparent)',
+                                }}>
+                                    <span style={{ fontWeight: 700, color: 'var(--c-accent)', fontSize: '14px', minWidth: '50px' }}>{a.code}</span>
+                                    <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>{a.name}</span>
+                                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>賣出 {a.date}</span>
+                                    <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>賣出價 {a.soldPrice}</span>
+                                    <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>→ 現價 {a.currentPrice.toFixed(2)}</span>
+                                    <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--c-danger)' }}>
+                                        +{a.changePct.toFixed(2)}%
+                                    </span>
+                                    <span style={{ fontSize: '12px', color: 'var(--c-danger)', fontWeight: 600 }}>
+                                        機會成本 +{a.opportunityCost.toLocaleString()} 元
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {loading ? (
                     <div style={{ textAlign: 'center', padding: '80px', color: 'var(--c-muted)' }}>載入中...</div>
