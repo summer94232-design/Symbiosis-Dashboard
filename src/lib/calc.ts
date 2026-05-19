@@ -63,6 +63,7 @@ export interface HoldingPosition {
     shares: number
     avgCost: number
     totalCost: number
+    marginAmount?: number  // ✅ 新增：累計融資借款金額（用於計算自備款損益率）
 }
 
 export interface RealizedRecord {
@@ -96,7 +97,7 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
         if (!code || !type || price == null || shares == null) continue
 
         if (!holdings[code]) {
-            holdings[code] = { code, name, shares: 0, avgCost: 0, totalCost: 0 }
+            holdings[code] = { code, name, shares: 0, avgCost: 0, totalCost: 0, marginAmount: 0 }
         }
         const pos = holdings[code]
 
@@ -108,6 +109,13 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
             pos.totalCost = newTotalCost
             pos.shares = newShares
             pos.name = name || pos.name
+
+            // ✅ 新增：若為融資買入，累加融資借款金額（捨去至千元）
+            if (t.isMargin) {
+                const stockVal = price * shares
+                const mAmt = calcMarginDebt(stockVal, t.marginRatio ?? 0.6)
+                pos.marginAmount = (pos.marginAmount ?? 0) + mAmt
+            }
         } else if (type === 'sell') {
             const sellRevenue = price * shares - (fee || 0) - (tax || 0)
             const costBasis = pos.avgCost * shares
@@ -117,12 +125,20 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
                 date: t.date, code, name: name || pos.name, shares,
                 avgCost: pos.avgCost, sellPrice: price, realized: pnl, returnRate
             })
+
+            // ✅ 新增：若為融資賣出，按比例歸還融資借款
+            if (t.isMargin && pos.shares > 0 && (pos.marginAmount ?? 0) > 0) {
+                const ratio = shares / pos.shares
+                pos.marginAmount = (pos.marginAmount ?? 0) * (1 - ratio)
+            }
+
             pos.shares -= shares
             pos.totalCost -= pos.avgCost * shares
             if (pos.shares <= 0) {
                 pos.shares = 0
                 pos.totalCost = 0
                 pos.avgCost = 0
+                pos.marginAmount = 0
             }
         }
     }

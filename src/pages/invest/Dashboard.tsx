@@ -21,6 +21,7 @@ interface HoldingItem {
     shares: number
     avgCost: number
     totalCost: number
+    marginAmount: number   // ✅ 新增：融資借款金額（0 = 現股）
     currentPrice: number | null
     marketValue: number
     unrealizedPnL: number
@@ -71,6 +72,13 @@ interface SoldAlert {
     currentPrice: number
     changePct: number
     opportunityCost: number
+}
+
+// ✅ 融資損益率輔助函式：融資用自備款為分母，現股用全額成本
+function calcReturnRate(unrealizedPnL: number, totalCost: number, marginAmount: number): number {
+    const equity = totalCost - marginAmount  // 自備款 = 全額成本 - 融資借款
+    const denominator = marginAmount > 0 ? equity : totalCost
+    return denominator > 0 ? (unrealizedPnL / denominator) * 100 : 0
 }
 
 // 族群圓餅圖 active label
@@ -197,7 +205,6 @@ export default function Dashboard() {
             const cashRecords = cashSnap.docs.map(d => d.data() as CashRecord)
 
             // 快取賣出紀錄（日期在 SOLD_WATCH_DAYS 內），供 updatePrices 掃描通知
-            const today0 = new Date().toISOString().split('T')[0]
             const sellCache = trades
                 .filter(t => t.type === 'sell')
                 .map(t => ({ date: t.date, code: t.code, name: t.name, price: t.price, shares: t.shares }))
@@ -243,11 +250,11 @@ export default function Dashboard() {
                 if (currentPrice !== null) priceAvailable = true
                 const marketValue = currentPrice !== null ? currentPrice * pos.shares : pos.totalCost
                 const unrealizedPnL = currentPrice !== null ? marketValue - pos.totalCost : 0
-                const returnRate = (currentPrice !== null && pos.totalCost > 0)
-                    ? (unrealizedPnL / pos.totalCost) * 100
-                    : 0
+                const marginAmount = pos.marginAmount ?? 0
+                // ✅ 融資用自備款為分母，現股用全額成本
+                const returnRate = calcReturnRate(unrealizedPnL, pos.totalCost, marginAmount)
                 totalMarketValue += marketValue
-                return { ...pos, currentPrice, marketValue, unrealizedPnL, returnRate, ratio: 0 }
+                return { ...pos, marginAmount, currentPrice, marketValue, unrealizedPnL, returnRate, ratio: 0 }
             })
 
             holdingList.forEach(h => {
@@ -321,8 +328,8 @@ export default function Dashboard() {
             if (currentPrice !== null) priceAvailable = true
             const marketValue = currentPrice !== null ? currentPrice * h.shares : h.totalCost
             const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
-            const returnRate = (currentPrice !== null && h.totalCost > 0)
-                ? (unrealizedPnL / h.totalCost) * 100 : 0
+            // ✅ 融資用自備款為分母，現股用全額成本
+            const returnRate = calcReturnRate(unrealizedPnL, h.totalCost, h.marginAmount)
             totalMarketValue += marketValue
             return { ...h, currentPrice, marketValue, unrealizedPnL, returnRate }
         })
@@ -940,7 +947,15 @@ export default function Dashboard() {
                                             {holdings.map(h => (
                                                 <tr key={h.code}>
                                                     <td style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{h.code}</td>
-                                                    <td>{h.name}</td>
+                                                    <td>
+                                                        {h.name}
+                                                        {/* ✅ 融資標籤 */}
+                                                        {h.marginAmount > 0 && (
+                                                            <span style={{ marginLeft: '6px', fontSize: '10px', color: 'var(--c-warning)', backgroundColor: 'rgba(245,166,35,0.12)', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>
+                                                                融資
+                                                            </span>
+                                                        )}
+                                                    </td>
                                                     <td>{h.shares.toLocaleString()}</td>
                                                     <td>{h.avgCost.toFixed(2)}</td>
                                                     <td style={{ color: h.currentPrice === null ? 'var(--c-muted)' : h.currentPrice > h.avgCost ? 'var(--c-positive)' : 'var(--c-danger)', fontWeight: 600 }}>
@@ -952,7 +967,10 @@ export default function Dashboard() {
                                                     <td>
                                                         {h.currentPrice === null
                                                             ? <span style={{ color: 'var(--c-muted)', fontSize: '12px' }}>點「更新現價」</span>
-                                                            : <span style={{ backgroundColor: h.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(h.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>
+                                                            : <span
+                                                                style={{ backgroundColor: h.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(h.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}
+                                                                title={h.marginAmount > 0 ? `融資損益率（以自備款 $${(h.totalCost - h.marginAmount).toLocaleString()} 為基準）` : '現股損益率'}
+                                                            >
                                                                 {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
                                                             </span>
                                                         }

@@ -14,6 +14,7 @@ interface DisplayHolding {
     currentPrice: number | null
     marketValue: number
     totalCost: number
+    marginAmount: number   // ✅ 新增：融資借款金額（0 = 現股）
     unrealizedPnL: number
     returnRate: number
 }
@@ -78,6 +79,13 @@ function GroupCell({
     )
 }
 
+// ✅ 融資損益率輔助函式：融資用自備款為分母，現股用全額成本
+function calcReturnRate(unrealizedPnL: number, totalCost: number, marginAmount: number): number {
+    const equity = totalCost - marginAmount  // 自備款 = 全額成本 - 融資借款
+    const denominator = marginAmount > 0 ? equity : totalCost
+    return denominator > 0 ? (unrealizedPnL / denominator) * 100 : 0
+}
+
 export default function Holdings() {
     // ── 全域現價 Context ──
     const { prices, lastUpdated, priceLoading, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
@@ -117,8 +125,14 @@ export default function Holdings() {
                 const currentPrice = ctxVal ?? (typeof fbVal === 'number' && fbVal > 0 ? fbVal : null)
                 const marketValue = currentPrice !== null ? currentPrice * pos.shares : pos.totalCost
                 const unrealizedPnL = currentPrice !== null ? marketValue - pos.totalCost : 0
-                const returnRate = pos.totalCost > 0 ? (unrealizedPnL / pos.totalCost) * 100 : 0
-                return { code: pos.code, name: pos.name, shares: pos.shares, avgCost: pos.avgCost, currentPrice, marketValue, totalCost: pos.totalCost, unrealizedPnL, returnRate }
+                const marginAmount = pos.marginAmount ?? 0
+                // ✅ 融資用自備款為分母，現股用全額成本
+                const returnRate = calcReturnRate(unrealizedPnL, pos.totalCost, marginAmount)
+                return {
+                    code: pos.code, name: pos.name, shares: pos.shares,
+                    avgCost: pos.avgCost, currentPrice, marketValue,
+                    totalCost: pos.totalCost, marginAmount, unrealizedPnL, returnRate
+                }
             }).sort((a, b) => b.marketValue - a.marketValue)
 
             setHoldings(list)
@@ -136,8 +150,8 @@ export default function Holdings() {
             const currentPrice = quotes[h.code] ?? null
             const marketValue = currentPrice !== null ? currentPrice * h.shares : h.totalCost
             const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
-            const returnRate = (currentPrice !== null && h.totalCost > 0)
-                ? (unrealizedPnL / h.totalCost) * 100 : 0
+            // ✅ 融資用自備款為分母，現股用全額成本
+            const returnRate = calcReturnRate(unrealizedPnL, h.totalCost, h.marginAmount)
             return { ...h, currentPrice, marketValue, unrealizedPnL, returnRate }
         }).sort((a, b) => b.marketValue - a.marketValue))
     }
@@ -239,7 +253,15 @@ export default function Holdings() {
                                     {holdings.map(h => (
                                         <tr key={h.code}>
                                             <td style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{h.code}</td>
-                                            <td>{h.name}</td>
+                                            <td>
+                                                {h.name}
+                                                {/* ✅ 融資標籤 */}
+                                                {h.marginAmount > 0 && (
+                                                    <span style={{ marginLeft: '6px', fontSize: '10px', color: 'var(--c-warning)', backgroundColor: 'rgba(245,166,35,0.12)', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>
+                                                        融資
+                                                    </span>
+                                                )}
+                                            </td>
                                             <td>{h.shares.toLocaleString()}</td>
                                             <td>{h.avgCost.toFixed(2)}</td>
                                             <td style={{ color: h.currentPrice === null ? 'var(--c-muted)' : h.currentPrice > h.avgCost ? 'var(--c-positive)' : 'var(--c-danger)', fontWeight: 600 }}>
@@ -256,7 +278,9 @@ export default function Holdings() {
                                                 {h.currentPrice === null ? (
                                                     <span style={{ color: 'var(--c-muted)', fontSize: '12px' }}>請更新現價</span>
                                                 ) : (
-                                                    <span style={{ backgroundColor: h.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(h.returnRate), padding: '3px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>
+                                                    <span style={{ backgroundColor: h.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(h.returnRate), padding: '3px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}
+                                                        title={h.marginAmount > 0 ? `融資損益率（以自備款 $${(h.totalCost - h.marginAmount).toLocaleString()} 為基準）` : '現股損益率'}
+                                                    >
                                                         {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
                                                     </span>
                                                 )}
