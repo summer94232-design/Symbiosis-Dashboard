@@ -2,7 +2,7 @@ import { useState, useEffect, lazy, Suspense, memo } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
 import { LayoutDashboard, ArrowLeftRight, TrendingUp, TrendingDown, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard, Folder, Wrench, Target, Map } from 'lucide-react'
 import { getDocs, getDoc, orderBy, query } from 'firebase/firestore'
-import { kmsDB } from './lib/firebase'
+import { kmsDB, investDB } from './lib/firebase'
 import { userCol, userDocNested } from './lib/userDB'
 import { signOutAll } from './lib/auth'
 import { PriceProvider } from './PriceContext'
@@ -169,6 +169,7 @@ interface SidebarProps {
     setSelectedTag: (tag: string) => void
     expandedNodes: Set<string>
     toggleNode: (path: string) => void
+    displayName: string
 }
 
 // ── 可收合群組元件（統一樣式，避免重複） ──────────────────────────────────
@@ -208,6 +209,7 @@ const Sidebar = memo(({
     setSelectedTag,
     expandedNodes,
     toggleNode,
+    displayName,
 }: SidebarProps) => {
     const managePaths = investManageNav.map(n => n.to)
     const toolsPaths = investToolsNav.map(n => n.to)
@@ -219,7 +221,9 @@ const Sidebar = memo(({
             <div style={{ padding: '20px', borderBottom: '1px solid var(--c-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                     <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>Symbiosis 管理系統</div>
-                    <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '2px' }}></div>
+                    {displayName && (
+                        <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '3px' }}>使用者：{displayName}</div>
+                    )}
                 </div>
                 {isMobile && <button onClick={() => setSidebarOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={20} /></button>}
             </div>
@@ -365,6 +369,15 @@ export default function App() {
 
     const currentSystem = isKMS ? 'kms' : isCalendar ? 'calendar' : 'invest'
 
+    // ── 使用者顯示名稱（讀取供 Sidebar 顯示，編輯入口在設定與備份頁）──
+    const [displayName, setDisplayName] = useState('')
+
+    useEffect(() => {
+        getDoc(userDocNested(investDB, 'settings', 'profile'))
+            .then(snap => { if (snap.exists()) setDisplayName(snap.data().displayName ?? '') })
+            .catch(() => { })
+    }, [])
+
     useEffect(() => {
         const handle = () => setIsMobile(window.innerWidth < 768)
         window.addEventListener('resize', handle)
@@ -414,6 +427,7 @@ export default function App() {
         setSelectedTag,
         expandedNodes,
         toggleNode,
+        displayName,
     }
 
     return (

@@ -1,9 +1,9 @@
-import { useState } from 'react'
-import { collection, getDocs, doc, setDoc, orderBy, query, addDoc } from 'firebase/firestore'
+import { useState, useEffect } from 'react'
+import { collection, getDocs, getDoc, doc, setDoc, orderBy, query, addDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { calcFee, calcTax } from '../../lib/calc'
-import { Download, Upload, FileSpreadsheet, Database, FileDown } from 'lucide-react'
+import { Download, Upload, FileSpreadsheet, Database, FileDown, User } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
 interface SnapshotRecord {
@@ -98,9 +98,38 @@ export default function InvestSettings() {
     const [divImporting, setDivImporting] = useState(false)
     const [msg, setMsg] = useState('')
 
+    // ── 帳戶名稱 ─────────────────────────────────────────────────────────────
+    const [displayName, setDisplayName] = useState('')
+    const [nameInput, setNameInput] = useState('')
+    const [nameSaving, setNameSaving] = useState(false)
+
+    useEffect(() => {
+        getDoc(userDocNested(investDB, 'settings', 'profile'))
+            .then(snap => {
+                const name = snap.exists() ? (snap.data().displayName ?? '') : ''
+                setDisplayName(name)
+                setNameInput(name)
+            })
+            .catch(() => { })
+    }, [])
+
     const showMsg = (text: string) => {
         setMsg(text)
         setTimeout(() => setMsg(''), 5000)
+    }
+
+    const saveName = async () => {
+        const name = nameInput.trim()
+        if (!name) return
+        setNameSaving(true)
+        try {
+            await setDoc(userDocNested(investDB, 'settings', 'profile'), { displayName: name }, { merge: true })
+            setDisplayName(name)
+            showMsg('✅ 顯示名稱已儲存')
+        } catch {
+            showMsg('❌ 儲存失敗，請稍後再試')
+        }
+        setNameSaving(false)
     }
 
     // ── 匯入股票字典（Excel）──────────────────────────────────────────────
@@ -171,18 +200,15 @@ export default function InvestSettings() {
             const code = (row['代號'] || row['股票代號'] || '').replace('.TW', '').replace('.tw', '').trim()
             const name = (row['名稱'] || row['股票名稱'] || '').trim()
             const price = toNum(row['價格'] || row['價格/金額'] || '')
-            // ★ toInt 去除千分位逗號後再轉整數
             const shares = toInt(row['股數'])
             const note = row['備註'] || row['備註/筆記'] || ''
 
             if (!date || !typeStr) { skipped++; continue }
-            // ✅ 接受：買入、買進（買入為 exportTrades 匯出格式）、賣出
             if (typeStr !== '買入' && typeStr !== '賣出' && typeStr !== '買進') { skipped++; continue }
             if (!code || !price || !shares) { failed++; continue }
 
             const tradeType: 'buy' | 'sell' = (typeStr === '買入' || typeStr === '買進') ? 'buy' : 'sell'
 
-            // 若 CSV 有提供手續費/交易稅則使用，否則自動計算
             const feeRaw = row['手續費'] !== undefined && row['手續費'] !== '' ? toNum(row['手續費']) : null
             const taxRaw = row['交易稅'] !== undefined && row['交易稅'] !== '' ? toNum(row['交易稅']) : null
             const fee = feeRaw !== null ? feeRaw : calcFee(price, shares)
@@ -395,7 +421,6 @@ export default function InvestSettings() {
         const snap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'desc')))
         const trades = snap.docs.map(d => d.data() as TradeRow)
         const header = ['日期', '類型', '代號', '名稱', '價格', '股數', '手續費', '交易稅', '收付金額', '備註']
-        // ✅ 修正：類型輸出改為「買入/賣出」，與 InvestSettings 匯入解析格式一致
         const rows = trades.map(t => [t.date, t.type === 'buy' ? '買入' : '賣出', t.code, t.name, t.price, t.shares, t.fee, t.tax, t.total, t.note ?? ''])
         downloadCSV([header, ...rows].map(r => r.join(',')).join('\n'), `買賣紀錄_${today()}.csv`)
         setExportLoading(false)
@@ -523,7 +548,30 @@ export default function InvestSettings() {
                     )}
                 </div>
 
-                {/* ③ 出入金 */}
+                {/* ③ 除權息 */}
+                <div style={card}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <Upload size={16} color="var(--c-warning)" />
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>除權息紀錄</span>
+                        <span style={{ fontSize: '11px', backgroundColor: 'rgba(245,166,35,0.15)', color: 'var(--c-warning)', padding: '1px 7px', borderRadius: '20px' }}>CSV</span>
+                    </div>
+                    <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '6px', padding: '7px 10px', marginBottom: '12px', border: '1px solid var(--c-border)', fontSize: '11px', color: 'var(--c-muted)', lineHeight: 1.8 }}>
+                        <span style={{ color: 'var(--c-accent)' }}>必填：</span>日期、代號<br />
+                        <span style={{ color: 'var(--c-muted)' }}>選填：</span>名稱、現金股利、股票股利、備註
+                    </div>
+                    <label style={{ ...btn('var(--c-warning)'), width: 'fit-content', cursor: 'pointer', opacity: divImporting ? 0.6 : 1, fontSize: '13px' }}>
+                        <Upload size={14} />{divImporting ? '匯入中...' : '選擇 CSV 匯入'}
+                        <input type="file" accept=".csv" onChange={handleImportDividendCSV} disabled={divImporting} style={{ display: 'none' }} />
+                    </label>
+                    {divImportResult && (
+                        <div style={{ marginTop: '10px', padding: '10px 14px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', border: '1px solid var(--c-border)', display: 'flex', gap: '16px' }}>
+                            <div><div style={{ fontSize: '11px', color: 'var(--c-muted)' }}>成功</div><div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-positive)' }}>{divImportResult.success}</div></div>
+                            {divImportResult.failed > 0 && <div><div style={{ fontSize: '11px', color: 'var(--c-muted)' }}>失敗</div><div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-danger)' }}>{divImportResult.failed}</div></div>}
+                        </div>
+                    )}
+                </div>
+
+                {/* ④ 出入金 */}
                 <div style={card}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                         <Upload size={16} color="var(--c-accent)" />
@@ -546,25 +594,35 @@ export default function InvestSettings() {
                     )}
                 </div>
 
-                {/* ④ 除權息 */}
+                {/* ⑤ 顯示名稱 */}
                 <div style={card}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                        <Upload size={16} color="var(--c-warning)" />
-                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>除權息紀錄</span>
-                        <span style={{ fontSize: '11px', backgroundColor: 'rgba(245,166,35,0.15)', color: 'var(--c-warning)', padding: '1px 7px', borderRadius: '20px' }}>CSV</span>
+                        <User size={16} color="var(--c-muted)" />
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>顯示名稱</span>
                     </div>
-                    <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '6px', padding: '7px 10px', marginBottom: '12px', border: '1px solid var(--c-border)', fontSize: '11px', color: 'var(--c-muted)', lineHeight: 1.8 }}>
-                        <span style={{ color: 'var(--c-accent)' }}>必填：</span>日期、代號<br />
-                        <span style={{ color: 'var(--c-muted)' }}>選填：</span>名稱、現金股利、股票股利、備註
+                    <p style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
+                        設定後顯示在 Sidebar 的「使用者：」欄位。
+                    </p>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <input
+                            value={nameInput}
+                            onChange={e => setNameInput(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') saveName() }}
+                            maxLength={20}
+                            placeholder="輸入名稱…"
+                            style={{ flex: 1, backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 10px', color: 'var(--c-text)', fontSize: '13px', outline: 'none', minWidth: 0 }}
+                        />
+                        <button
+                            onClick={saveName}
+                            disabled={nameSaving || !nameInput.trim() || nameInput.trim() === displayName}
+                            style={{ ...btn('var(--c-accent)'), padding: '8px 14px', fontSize: '13px', flexShrink: 0, opacity: (nameSaving || !nameInput.trim() || nameInput.trim() === displayName) ? 0.5 : 1, cursor: (nameSaving || !nameInput.trim() || nameInput.trim() === displayName) ? 'not-allowed' : 'pointer' }}
+                        >
+                            {nameSaving ? '儲存中…' : '儲存'}
+                        </button>
                     </div>
-                    <label style={{ ...btn('var(--c-warning)'), width: 'fit-content', cursor: 'pointer', opacity: divImporting ? 0.6 : 1, fontSize: '13px' }}>
-                        <Upload size={14} />{divImporting ? '匯入中...' : '選擇 CSV 匯入'}
-                        <input type="file" accept=".csv" onChange={handleImportDividendCSV} disabled={divImporting} style={{ display: 'none' }} />
-                    </label>
-                    {divImportResult && (
-                        <div style={{ marginTop: '10px', padding: '10px 14px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', border: '1px solid var(--c-border)', display: 'flex', gap: '16px' }}>
-                            <div><div style={{ fontSize: '11px', color: 'var(--c-muted)' }}>成功</div><div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-positive)' }}>{divImportResult.success}</div></div>
-                            {divImportResult.failed > 0 && <div><div style={{ fontSize: '11px', color: 'var(--c-muted)' }}>失敗</div><div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-danger)' }}>{divImportResult.failed}</div></div>}
+                    {displayName && (
+                        <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--c-muted)' }}>
+                            目前：<span style={{ color: 'var(--c-accent)', fontWeight: 600 }}>{displayName}</span>
                         </div>
                     )}
                 </div>
