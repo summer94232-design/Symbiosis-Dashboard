@@ -1,10 +1,11 @@
-import { useState, useEffect, lazy, Suspense, memo } from 'react'
+import { useState, useEffect, lazy, Suspense, memo, useRef } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
-import { LayoutDashboard, ArrowLeftRight, TrendingUp, TrendingDown, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard, Folder, Wrench, Target, Map } from 'lucide-react'
+import { LayoutDashboard, ArrowLeftRight, TrendingUp, TrendingDown, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard, Folder, Wrench, Target, Map, Users, Loader } from 'lucide-react'
 import { getDocs, getDoc, orderBy, query } from 'firebase/firestore'
 import { kmsDB, investDB } from './lib/firebase'
 import { userCol, userDocNested } from './lib/userDB'
-import { signOutAll } from './lib/auth'
+import { signOutAll, switchAccount, investAuth } from './lib/auth'
+import { loadAccounts, removeAccount, type SavedAccount } from './lib/accountStore'
 import { PriceProvider } from './PriceContext'
 
 const Dashboard = lazy(() => import('./pages/invest/Dashboard'))
@@ -197,6 +198,126 @@ function NavGroup({ label, icon: Icon, isOpen, onToggle, children }: {
     )
 }
 
+// ── 帳號切換下拉（內嵌，接收 displayName prop）────────────────
+function AccountSwitcherInline({ displayName }: { displayName: string }) {
+    const [open, setOpen] = useState(false)
+    const [accounts, setAccounts] = useState<SavedAccount[]>([])
+    const [currentEmail, setCurrentEmail] = useState<string | null>(null)
+    const [switching, setSwitching] = useState<string | null>(null)
+    const [error, setError] = useState('')
+    const ref = useRef<HTMLDivElement>(null)
+
+    useEffect(() => {
+        const unsub = investAuth.onAuthStateChanged(user => setCurrentEmail(user?.email ?? null))
+        return unsub
+    }, [])
+
+    useEffect(() => {
+        if (open) { setAccounts(loadAccounts()); setError('') }
+    }, [open])
+
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+        }
+        document.addEventListener('mousedown', handler)
+        return () => document.removeEventListener('mousedown', handler)
+    }, [])
+
+    const otherAccounts = accounts.filter(a => a.email !== currentEmail)
+
+    // 優先顯示設定裡的 displayName，fallback 到 email @ 前段
+    const label = displayName || currentEmail?.split('@')[0] || '未登入'
+
+    const handleSwitch = async (email: string) => {
+        setSwitching(email)
+        setError('')
+        try {
+            await switchAccount(email)
+            setOpen(false)
+        } catch (err: any) {
+            setError(err.message ?? '切換失敗')
+        } finally {
+            setSwitching(null)
+        }
+    }
+
+    const handleRemove = (e: React.MouseEvent, email: string) => {
+        e.stopPropagation()
+        removeAccount(email)
+        setAccounts(loadAccounts())
+    }
+
+    return (
+        <div ref={ref} style={{ position: 'relative', flex: '6' }}>
+            {/* 帳號按鈕 */}
+            <button
+                onClick={() => setOpen(v => !v)}
+                title={currentEmail ?? ''}
+                style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'transparent', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 8px', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer', transition: 'all 0.15s', overflow: 'hidden' }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--c-accent)'; e.currentTarget.style.color = 'var(--c-accent)' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--c-border)'; e.currentTarget.style.color = 'var(--c-muted)' }}
+            >
+                <Users size={13} style={{ flexShrink: 0 }} />
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>{label}</span>
+                <ChevronDown size={11} style={{ flexShrink: 0, transition: 'transform 0.2s', transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }} />
+            </button>
+
+            {/* 下拉選單 */}
+            {open && (
+                <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0, backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '10px', padding: '6px', zIndex: 200, boxShadow: '0 4px 20px rgba(0,0,0,0.3)', minWidth: '160px' }}>
+                    {/* 目前帳號 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', borderRadius: '6px', backgroundColor: 'color-mix(in srgb, var(--c-accent) 8%, transparent)', marginBottom: otherAccounts.length > 0 ? '4px' : 0 }}>
+                        <div style={{ width: '18px', height: '18px', borderRadius: '50%', backgroundColor: 'var(--c-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                            {label.charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: '12px', color: 'var(--c-text)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
+                            <div style={{ fontSize: '10px', color: 'var(--c-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentEmail}</div>
+                        </div>
+                    </div>
+
+                    {/* 其他帳號 */}
+                    {otherAccounts.length > 0 && (
+                        <>
+                            <div style={{ fontSize: '10px', color: 'var(--c-muted)', padding: '4px 10px 2px', letterSpacing: '0.5px' }}>切換帳號</div>
+                            {otherAccounts.map(acc => (
+                                <div key={acc.email} onClick={() => !switching && handleSwitch(acc.email)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', borderRadius: '6px', cursor: switching ? 'wait' : 'pointer', transition: 'background 0.15s' }}
+                                    onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--c-accent) 6%, transparent)')}
+                                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+                                >
+                                    <div style={{ width: '18px', height: '18px', borderRadius: '50%', backgroundColor: 'var(--c-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 700, color: 'var(--c-muted)', flexShrink: 0 }}>
+                                        {acc.displayName.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: '12px', color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{acc.displayName}</div>
+                                        <div style={{ fontSize: '10px', color: 'var(--c-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{acc.email}</div>
+                                    </div>
+                                    {switching === acc.email
+                                        ? <Loader size={11} style={{ color: 'var(--c-accent)', animation: 'spin 0.8s linear infinite', flexShrink: 0 }} />
+                                        : <button onClick={e => handleRemove(e, acc.email)} title="移除" style={{ background: 'none', border: 'none', padding: '2px', color: 'var(--c-muted)', cursor: 'pointer', display: 'flex', borderRadius: '4px', flexShrink: 0, opacity: 0.5 }}
+                                            onMouseEnter={e => { e.currentTarget.style.color = 'var(--c-danger)'; e.currentTarget.style.opacity = '1' }}
+                                            onMouseLeave={e => { e.currentTarget.style.color = 'var(--c-muted)'; e.currentTarget.style.opacity = '0.5' }}>
+                                            <Trash2 size={11} />
+                                        </button>
+                                    }
+                                </div>
+                            ))}
+                        </>
+                    )}
+                    {otherAccounts.length === 0 && (
+                        <div style={{ fontSize: '11px', color: 'var(--c-muted)', padding: '6px 10px', textAlign: 'center' }}>尚無其他已儲存帳號</div>
+                    )}
+                    {error && (
+                        <div style={{ fontSize: '11px', color: 'var(--c-danger)', padding: '6px 10px', marginTop: '4px', backgroundColor: 'color-mix(in srgb, var(--c-danger) 10%, transparent)', borderRadius: '6px' }}>{error}</div>
+                    )}
+                </div>
+            )}
+        </div>
+    )
+}
+
 const Sidebar = memo(({
     isMobile,
     setSidebarOpen,
@@ -244,21 +365,13 @@ const Sidebar = memo(({
             <nav style={{ flex: 1, padding: '0 12px', overflowY: 'auto' }}>
                 {currentSystem === 'invest' && (
                     <>
-                        {/* ── 主要頁面 ── */}
                         {investNav.map(({ to, icon: Icon, label }) => (
                             <NavLink key={to} to={to} end={to === '/invest'}
                                 style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: isActive ? 'var(--c-accent)' : 'var(--c-muted)', fontWeight: isActive ? 600 : 400 })}>
                                 <Icon size={16} /><span>{label}</span>
                             </NavLink>
                         ))}
-
-                        {/* ── 工具群組 ── */}
-                        <NavGroup
-                            label="工具管理"
-                            icon={Wrench}
-                            isOpen={toolsOpen}
-                            onToggle={() => setToolsOpen(v => !v)}
-                        >
+                        <NavGroup label="工具管理" icon={Wrench} isOpen={toolsOpen} onToggle={() => setToolsOpen(v => !v)}>
                             {investToolsNav.map(({ to, icon: Icon, label }) => (
                                 <NavLink key={to} to={to}
                                     style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: isActive ? 'var(--c-accent)' : 'var(--c-muted)', fontWeight: isActive ? 600 : 400 })}>
@@ -266,14 +379,7 @@ const Sidebar = memo(({
                                 </NavLink>
                             ))}
                         </NavGroup>
-
-                        {/* ── 帳戶管理群組 ── */}
-                        <NavGroup
-                            label="帳戶管理"
-                            icon={Folder}
-                            isOpen={manageOpen}
-                            onToggle={() => setManageOpen(v => !v)}
-                        >
+                        <NavGroup label="帳戶管理" icon={Folder} isOpen={manageOpen} onToggle={() => setManageOpen(v => !v)}>
                             {investManageNav.map(({ to, icon: Icon, label }) => (
                                 <NavLink key={to} to={to}
                                     style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: isActive ? 'var(--c-accent)' : 'var(--c-muted)', fontWeight: isActive ? 600 : 400 })}>
@@ -335,16 +441,20 @@ const Sidebar = memo(({
             </nav>
 
             <div style={{ padding: '12px', borderTop: '1px solid var(--c-border)' }}>
-                <button onClick={() => signOutAll()}
-                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: 'transparent', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer', transition: 'all 0.15s' }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--c-danger)'; e.currentTarget.style.color = 'var(--c-danger)' }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--c-border)'; e.currentTarget.style.color = 'var(--c-muted)' }}>
-                    <LogOut size={14} />登出
-                </button>
+                {/* ── 帳號切換 + 登出 並排（6:4） ── */}
+                <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+                    <AccountSwitcherInline displayName={displayName} />
+                    <button onClick={() => signOutAll()}
+                        style={{ flex: '4', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', backgroundColor: 'transparent', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 6px', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap' }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--c-danger)'; e.currentTarget.style.color = 'var(--c-danger)' }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--c-border)'; e.currentTarget.style.color = 'var(--c-muted)' }}>
+                        <LogOut size={13} />登出
+                    </button>
+                </div>
 
-                {/* ── 版本代號  ── */}
-                <div style={{ textAlign: 'center', marginTop: '8px' }}>
-                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>v26.5.19</span>
+                {/* ── 版本代號 ── */}
+                <div style={{ textAlign: 'center' }}>
+                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>v26.5.22</span>
                 </div>
             </div>
         </aside>

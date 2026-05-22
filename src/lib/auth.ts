@@ -1,6 +1,7 @@
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth'
 import type { User } from 'firebase/auth'
 import { investApp, kmsApp } from './firebase'
+import { saveAccount, getPassword } from './accountStore'
 
 export const investAuth = getAuth(investApp)
 export const kmsAuth = getAuth(kmsApp)
@@ -9,6 +10,21 @@ export const kmsAuth = getAuth(kmsApp)
 export async function signIn(email: string, password: string) {
     await signInWithEmailAndPassword(investAuth, email, password)
     await signInWithEmailAndPassword(kmsAuth, email, password)
+}
+
+// 登入並自動儲存帳號（Login 頁面改用此函式）
+export async function signInAndSave(email: string, password: string): Promise<void> {
+    await signIn(email, password)          // 先確認密碼正確
+    await saveAccount(email, password)     // 成功後加密儲存
+}
+
+// 無縫切換帳號（AccountSwitcher 呼叫）
+export async function switchAccount(email: string): Promise<void> {
+    const password = await getPassword(email)
+    if (!password) throw new Error('找不到此帳號的儲存密碼，請重新登入')
+    await signOut(investAuth)
+    await signOut(kmsAuth)
+    await signIn(email, password)
 }
 
 // 同時登出兩個專案
