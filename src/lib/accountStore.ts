@@ -23,8 +23,12 @@ function bufToBase64(buf: ArrayBuffer | Uint8Array): string {
     const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
     return btoa(String.fromCharCode(...u8))
 }
-function base64ToBuf(b64: string): Uint8Array {
-    return Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+function base64ToBuf(b64: string): Uint8Array<ArrayBuffer> {
+    const binary = atob(b64)
+    const buf = new ArrayBuffer(binary.length)
+    const u8 = new Uint8Array(buf)
+    for (let i = 0; i < binary.length; i++) u8[i] = binary.charCodeAt(i)
+    return u8
 }
 
 // ── 從固定 SALT 衍生 AES-GCM key ─────────────────────────────
@@ -61,7 +65,7 @@ async function decrypt(cipher: string, ivB64: string): Promise<string> {
     const decBuf = await crypto.subtle.decrypt(
         { name: 'AES-GCM', iv: base64ToBuf(ivB64) },
         key,
-        base64ToBuf(cipher).buffer as ArrayBuffer
+        base64ToBuf(cipher)
     )
     return new TextDecoder().decode(decBuf)
 }
