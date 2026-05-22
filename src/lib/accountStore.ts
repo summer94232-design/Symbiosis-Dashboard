@@ -18,9 +18,10 @@ export interface SavedAccount {
     savedAt: number       // timestamp
 }
 
-// ── 工具：ArrayBuffer <-> Base64 ──────────────────────────────
-function bufToBase64(buf: ArrayBuffer): string {
-    return btoa(String.fromCharCode(...new Uint8Array(buf)))
+// ── 工具：ArrayBuffer | Uint8Array <-> Base64 ─────────────────
+function bufToBase64(buf: ArrayBuffer | Uint8Array): string {
+    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
+    return btoa(String.fromCharCode(...u8))
 }
 function base64ToBuf(b64: string): Uint8Array {
     return Uint8Array.from(atob(b64), c => c.charCodeAt(0))
@@ -60,7 +61,7 @@ async function decrypt(cipher: string, ivB64: string): Promise<string> {
     const decBuf = await crypto.subtle.decrypt(
         { name: 'AES-GCM', iv: base64ToBuf(ivB64) },
         key,
-        base64ToBuf(cipher)
+        base64ToBuf(cipher).buffer as ArrayBuffer
     )
     return new TextDecoder().decode(decBuf)
 }
