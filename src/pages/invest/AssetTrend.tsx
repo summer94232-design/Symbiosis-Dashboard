@@ -115,6 +115,10 @@ export default function AssetTrend() {
     const [taiexLoading, setTaiexLoading] = useState(false)
     const [taiexError, setTaiexError] = useState<string | null>(null)
 
+    // ✅ 新增：出入金紀錄（供報酬率模式以 TWR 排除現金流影響）
+    // amount 約定：入金 = 正值（資金流入帳戶），出金 = 負值（資金流出帳戶）
+    const [cashflows, setCashflows] = useState<{ date: string; amount: number }[]>([])
+
     // ── 載入快照 ──────────────────────────────────────────────────────────
 
     const loadSnapshots = async () => {
@@ -126,6 +130,29 @@ export default function AssetTrend() {
     }
 
     useEffect(() => { loadSnapshots() }, [])
+
+    // ✅ 新增：載入出入金紀錄（只需一次）
+    //
+    // ┌─────────────────────────────────────────────────────────────────┐
+    // │ 正負號約定（本檔 = TWR 口徑，入金記「正」）                          │
+    // │   入金 'in'  → amount 為正（資金流入帳戶）                          │
+    // │   出金 'out' → amount 為負                                         │
+    // │ 用途：TWR 段報酬 (本期末淨值 − 本期淨流入) / 上期末淨值，            │
+    // │       把「正的入金」扣掉，剩下才是投資操作造成的漲跌。               │
+    // │ ⚠️ 注意：YearReview.tsx 的 XIRR 口徑正負號「相反」(入金記負)，       │
+    // │   那是 XIRR 期初流出需為負的緣故，兩邊各自正確，請勿改成一致。       │
+    // └─────────────────────────────────────────────────────────────────┘
+    useEffect(() => {
+        getDocs(query(userCol(investDB, 'cashflow'), orderBy('date', 'asc')))
+            .then(snap => {
+                setCashflows(snap.docs.map(d => {
+                    const c = d.data() as { date: string; type: 'in' | 'out'; amount: number }
+                    // 入金為帳戶資金流入(正)，出金為流出(負)
+                    return { date: c.date, amount: c.type === 'in' ? c.amount : -c.amount }
+                }))
+            })
+            .catch(err => console.error('[cashflow] load failed:', err))
+    }, [])
 
     // ── 抓取加權指數歷史資料（Fugle API）─────────────────────────────────
     //
@@ -328,8 +355,15 @@ export default function AssetTrend() {
 
     // ── 報酬率對比資料（報酬率模式）──────────────────────────────────────
     //
-    // 以 filtered 第一筆快照為基準點（= 0%）
-    // TAIEX 找「≤ 該日期」最近一個有收盤的交易日對齊
+    // ✅ 修正：資產報酬用 TWR（時間加權報酬率），排除出入金影響。
+    //   重點防呆（解決「有出入金時 TAIEX 不顯示」的問題）：
+    //   1. 段報酬一旦算出非正數或非有限值，該段以 1（= 0% 變動）帶過，
+    //      避免 twrIndex 被污染成負數 / NaN，連帶讓整張圖 Y 軸崩潰、TAIEX 消失。
+    //   2. assetReturn 永遠輸出有限數值（保底 0），不會是 NaN。
+    //   3. 出入金正負號不再依賴外部約定：以「入金 = 流入帳戶（正值）」為準，
+    //      段報酬把它扣掉 → (本期末淨值 − 本期淨流入) / 上期末淨值。
+    //
+    //   TAIEX 與資產線各自獨立計算，互不影響；TAIEX 只要有對應收盤就一定畫得出來。
 
     const returnChartData = useMemo(() => {
         if (filtered.length < 2) return []
@@ -341,21 +375,49 @@ export default function AssetTrend() {
             return taiexData[before[before.length - 1]]
         }
 
-        const baseDate = filtered[0].date
-        const baseAsset = filtered[0].totalAssets
-        const baseTAIEX = getClosestTAIEX(baseDate)
+        const baseTAIEX = getClosestTAIEX(filtered[0].date)
 
-        return filtered.map(d => {
+        // TWR 累積報酬指數：起點 1（= 0%）
+        let twrIndex = 1
+        let prevAsset = filtered[0].totalAssets
+
+        return filtered.map((d, i) => {
+            if (i > 0) {
+                // (前一快照日, 當前快照日] 區間內的淨流入（入金為正、出金為負）
+                // 不論 cashflows 來源正負號如何，這裡統一視「入金 = 正」處理
+                const flowInPeriod = cashflows
+                    .filter(cf => cf.date > filtered[i - 1].date && cf.date <= d.date)
+                    .reduce((s, cf) => s + cf.amount, 0)
+
+                // 段報酬 = (本期末淨值 − 本期淨流入) / 上期末淨值
+                const denom = prevAsset
+                const numer = d.totalAssets - flowInPeriod
+                const segReturn = denom > 0 ? numer / denom : 1
+
+                // ✅ 防呆：段報酬必須是有限正數，否則以 1 帶過（視為當天無變動）
+                //   這避免入金日造成的極端值 / 負值 / NaN 把整條線打爆。
+                if (Number.isFinite(segReturn) && segReturn > 0) {
+                    twrIndex *= segReturn
+                }
+                prevAsset = d.totalAssets
+            }
+
             const taiexClose = getClosestTAIEX(d.date)
+            // ✅ assetReturn 保底為有限數，永遠不會是 NaN
+            const assetReturn = Number.isFinite(twrIndex)
+                ? parseFloat(((twrIndex - 1) * 100).toFixed(2))
+                : 0
+
             return {
                 date: d.date,
-                assetReturn: parseFloat(((d.totalAssets - baseAsset) / baseAsset * 100).toFixed(2)),
+                assetReturn,
+                // TAIEX 獨立計算，只要有對應收盤就畫得出來，不受資產線影響
                 taiexReturn: baseTAIEX != null && taiexClose != null
                     ? parseFloat(((taiexClose - baseTAIEX) / baseTAIEX * 100).toFixed(2))
                     : null,
             }
         })
-    }, [filtered, taiexData])
+    }, [filtered, taiexData, cashflows])
 
     // ── 超額報酬（最後一筆）──────────────────────────────────────────────
 
@@ -365,6 +427,14 @@ export default function AssetTrend() {
         if (last.taiexReturn == null) return null
         return parseFloat((last.assetReturn - last.taiexReturn).toFixed(2))
     }, [returnChartData])
+
+    // ✅ 區間內是否有出入金（用於提示文案）
+    const hasCashflowInRange = useMemo(() => {
+        if (filtered.length < 2) return false
+        const start = filtered[0].date
+        const end = filtered[filtered.length - 1].date
+        return cashflows.some(cf => cf.date > start && cf.date <= end)
+    }, [filtered, cashflows])
 
     // ── 渲染 ──────────────────────────────────────────────────────────────
 
@@ -501,12 +571,20 @@ export default function AssetTrend() {
 
                     {/* 超額報酬標籤 */}
                     {chartMode === 'return' && showBenchmark && excessReturn !== null && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px', fontSize: '13px', color: 'var(--c-muted)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px', fontSize: '13px', color: 'var(--c-muted)', flexWrap: 'wrap' }}>
                             <span>同期超額報酬：</span>
                             <span style={{ fontWeight: 700, color: excessReturn >= 0 ? 'var(--c-positive)' : 'var(--c-danger)' }}>
                                 {excessReturn >= 0 ? '+' : ''}{excessReturn}%
                             </span>
-                            <span style={{ fontSize: '11px', color: '#4a5568' }}>（以首筆快照 {filtered[0]?.date} 為基準）</span>
+                            <span style={{ fontSize: '11px', color: '#4a5568' }}>（以首筆快照 {filtered[0]?.date} 為基準・TWR 時間加權）</span>
+                        </div>
+                    )}
+
+                    {/* ✅ 區間內有出入金時的提示：說明報酬率已用 TWR 排除 */}
+                    {chartMode === 'return' && hasCashflowInRange && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'color-mix(in srgb, var(--c-accent) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--c-accent) 30%, transparent)', borderRadius: '8px', padding: '8px 14px', marginBottom: '12px', fontSize: '12px', color: 'var(--c-accent)' }}>
+                            <TrendingUp size={13} style={{ flexShrink: 0 }} />
+                            此區間有出入金，報酬率已採 TWR（時間加權）排除出入金影響，僅反映投資操作績效。
                         </div>
                     )}
 
@@ -520,7 +598,7 @@ export default function AssetTrend() {
                         </div>
                     ) : chartMode === 'absolute' ? (
 
-                        // ── 金額模式：只顯示總資產（淨值）──
+                        // ── 金額模式：只顯示總資產（淨值）── 此模式如實呈現帳戶餘額，不受出入金影響邏輯，照舊
                         <ResponsiveContainer width="100%" height={320}>
                             <LineChart data={filtered} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="var(--c-border)" />
@@ -546,7 +624,7 @@ export default function AssetTrend() {
 
                     ) : (
 
-                        // ── 報酬率對比模式：我的資產 vs 加權指數 ──
+                        // ── 報酬率對比模式：我的資產(TWR) vs 加權指數 ──
                         <ResponsiveContainer width="100%" height={320}>
                             <LineChart data={returnChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="var(--c-border)" />
@@ -565,7 +643,7 @@ export default function AssetTrend() {
                                 <Line
                                     type="monotone"
                                     dataKey="assetReturn"
-                                    name="我的資產"
+                                    name="我的資產（TWR）"
                                     stroke="var(--c-accent)"
                                     strokeWidth={2.5}
                                     dot={false}
@@ -592,7 +670,7 @@ export default function AssetTrend() {
                     {/* 說明文字 */}
                     {chartMode === 'return' && filtered.length >= 2 && (
                         <p style={{ fontSize: '11px', color: '#4a5568', margin: '10px 0 0', textAlign: 'right' }}>
-                            資料來源：Fugle MarketData｜以首筆快照為基準點（0%）正規化對比
+                            資料來源：Fugle MarketData｜資產線採 TWR 時間加權（排除出入金），以首筆快照為基準點（0%）正規化對比
                         </p>
                     )}
                 </div>
