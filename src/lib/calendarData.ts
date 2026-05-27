@@ -32,28 +32,30 @@ export const FOMC_DATES: CalendarEvent[] = [
 export const TECH_EVENTS: CalendarEvent[] = [
 ]
 
-// 計算台灣期貨結算日（每月第三個週三）
+// 計算指定年月的台灣期貨結算日（每月第三個週三）
+// ✅ Bug 修正：
+//   舊版有兩個問題：(1) for 迴圈跑整年、完全忽略傳入的 month 參數；
+//   (2) `if (year === 今年-1) continue` 會讓「去年整年」的結算日全部消失，
+//       導致月曆翻到去年月份時看不到台指期結算日。
+//   現在只計算傳入的 (year, month) 當月結算日，邏輯單純且正確。
 export function getFuturesSettlementDates(year: number, month: number): CalendarEvent[] {
     const results: CalendarEvent[] = []
-    for (let m = 1; m <= 12; m++) {
-        if (year === new Date().getFullYear() - 1) continue
-        let count = 0
-        for (let d = 1; d <= 31; d++) {
-            const date = new Date(year, m - 1, d)
-            if (date.getMonth() !== m - 1) break
-            if (date.getDay() === 3) { // 週三
-                count++
-                if (count === 3) {
-                    const dateStr = `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-                    results.push({
-                        id: `futures-${year}-${m}`,
-                        date: dateStr,
-                        title: '台指期結算日',
-                        type: 'futures',
-                        description: '台灣加權指數期貨結算'
-                    })
-                    break
-                }
+    let count = 0
+    for (let d = 1; d <= 31; d++) {
+        const date = new Date(year, month - 1, d)
+        if (date.getMonth() !== month - 1) break // 超出當月
+        if (date.getDay() === 3) { // 週三
+            count++
+            if (count === 3) {
+                const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+                results.push({
+                    id: `futures-${year}-${month}`,
+                    date: dateStr,
+                    title: '台指期結算日',
+                    type: 'futures',
+                    description: '台灣加權指數期貨結算'
+                })
+                break
             }
         }
     }

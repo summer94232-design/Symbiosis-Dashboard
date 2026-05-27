@@ -263,7 +263,10 @@ export default function Dashboard() {
             holdingList.sort((a, b) => b.marketValue - a.marketValue)
 
             setHoldings(holdingList)
-            setTotalCash(calcAvailableCash(cashRecords, trades))
+            // ✅ Bug 修正：傳 false。本系統的賣出 total（收付金額）記的是「已扣除歸還券商借款後的
+            //   淨入帳金額」，calcAvailableCash 直接 + sellTotal 即為正確可用現金。
+            //   若傳 true 會再扣一次 calcMarginRepaid（借款本金），導致融資賣出後現金被低估。
+            setTotalCash(calcAvailableCash(cashRecords, trades, false))
             setHasPrice(priceAvailable)
             // ✅ 修正：優先用 PriceContext 的最後更新時間，再 fallback Firebase savedAt
             if (ctxLastUpdated) setLastUpdated(ctxLastUpdated)
@@ -413,6 +416,12 @@ export default function Dashboard() {
     const marginRatioValue = totalMarginDebt > 0 ? (marginStockMarketValue / totalMarginDebt) * 100 : null
     const hasMargin = marginPositions.length > 0
 
+    // ── 倉位百分比 = 股票市值 ÷ 自有資金（槓桿後曝險）──
+    // 自有資金（equity）= 總資產 − 融資借款，反映真正投入的本金
+    // 無融資時分母 = 總資產，倉位% 退化為單純的持股佔比
+    const equityCapital = totalAssets - totalMarginDebt
+    const positionPct = equityCapital > 0 ? (totalMarketValue / equityCapital) * 100 : null
+
     // 維持率顏色：>160% 綠，130~160% 橙，<130% 紅
     const marginRatioColor = marginRatioValue === null ? 'var(--c-muted)'
         : marginRatioValue >= 160 ? 'var(--c-positive)'
@@ -494,6 +503,8 @@ export default function Dashboard() {
         @media (max-width: 900px) { .dash-bottom { grid-template-columns: 1fr; } }
         .dash-pies { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; margin-bottom: 16px; }
         @media (max-width: 800px) { .dash-pies { grid-template-columns: 1fr; } }
+        .dash-side-cards { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; }
+        .dash-side-cards > * { flex: 1 1 360px; min-width: 0; }
         .dash-extra { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; margin-top: 16px; }
         @media (max-width: 700px) { .dash-extra { grid-template-columns: 1fr; } }
         .h-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -574,23 +585,23 @@ export default function Dashboard() {
                                 查看詳情 →
                             </span>
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '6px' }}>
                             {soldAlerts.map(a => (
                                 <div key={a.code + a.date} style={{
-                                    display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap',
+                                    display: 'flex', alignItems: 'center', gap: '10px',
                                     backgroundColor: 'var(--c-card)', borderRadius: '8px', padding: '8px 14px',
                                     border: '1px solid color-mix(in srgb, var(--c-danger) 20%, transparent)',
                                 }}>
-                                    <span style={{ fontWeight: 700, color: 'var(--c-accent)', fontSize: '14px', minWidth: '50px' }}>{a.code}</span>
-                                    <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>{a.name}</span>
-                                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>賣出 {a.date}</span>
-                                    <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>賣出價 {a.soldPrice}</span>
-                                    <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>→ 現價 {a.currentPrice.toFixed(2)}</span>
-                                    <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--c-danger)' }}>
+                                    <span style={{ fontWeight: 700, color: 'var(--c-accent)', fontSize: '14px', minWidth: '46px' }}>{a.code}</span>
+                                    <span style={{ fontSize: '12px', color: 'var(--c-text)', minWidth: '48px' }}>{a.name}</span>
+                                    <span style={{ fontSize: '11px', color: 'var(--c-muted)', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {a.date} · {a.soldPrice} → {a.currentPrice.toFixed(2)}
+                                    </span>
+                                    <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--c-danger)', minWidth: '64px', textAlign: 'right' }}>
                                         +{a.changePct.toFixed(2)}%
                                     </span>
-                                    <span style={{ fontSize: '12px', color: 'var(--c-danger)', fontWeight: 600 }}>
-                                        機會成本 +{a.opportunityCost.toLocaleString()} 元
+                                    <span style={{ fontSize: '12px', color: 'var(--c-danger)', fontWeight: 600, minWidth: '92px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                        +{a.opportunityCost.toLocaleString()}
                                     </span>
                                 </div>
                             ))}
@@ -643,11 +654,96 @@ export default function Dashboard() {
                             ))}
                         </div>
 
-                        {/* ── 融資維持率卡片（有融資部位才顯示）── */}
-                        {hasMargin && (
-                            <div style={{ marginBottom: '16px' }}>
+                        {/* ── 倉位 / 融資維持率 並排卡片（手機自動換行）── */}
+                        <div className="dash-side-cards">
+
+                            {/* 倉位卡片 */}
+                            <div style={{
+                                ...card,
+                                display: 'flex', flexDirection: 'column',
+                                borderColor: positionPct !== null && positionPct > 100 ? 'rgba(245,166,35,0.4)' : 'var(--c-border)',
+                                background: positionPct !== null && positionPct > 100
+                                    ? 'linear-gradient(135deg, var(--c-sidebar) 0%, color-mix(in srgb, var(--c-warning) 5%, transparent) 100%)'
+                                    : 'var(--c-sidebar)'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: `${positionPct !== null && positionPct > 100 ? 'var(--c-warning)' : 'var(--c-accent)'}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                        <BarChart2 size={20} color={positionPct !== null && positionPct > 100 ? 'var(--c-warning)' : 'var(--c-accent)'} />
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '4px' }}>倉位百分比</div>
+                                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                                            <span style={{ fontSize: 'clamp(22px, 3vw, 30px)', fontWeight: 700, color: positionPct !== null && positionPct > 100 ? 'var(--c-warning)' : 'var(--c-accent)', letterSpacing: '-0.5px' }}>
+                                                {positionPct !== null ? `${positionPct.toFixed(1)}%` : '—'}
+                                            </span>
+                                            {hasMargin && positionPct !== null && (
+                                                <span style={{ fontSize: '12px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px', backgroundColor: 'color-mix(in srgb, var(--c-warning) 12%, transparent)', color: 'var(--c-warning)' }}>
+                                                    含槓桿
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginTop: '2px' }}>
+                                            股票市值 ÷ 自有資金{!hasPrice ? '（以成本估算）' : ''}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* 資金分布堆疊條：現金 / 股票部位 / 槓桿部位 */}
+                                {(() => {
+                                    const cashVal = Math.max(totalCash, 0)
+                                    // 槓桿部位 = 融資買進的股票市值（含自備款）
+                                    const leverVal = marginStockMarketValue
+                                    // 自有股票部位 = 全部股票市值 − 融資股票市值（互斥，避免重複計算）
+                                    const ownStockVal = Math.max(totalMarketValue - leverVal, 0)
+                                    const base = cashVal + ownStockVal + leverVal
+                                    const pct = (v: number) => base > 0 ? (v / base) * 100 : 0
+                                    const segs = [
+                                        { label: '現金', value: cashVal, color: 'var(--c-warning)' },
+                                        { label: '股票部位', value: ownStockVal, color: 'var(--c-positive)' },
+                                        { label: '槓桿部位', value: leverVal, color: '#a78bfa' },
+                                    ]
+                                    return (
+                                        <div style={{ marginTop: '20px' }}>
+                                            <div style={{ fontSize: '11px', lineHeight: '15px', color: 'var(--c-muted)', marginBottom: '6px' }}>資金分布</div>
+                                            <div style={{ display: 'flex', height: '10px', borderRadius: '5px', overflow: 'hidden', backgroundColor: 'var(--c-bg)' }}>
+                                                {segs.map(s => s.value > 0 && (
+                                                    <div key={s.label} style={{ width: `${pct(s.value)}%`, backgroundColor: s.color, transition: 'width 0.4s ease' }} />
+                                                ))}
+                                            </div>
+                                            {/* 圖例 */}
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '10px' }}>
+                                                {segs.map(s => (
+                                                    <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: s.color, flexShrink: 0 }} />
+                                                        <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>{s.label}</span>
+                                                        <span style={{ fontSize: '11px', color: 'var(--c-text)', fontWeight: 600 }}>{pct(s.value).toFixed(0)}%</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )
+                                })()}
+
+                                {/* 明細 */}
+                                <div style={{ marginTop: 'auto', paddingTop: '16px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                                    {[
+                                        { label: '現金', value: Math.max(totalCash, 0), color: 'var(--c-warning)' },
+                                        { label: '股票部位', value: Math.max(totalMarketValue - marginStockMarketValue, 0), color: 'var(--c-positive)' },
+                                        { label: '槓桿部位', value: marginStockMarketValue, color: '#a78bfa' },
+                                    ].map(({ label, value, color }) => (
+                                        <div key={label} style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '10px 12px' }}>
+                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>{label}</div>
+                                            <div style={{ fontSize: '14px', fontWeight: 600, color }}>${value.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* ── 融資維持率卡片（有融資部位才顯示）── */}
+                            {hasMargin && (
                                 <div style={{
                                     ...card,
+                                    display: 'flex', flexDirection: 'column',
                                     borderColor: marginRatioValue !== null && marginRatioValue < 130 ? 'rgba(255,87,87,0.5)'
                                         : marginRatioValue !== null && marginRatioValue < 160 ? 'rgba(245,166,35,0.4)'
                                             : 'var(--c-border)',
@@ -702,18 +798,18 @@ export default function Dashboard() {
 
                                     {/* 進度條 */}
                                     {marginRatioValue !== null && (
-                                        <div style={{ marginTop: '16px' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--c-muted)', marginBottom: '4px' }}>
+                                        <div style={{ marginTop: '20px' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', lineHeight: '15px', color: 'var(--c-muted)', marginBottom: '6px' }}>
                                                 <span>斷頭線 120%</span>
                                                 <span>追繳線 130%</span>
                                                 <span>安全線 160%</span>
                                                 <span>目前 {marginRatioValue.toFixed(1)}%</span>
                                             </div>
-                                            <div style={{ height: '6px', backgroundColor: 'var(--c-bg)', borderRadius: '3px', overflow: 'hidden', position: 'relative' }}>
+                                            <div style={{ height: '10px', backgroundColor: 'var(--c-bg)', borderRadius: '5px', overflow: 'hidden', position: 'relative' }}>
                                                 {/* 底層色帶 */}
                                                 <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, rgba(255,87,87,0.3) 0%, rgba(255,87,87,0.3) 20%, rgba(245,166,35,0.3) 20%, rgba(245,166,35,0.3) 40%, rgba(0,200,150,0.2) 40%, rgba(0,200,150,0.2) 100%)' }} />
                                                 {/* 當前值指示 */}
-                                                <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${Math.min(marginRatioValue / 250 * 100, 100)}%`, backgroundColor: marginRatioColor, borderRadius: '3px', transition: 'width 0.4s ease' }} />
+                                                <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${Math.min(marginRatioValue / 250 * 100, 100)}%`, backgroundColor: marginRatioColor, borderRadius: '5px', transition: 'width 0.4s ease' }} />
                                             </div>
                                         </div>
                                     )}
@@ -827,8 +923,9 @@ export default function Dashboard() {
                                         )}
                                     </div>
                                 </div>
-                            </div>
-                        )}
+                            )}
+                        </div>
+                        {/* ── /倉位 + 融資 並排卡片 ── */}
 
                         {hasPrice && holdingsWithoutPrice.length > 0 && (
                             <div style={{ marginBottom: '12px', padding: '10px 14px', backgroundColor: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.25)', borderRadius: '8px', fontSize: '12px', color: 'var(--c-warning)' }}>

@@ -41,7 +41,7 @@ export interface TradeRecord {
     shares: number
     fee: number
     tax: number
-    total: number
+    total: number          // 收付金額。買入=自備款+手續費；賣出=扣除歸還借款後的淨入帳金額
     note?: string
     isMargin?: boolean     // 是否為融資交易
     marginRatio?: number   // 融資成數（例：0.6）
@@ -63,7 +63,7 @@ export interface HoldingPosition {
     shares: number
     avgCost: number
     totalCost: number
-    marginAmount?: number  // ✅ 新增：累計融資借款金額（用於計算自備款損益率）
+    marginAmount?: number  // 累計融資借款金額（用於計算自備款損益率）
 }
 
 export interface RealizedRecord {
@@ -82,15 +82,47 @@ export interface CalcResult {
     realized: RealizedRecord[]
 }
 
+// 內部事件型別：把買賣交易與配股統一成「時間軸事件」一起依日期處理
+type TimelineEvent =
+    | { kind: 'trade'; date: string; trade: TradeRecord }
+    | { kind: 'stockdiv'; date: string; div: DividendRecord }
+
 export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[]): CalcResult {
-    // ✅ 修正：過濾掉 date 為 undefined/null/空字串的異常資料，避免 localeCompare crash
-    const validTrades = trades.filter(t => t && t.date && typeof t.date === 'string')
-    const sorted = [...validTrades].sort((a, b) => a.date.localeCompare(b.date))
+    // 過濾掉 date 為 undefined/null/空字串的異常資料，避免 localeCompare crash
+    const tradeEvents: TimelineEvent[] = trades
+        .filter(t => t && t.date && typeof t.date === 'string')
+        .map(t => ({ kind: 'trade', date: t.date, trade: t }))
+
+    // 配股（股票股利）依「配股日期」插入時間軸，而非全部交易跑完才一次處理。
+    //   若配股日早於某次賣出日，賣出時用到的均價/股數必須是「已配股」狀態，
+    //   依時序處理才能讓已實現損益正確。
+    const divEvents: TimelineEvent[] = (dividends ?? [])
+        .filter(d => d && d.code && typeof d.date === 'string' && d.stockDividend > 0)
+        .map(d => ({ kind: 'stockdiv', date: d.date, div: d }))
+
+    // 同一天時：交易事件先於配股事件（除權息基準日當天的買賣仍以未配股股數計）
+    const events = [...tradeEvents, ...divEvents].sort((a, b) => {
+        const c = a.date.localeCompare(b.date)
+        if (c !== 0) return c
+        return a.kind === 'trade' ? -1 : 1
+    })
 
     const holdings: Record<string, HoldingPosition> = {}
     const realized: RealizedRecord[] = []
 
-    for (const t of sorted) {
+    for (const ev of events) {
+        if (ev.kind === 'stockdiv') {
+            // ── 配股：增加股數，攤薄均價，成本不變 ──
+            const div = ev.div
+            const pos = holdings[div.code]
+            if (!pos || pos.shares <= 0) continue
+            const newShares = pos.shares + div.stockDividend
+            pos.avgCost = pos.totalCost / newShares
+            pos.shares = newShares
+            continue
+        }
+
+        const t = ev.trade
         const { code, name, type, price, shares, fee, tax } = t
 
         // 防呆：跳過欄位不完整的紀錄
@@ -110,7 +142,7 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
             pos.shares = newShares
             pos.name = name || pos.name
 
-            // ✅ 新增：若為融資買入，累加融資借款金額（捨去至千元）
+            // 若為融資買入，累加融資借款金額（捨去至千元）
             if (t.isMargin) {
                 const stockVal = price * shares
                 const mAmt = calcMarginDebt(stockVal, t.marginRatio ?? 0.6)
@@ -126,7 +158,7 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
                 avgCost: pos.avgCost, sellPrice: price, realized: pnl, returnRate
             })
 
-            // ✅ 新增：若為融資賣出，按比例歸還融資借款
+            // 若為融資賣出，按比例歸還融資借款
             if (t.isMargin && pos.shares > 0 && (pos.marginAmount ?? 0) > 0) {
                 const ratio = shares / pos.shares
                 pos.marginAmount = (pos.marginAmount ?? 0) * (1 - ratio)
@@ -143,33 +175,27 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
         }
     }
 
-    // ✅ 支援股票股利（配股）：增加股數，攤薄均價，成本不變
-    if (dividends && dividends.length > 0) {
-        const validDivs = dividends.filter(d => d && d.code && d.stockDividend)
-        for (const div of validDivs) {
-            const pos = holdings[div.code]
-            if (!pos || pos.shares <= 0) continue
-            if (div.stockDividend > 0) {
-                const newShares = pos.shares + div.stockDividend
-                // 成本不變，均價攤薄
-                pos.avgCost = pos.totalCost / newShares
-                pos.shares = newShares
-            }
-        }
-    }
-
     return { holdings, realized }
 }
 
-// ✅ 修正：參數順序為 (cashflows, trades)，與原始 calc.ts 一致
-// Dashboard.tsx 呼叫時需改為 calcAvailableCash(cashRecords, trades)
+/**
+ * 計算可用現金。
+ *
+ * 可用現金 = 入金 − 出金 − 買入收付金額 + 賣出收付金額
+ *
+ * ⚠️ 本系統 total（收付金額）的定義：
+ *   - 買入：自備款 + 手續費（融資買入只記自備款，不含券商撥款的借款部分）
+ *   - 賣出：扣除歸還券商借款後「實際入帳的淨額」（融資賣出已先還掉借款本金）
+ *
+ * 因為賣出 total 已是淨入帳，直接 + sellTotal 即為正確可用現金，
+ * 不需要、也不可以再額外扣「歸還的借款本金」（否則融資賣出後現金會被低估）。
+ */
 export function calcAvailableCash(
     cashflows: { type: string; amount: number }[],
     trades: TradeRecord[]
 ): number {
     const cashIn = cashflows.filter(c => c.type === 'in').reduce((s, c) => s + (c.amount || 0), 0)
     const cashOut = cashflows.filter(c => c.type === 'out').reduce((s, c) => s + (c.amount || 0), 0)
-    // 融資買入只算自備款（total = 自備款 + 手續費），不算融資借款部分
     const buyTotal = trades.filter(t => t.type === 'buy').reduce((s, t) => s + (t.total || 0), 0)
     const sellTotal = trades.filter(t => t.type === 'sell').reduce((s, t) => s + (t.total || 0), 0)
     return cashIn - cashOut - buyTotal + sellTotal
@@ -204,7 +230,7 @@ export interface MarginSimResult {
  * @param buyShares           試算加碼股數
  * @param marginRatio         融資成數（預設 0.6 = 六成）
  *
- * ✅ 修正：融資借款金額無條件捨去至千元整數，與券商實際撥款邏輯一致
+ * 融資借款金額無條件捨去至千元整數，與券商實際撥款邏輯一致
  *    例：75.50 × 2000 × 0.6 = 90,600 → 實際借款 90,000，差額 600 歸入自備款
  */
 export function simulateMarginBuy(
@@ -215,9 +241,9 @@ export function simulateMarginBuy(
     marginRatio: number = 0.6
 ): MarginSimResult {
     const totalPrice = buyPrice * buyShares
-    const addedDebt = calcMarginDebt(totalPrice, marginRatio)  // ✅ 捨去至千元
+    const addedDebt = calcMarginDebt(totalPrice, marginRatio)  // 捨去至千元
     const fee = calcFee(buyPrice, buyShares)
-    const addedEquity = totalPrice - addedDebt + fee            // ✅ 自備款 = 總價 - 實際借款 + 手續費
+    const addedEquity = totalPrice - addedDebt + fee            // 自備款 = 總價 - 實際借款 + 手續費
 
     const newMarketValue = currentMarketValue + totalPrice
     const newDebt = currentDebt + addedDebt

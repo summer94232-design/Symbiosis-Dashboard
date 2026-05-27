@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query } from 'firebase/firestore'
+import { collection, addDoc, getDocs, updateDoc, doc, orderBy, query, where, writeBatch } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
-import { kmsDB, kmsStorage } from '../../lib/firebase'
+import { kmsDB, kmsStorage, investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { generateHashtags, findRelatedNotes } from '../../lib/gemini'
+import { getQuote, extractPrice } from '../../lib/fugle'
 import { Plus, Search, Pencil, Trash2, X, Check, Link, FileText, Image, Sparkles, ChevronDown, ChevronUp, ArrowUpDown, Link2, Upload, ClipboardList } from 'lucide-react'
 import * as mammoth from 'mammoth'
 
@@ -45,6 +46,8 @@ interface NoteTemplate {
     emoji: string
     titlePrefix: string
     hashtags: string[]
+    // dynamic：套用時需非同步帶入外部資料（加權指數、當日交易）
+    dynamic?: boolean
     content: (date: string) => string
 }
 
@@ -55,8 +58,11 @@ const NOTE_TEMPLATES: NoteTemplate[] = [
         emoji: '📋',
         titlePrefix: '交易日誌',
         hashtags: ['交易日誌'],
+        dynamic: true,
+        // ⚠️ 交易日誌為動態模板：市場快照與操作計畫於 applyTemplate 時即時帶入。
+        //    此處 content 僅作為「抓取失敗」時的後備骨架。
         content: (date) =>
-            `日期：${date}\n市場快照：大盤指數\n今日觀察：\n今日思路：\n操作計畫：\n收盤覆盤：\n情緒狀態：\n明日重點：\n`,
+            `日期：${date}\n市場快照：大盤指數（載入失敗）\n今日觀察：\n今日思路：\n操作計畫：（載入失敗）\n收盤覆盤：\n情緒狀態：\n明日重點：\n`,
     },
     {
         id: 'stock-analysis',
@@ -65,7 +71,7 @@ const NOTE_TEMPLATES: NoteTemplate[] = [
         titlePrefix: '選股分析',
         hashtags: ['選股分析'],
         content: (date) =>
-            `日期：${date}\n\n股票代號／名稱：\n\n產業／類股：\n\n基本面摘要：\n\n\n技術面觀察：\n\n\n潛在風險：\n\n\n目標價／停損點：\n\n結論：\n`,
+            `日期：${date}\n股票代號／名稱：\n產業／類股：\n基本面摘要：\n技術面觀察：\n潛在風險：\n目標價／停損點：\n結論：\n`,
     },
     {
         id: 'earnings-note',
@@ -74,7 +80,7 @@ const NOTE_TEMPLATES: NoteTemplate[] = [
         titlePrefix: '法說會',
         hashtags: ['法說會'],
         content: (date) =>
-            `日期：${date}\n\n公司名稱：\n\n本期營收／獲利重點：\n\n\n管理層展望：\n\n\nQ&A 重點：\n\n\n我的解讀：\n\n\n後續追蹤：\n`,
+            `日期：${date}\n公司名稱：\n本期營收／獲利重點：\n管理層展望：\nQ&A 重點：\n我的解讀：\n後續追蹤：\n`,
     },
 ]
 // ────────────────────────────────────────────────────────
@@ -107,6 +113,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     const [importing, setImporting] = useState(false)
     // ── 模板下拉 ─────────────────────────────────────────────────────────
     const [showTemplateMenu, setShowTemplateMenu] = useState(false)
+    const [templateLoading, setTemplateLoading] = useState(false)
     // ────────────────────────────────────────────────────────────────────
     const fileRef = useRef<HTMLInputElement>(null)
     const imgRef = useRef<HTMLInputElement>(null)
@@ -137,17 +144,83 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     }, [searchParams])
 
     // ── 套用模板 ──────────────────────────────────────────────────────────
-    const applyTemplate = (template: NoteTemplate) => {
+    // 交易日誌（dynamic）會額外帶入：
+    //   市場快照 → 加權指數 IX0001 即時收盤（Fugle）
+    //   操作計畫 → 當日 trades 紀錄，格式「買進台積電(2330)、賣出台積電(2330)」
+    const applyTemplate = async (template: NoteTemplate) => {
+        setShowTemplateMenu(false)
+
         const today = new Date().toLocaleDateString('zh-TW', {
             year: 'numeric', month: '2-digit', day: '2-digit'
         })
+
+        // 非動態模板：維持原本同步行為
+        if (!template.dynamic) {
+            setForm(f => ({
+                ...f,
+                title: f.title || `${template.titlePrefix} ${today}`,
+                content: template.content(today),
+                hashtags: [...new Set([...f.hashtags, ...template.hashtags])],
+            }))
+            return
+        }
+
+        // ── 動態模板（交易日誌）──────────────────────────────────────────
+        setTemplateLoading(true)
+
+        // 1) 市場快照：抓加權指數 IX0001 即時收盤
+        let snapshotLine = '市場快照：大盤指數（載入失敗，請手動填寫）'
+        try {
+            const quote = await getQuote('IX0001')
+            const price = extractPrice(quote)
+            if (price != null) {
+                snapshotLine = `市場快照：加權指數 ${price.toLocaleString('zh-TW')}`
+            }
+        } catch (err) {
+            console.error('[交易日誌] 加權指數抓取失敗:', err)
+        }
+
+        // 2) 操作計畫：撈當日交易紀錄（trades collection，date 為 YYYY-MM-DD）
+        let planLine = '操作計畫：'
+        try {
+            const todayISO = new Date().toISOString().split('T')[0]
+            const snap = await getDocs(
+                query(userCol(investDB, 'trades'), where('date', '==', todayISO))
+            )
+            const trades = snap.docs.map(d => d.data() as { type: 'buy' | 'sell'; code: string; name: string })
+            if (trades.length > 0) {
+                const items = trades.map(t => {
+                    const action = t.type === 'buy' ? '買進' : '賣出'
+                    return `${action}${t.name}(${t.code})`
+                })
+                planLine = `操作計畫：${items.join('、')}`
+            } else {
+                planLine = '操作計畫：（今日無交易）'
+            }
+        } catch (err) {
+            console.error('[交易日誌] 當日交易抓取失敗:', err)
+            planLine = '操作計畫：（交易紀錄載入失敗，請手動填寫）'
+        }
+
+        // 3) 組合內容
+        const content =
+            `日期：${today}\n` +
+            `${snapshotLine}\n` +
+            `今日觀察：\n` +
+            `今日思路：\n` +
+            `${planLine}\n` +
+            `收盤覆盤：\n` +
+            `情緒狀態：\n` +
+            `明日重點：\n`
+
         setForm(f => ({
             ...f,
             title: f.title || `${template.titlePrefix} ${today}`,
-            content: template.content(today),
+            content,
             hashtags: [...new Set([...f.hashtags, ...template.hashtags])],
         }))
-        setShowTemplateMenu(false)
+
+        setTemplateLoading(false)
     }
     // ─────────────────────────────────────────────────────────────────────
 
@@ -290,9 +363,12 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                 setNotes(prev => prev.map(n => n.id === linkedId ? { ...n, links: updatedLinks } : n))
             }
         }
-        const { setDoc } = await import('firebase/firestore')
-        await setDoc(userDoc(kmsDB, 'trash', id), { ...note, deletedAt: new Date().toISOString() })
-        await deleteDoc(userDoc(kmsDB, 'notes', id))
+        // ✅ Bug 修正：用 writeBatch 讓「寫入垃圾桶 + 刪除原筆記」成為原子操作，
+        //   避免中途失敗導致筆記同時存在於 trash 與 notes（重複）或遺失。
+        const batch = writeBatch(kmsDB)
+        batch.set(userDoc(kmsDB, 'trash', id), { ...note, deletedAt: new Date().toISOString() })
+        batch.delete(userDoc(kmsDB, 'notes', id))
+        await batch.commit()
         // 本地移除，不重讀 Firestore
         setNotes(prev => prev.filter(n => n.id !== id))
     }
@@ -562,18 +638,21 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                                 {!editingId && (
                                     <div style={{ position: 'relative' }}>
                                         <button
-                                            onClick={() => setShowTemplateMenu(v => !v)}
+                                            onClick={() => !templateLoading && setShowTemplateMenu(v => !v)}
+                                            disabled={templateLoading}
                                             style={{
                                                 display: 'flex', alignItems: 'center', gap: '6px',
                                                 padding: '6px 12px', borderRadius: '7px',
                                                 border: '1px solid var(--c-warning)',
                                                 backgroundColor: showTemplateMenu ? 'rgba(245,166,35,0.15)' : 'rgba(245,166,35,0.08)',
-                                                color: 'var(--c-warning)', fontSize: '13px', cursor: 'pointer',
+                                                color: 'var(--c-warning)', fontSize: '13px',
+                                                cursor: templateLoading ? 'wait' : 'pointer',
+                                                opacity: templateLoading ? 0.7 : 1,
                                             }}
                                         >
                                             <ClipboardList size={14} />
-                                            帶入格式
-                                            <ChevronDown size={13} style={{ transform: showTemplateMenu ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                                            {templateLoading ? '帶入中…' : '帶入格式'}
+                                            {!templateLoading && <ChevronDown size={13} style={{ transform: showTemplateMenu ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />}
                                         </button>
 
                                         {/* 下拉選單 */}
@@ -588,7 +667,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                                                     <button
                                                         key={tmpl.id}
                                                         className="template-menu-item"
-                                                        onClick={() => applyTemplate(tmpl)}
+                                                        onClick={() => { void applyTemplate(tmpl) }}
                                                         style={{
                                                             display: 'flex', alignItems: 'center', gap: '8px',
                                                             width: '100%', padding: '9px 12px', borderRadius: '7px',
