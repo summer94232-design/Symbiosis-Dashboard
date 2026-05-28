@@ -153,6 +153,7 @@ export default function Dashboard() {
     const [lastUpdated, setLastUpdated] = useState('')
     const [hasPrice, setHasPrice] = useState(false)
     const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
+    const [sortMode, setSortMode] = useState<'marketValue' | 'group' | 'returnRate' | 'code' | 'unrealizedPnL'>('group')
     const [reloadCooldown, setReloadCooldown] = useState(0) // 秒數倒數
     const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
     const [showReloadConfirm, setShowReloadConfirm] = useState(false)
@@ -263,10 +264,10 @@ export default function Dashboard() {
             holdingList.sort((a, b) => b.marketValue - a.marketValue)
 
             setHoldings(holdingList)
-            // ✅ Bug 修正：本系統的賣出 total（收付金額）記的是「已扣除歸還券商借款後的
-            //   淨入帳金額」，calcAvailableCash 直接 + sellTotal 即為正確可用現金，
-            //   不需要、也不可以再額外扣「歸還的借款本金」（否則融資賣出後現金會被低估）。
-            setTotalCash(calcAvailableCash(cashRecords, trades))
+            // ✅ Bug 修正：傳 false。本系統的賣出 total（收付金額）記的是「已扣除歸還券商借款後的
+            //   淨入帳金額」，calcAvailableCash 直接 + sellTotal 即為正確可用現金。
+            //   若傳 true 會再扣一次 calcMarginRepaid（借款本金），導致融資賣出後現金被低估。
+            setTotalCash(calcAvailableCash(cashRecords, trades, false))
             setHasPrice(priceAvailable)
             // ✅ 修正：優先用 PriceContext 的最後更新時間，再 fallback Firebase savedAt
             if (ctxLastUpdated) setLastUpdated(ctxLastUpdated)
@@ -461,7 +462,7 @@ export default function Dashboard() {
             ungroupedValue += h.marketValue
         }
     })
-    if (totalCash > 0) groupMap['現金'] = (groupMap['現金'] || 0) + totalCash
+    // 族群佔比不含現金
     if (ungroupedValue > 0) groupMap['未分類'] = (groupMap['未分類'] || 0) + ungroupedValue
 
     const groupPieData: PieEntry[] = Object.entries(groupMap)
@@ -473,6 +474,40 @@ export default function Dashboard() {
         }))
 
     const hasAnyGroup = Object.keys(stockGroups).length > 0
+
+    // ── 目前持倉表格排序 ──
+    // 依族群模式：先依「族群總市值」大到小排族群，未分類排最後；同族群內再依個股市值大到小
+    const groupTotalMV: Record<string, number> = {}
+    holdings.forEach(h => {
+        const g = stockGroups[h.code] || '__未分類__'
+        groupTotalMV[g] = (groupTotalMV[g] || 0) + h.marketValue
+    })
+    const sortedHoldings = [...holdings].sort((a, b) => {
+        switch (sortMode) {
+            case 'group': {
+                const ga = stockGroups[a.code] || '__未分類__'
+                const gb = stockGroups[b.code] || '__未分類__'
+                if (ga !== gb) {
+                    // 未分類永遠排最後
+                    if (ga === '__未分類__') return 1
+                    if (gb === '__未分類__') return -1
+                    const diff = (groupTotalMV[gb] || 0) - (groupTotalMV[ga] || 0)
+                    if (diff !== 0) return diff
+                    return ga.localeCompare(gb, 'zh-TW') // 族群總市值相同時依名稱
+                }
+                return b.marketValue - a.marketValue // 同族群內依市值
+            }
+            case 'returnRate':
+                return b.returnRate - a.returnRate
+            case 'unrealizedPnL':
+                return b.unrealizedPnL - a.unrealizedPnL
+            case 'code':
+                return a.code.localeCompare(b.code, 'zh-TW')
+            case 'marketValue':
+            default:
+                return b.marketValue - a.marketValue
+        }
+    })
 
     const unrealizedLabel = hasPrice && holdingsWithoutPrice.length > 0
         ? `未實現損益（${holdingsWithPrice.length}/${holdings.length} 檔）`
@@ -944,7 +979,7 @@ export default function Dashboard() {
                                     <>
                                         <ResponsiveContainer width="100%" height={180}>
                                             <PieChart>
-                                                <Pie data={pieData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={2} dataKey="value">
+                                                <Pie data={pieData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={2} dataKey="value" labelLine={false} label={renderCustomLabel}>
                                                     {pieData.map((entry, i) => (
                                                         <Cell key={i} fill={entry.fill} />
                                                     ))}
@@ -1002,7 +1037,7 @@ export default function Dashboard() {
                                                         <Cell key={i} fill={entry.fill} />
                                                     ))}
                                                 </Pie>
-                                                <Tooltip content={<GroupTooltip totalAssets={totalAssets} />} />
+                                                <Tooltip content={<GroupTooltip totalAssets={totalMarketValue} />} />
                                             </PieChart>
                                         </ResponsiveContainer>
                                         <div className="pie-legend" style={{ marginTop: '8px' }}>
@@ -1013,7 +1048,7 @@ export default function Dashboard() {
                                                         <span style={{ color: item.name === '未分類' ? 'var(--c-muted)' : 'var(--c-text)' }}>{item.name}</span>
                                                     </div>
                                                     <span style={{ color: 'var(--c-muted)' }}>
-                                                        {totalAssets > 0 ? ((item.value / totalAssets) * 100).toFixed(1) : 0}%
+                                                        {totalMarketValue > 0 ? ((item.value / totalMarketValue) * 100).toFixed(1) : 0}%
                                                     </span>
                                                 </div>
                                             ))}
@@ -1031,7 +1066,20 @@ export default function Dashboard() {
 
                         {/* 目前持倉表格 */}
                         <div style={{ ...card, marginBottom: '0' }}>
-                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>目前持倉</div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '8px', flexWrap: 'wrap' }}>
+                                <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>目前持倉</div>
+                                <select
+                                    value={sortMode}
+                                    onChange={e => setSortMode(e.target.value as typeof sortMode)}
+                                    style={{ backgroundColor: 'var(--c-bg)', color: 'var(--c-text)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}
+                                >
+                                    <option value="marketValue">依市值</option>
+                                    <option value="group">依族群</option>
+                                    <option value="returnRate">依報酬率</option>
+                                    <option value="unrealizedPnL">依未實現損益</option>
+                                    <option value="code">依代號</option>
+                                </select>
+                            </div>
                             {holdings.length === 0 ? (
                                 <div style={{ textAlign: 'center', padding: '40px', color: 'var(--c-muted)', fontSize: '13px' }}>尚無持倉資料</div>
                             ) : (
@@ -1041,7 +1089,7 @@ export default function Dashboard() {
                                             <tr>{['代號', '名稱', '股數', '均價', '現價', '未實現損益', '報酬率', '佔比', '族群'].map(h => <th key={h}>{h}</th>)}</tr>
                                         </thead>
                                         <tbody>
-                                            {holdings.map(h => (
+                                            {sortedHoldings.map(h => (
                                                 <tr key={h.code}>
                                                     <td style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{h.code}</td>
                                                     <td>

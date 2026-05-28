@@ -168,13 +168,24 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         // ── 動態模板（交易日誌）──────────────────────────────────────────
         setTemplateLoading(true)
 
-        // 1) 市場快照：抓加權指數 IX0001 即時收盤
+        // 1) 市場快照：抓加權指數 IX0001 即時收盤 + 當日漲跌幅
         let snapshotLine = '市場快照：大盤指數（載入失敗，請手動填寫）'
         try {
             const quote = await getQuote('IX0001')
             const price = extractPrice(quote)
             if (price != null) {
-                snapshotLine = `市場快照：加權指數 ${price.toLocaleString('zh-TW')}`
+                // 漲跌幅：優先用 Fugle 回傳的 changePercent；
+                // 若無則以 (現價 − 參考價) / 參考價 自行計算
+                let pctStr = ''
+                let pct: number | null =
+                    typeof quote?.changePercent === 'number' ? quote.changePercent : null
+                if (pct == null && typeof quote?.referencePrice === 'number' && quote.referencePrice > 0) {
+                    pct = ((price - quote.referencePrice) / quote.referencePrice) * 100
+                }
+                if (pct != null) {
+                    pctStr = ` (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`
+                }
+                snapshotLine = `市場快照：加權指數 ${price.toLocaleString('zh-TW')}${pctStr}`
             }
         } catch (err) {
             console.error('[交易日誌] 加權指數抓取失敗:', err)
