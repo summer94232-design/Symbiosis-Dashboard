@@ -8,9 +8,9 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import { getDocs, orderBy, query } from 'firebase/firestore'
+import { getDocs, getDoc, setDoc, orderBy, query } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol } from '../../lib/userDB'
+import { userCol, userDocNested } from '../../lib/userDB'
 import { getHistoricalCandles, getMultipleQuotes } from '../../lib/fugle'
 import {
     RefreshCw, TrendingDown, ChevronDown, ChevronRight,
@@ -596,6 +596,20 @@ export default function SoldTracker() {
     const [alertConfig, setAlertConfig] = useState<AlertConfig>(DEFAULT_ALERT_CONFIG)
     const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set())
 
+    // ── 通知設定持久化（與儀表板共用 settings/soldAlert）──────────────────────
+    useEffect(() => {
+        getDoc(userDocNested(investDB, 'settings', 'soldAlert'))
+            .then(snap => {
+                if (snap.exists()) setAlertConfig({ ...DEFAULT_ALERT_CONFIG, ...snap.data() })
+            })
+            .catch(() => { })
+    }, [])
+
+    const updateAlertConfig = useCallback((c: AlertConfig) => {
+        setAlertConfig(c)
+        setDoc(userDocNested(investDB, 'settings', 'soldAlert'), c, { merge: true }).catch(() => { })
+    }, [])
+
     // ── 載入 ──────────────────────────────────────────────────────────────
 
     const load = useCallback(async () => {
@@ -702,7 +716,7 @@ export default function SoldTracker() {
             <AlertPanel
                 alerts={activeAlerts}
                 config={alertConfig}
-                onConfigChange={setAlertConfig}
+                onConfigChange={updateAlertConfig}
                 onDismiss={handleDismissAlert}
             />
 

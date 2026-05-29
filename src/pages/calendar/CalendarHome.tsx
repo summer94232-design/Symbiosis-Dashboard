@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { getDocs, addDoc, deleteDoc, orderBy, query, where, setDoc, getDoc, updateDoc, collection, doc } from 'firebase/firestore'
+import { getDocs, addDoc, deleteDoc, orderBy, query, where, setDoc, getDoc, updateDoc, collection, doc, writeBatch } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { calcPositions, type TradeRecord } from '../../lib/calc'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS, type CalendarEvent } from '../../lib/calendarData'
-import { Plus, X, ChevronLeft, ChevronRight, ExternalLink, Upload, Pencil } from 'lucide-react'
+import { Plus, X, ChevronLeft, ChevronRight, ExternalLink, Upload, Pencil, RefreshCw } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
 const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
@@ -36,7 +36,7 @@ export default function CalendarHome() {
     const [selectedDay, setSelectedDay] = useState<string | null>(null)
     const [showForm, setShowForm] = useState(false)
     const [showXlsxImport, setShowXlsxImport] = useState(false)
-    const [loadingInvestor, setLoadingInvestor] = useState(false)
+    const [loadingYahoo, setLoadingYahoo] = useState(false)
     const [investorError, setInvestorError] = useState<string | null>(null)
     const [investorInfo, setInvestorInfo] = useState<string | null>(null)
     const [xlsxImporting, setXlsxImporting] = useState(false)
@@ -109,7 +109,6 @@ export default function CalendarHome() {
 
     // 從 root collection 讀取法說會（GitHub Actions 寫入的位置）
     const loadInvestorFromFirestore = async (y: number, m: number) => {
-        if (loadingInvestor) return
         const yearMonth = `${y}-${String(m).padStart(2, '0')}`
 
         try {
@@ -144,113 +143,79 @@ export default function CalendarHome() {
         }
     }
 
-    // 手動更新法說會：打 API → 比對 Firestore → 有變動就寫入
-    const loadInvestorMeetings = async () => {
-        setLoadingInvestor(true)
+    // ── 從 Yahoo 台股行事曆整頁抓取全市場法說會（手動觸發）──────────────
+    const loadYahooCalendar = async () => {
+        setLoadingYahoo(true)
         setInvestorError(null)
         setInvestorInfo(null)
 
         try {
-            await loadWatchList()
-            const currentWatchList = watchListRef.current
-            const watchCodes = currentWatchList.map(w => w.code)
-            const watchNameMap: Record<string, string> = {}
-            currentWatchList.forEach(w => { watchNameMap[w.code] = w.name })
+            const res = await fetch('/.netlify/functions/yahoo-calendar-proxy')
+            if (!res.ok) throw new Error(`proxy HTTP ${res.status}`)
 
-            const holdingCodes = [...myStockCodes].filter(c => !watchCodes.includes(c))
-            const allCodes = [...new Set([...holdingCodes, ...watchCodes])]
+            const json = await res.json()
+            if (json.error) throw new Error(json.error)
 
-            if (allCodes.length === 0) {
-                setInvestorEvents([])
-                setLoadingInvestor(false)
+            const list: { code: string; name: string; date: string }[] = Array.isArray(json.events) ? json.events : []
+            if (list.length === 0) {
+                setInvestorInfo('未從 Yahoo 取得任何法說會資料（可能該時段無排程）')
+                setLoadingYahoo(false)
                 return
             }
 
-            const yearMonth = `${year}-${String(month).padStart(2, '0')}`
-            let successCount = 0
-            let failCount = 0
-            let changedCount = 0
-            const evtMap = new Map<string, CalendarEvent>()
-
-            for (const code of allCodes) {
-                try {
-                    const res = await fetch(
-                        `/.netlify/functions/mops-proxy?stockNo=${encodeURIComponent(code)}&year=${year}&month=${month}`
-                    )
-
-                    if (!res.ok) { failCount++; continue }
-
-                    let json: { source?: string; dates?: string[]; error?: string }
-                    try { json = await res.json() } catch { failCount++; continue }
-                    if (json.error) { failCount++; continue }
-
-                    const rawDates: string[] = Array.isArray(json.dates) ? json.dates : []
-                    const newDates = rawDates.filter(isoDate => {
-                        if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return false
-                        const [y, m] = isoDate.split('-')
-                        return parseInt(y) === year && parseInt(m) === month
-                    })
-
-                    const stockName = watchNameMap[code] || code
-                    const docId = `${code}-${yearMonth}`
-
-                    // ✅ 修正 Bug 2：寫入改為 root collection（與讀取一致）
-                    const docRef = doc(collection(investDB, 'investorMeetings'), docId)
-
-                    const existing = await getDoc(docRef)
-                    const oldDates: string[] = existing.exists() ? (existing.data().dates || []) : []
-                    const oldSorted = [...oldDates].sort().join(',')
-                    const newSorted = [...newDates].sort().join(',')
-
-                    if (oldSorted !== newSorted) {
-                        await setDoc(docRef, {
-                            stockCode: code,
-                            stockName,
-                            yearMonth,
-                            dates: newDates,
-                            updatedAt: new Date().toISOString()
-                        })
-                        changedCount++
-                    }
-
-                    newDates.forEach((isoDate: string) => {
-                        const id = `investor-${code}-${isoDate}`
-                        if (!evtMap.has(id)) {
-                            evtMap.set(id, {
-                                id,
-                                date: isoDate,
-                                title: `${stockName} 法說會`,
-                                type: 'investor',
-                                stockCode: code,
-                                description: `${stockName}（${code}）法人說明會`
-                            })
-                        }
-                    })
-
-                    successCount++
-                } catch (err) {
-                    console.error(`${code} 法說會查詢失敗：`, err)
-                    failCount++
+            // 依 code-yearMonth 分組
+            const groups = new Map<string, { stockCode: string; stockName: string; yearMonth: string; dates: Set<string> }>()
+            const yearMonths = new Set<string>()
+            for (const ev of list) {
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(ev.date)) continue
+                const ym = ev.date.slice(0, 7)          // YYYY-MM
+                const docId = `${ev.code}-${ym}`
+                yearMonths.add(ym)
+                if (!groups.has(docId)) {
+                    groups.set(docId, { stockCode: ev.code, stockName: ev.name || ev.code, yearMonth: ym, dates: new Set() })
                 }
+                groups.get(docId)!.dates.add(ev.date)
             }
 
-            setInvestorEvents([...evtMap.values()])
+            // 一次性讀回相關月份的既有資料（每月一次查詢）做差異比對
+            const existingMap = new Map<string, string[]>()
+            await Promise.all([...yearMonths].map(async ym => {
+                const snap = await getDocs(query(collection(investDB, 'investorMeetings'), where('yearMonth', '==', ym)))
+                snap.docs.forEach(d => existingMap.set(d.id, Array.isArray(d.data().dates) ? d.data().dates : []))
+            }))
 
-            if (failCount > 0 && successCount === 0) {
-                setInvestorError(`查詢失敗（${failCount} 檔），請確認 mops-proxy 是否正常運作`)
-            } else if (failCount > 0) {
-                setInvestorError(`部分查詢失敗（${failCount} 檔），其餘 ${successCount} 檔已更新`)
-            } else if (changedCount > 0) {
-                setInvestorInfo(`✅ 更新完成，偵測到 ${changedCount} 檔有變動並已同步`)
-            } else {
-                setInvestorInfo(`✅ 更新完成，本月資料無變動（${successCount} 檔）`)
+            // 差異寫入：與既有日期 union（不覆蓋其他來源，例如 mops / xlsx）
+            // ※ 若想完全以 Yahoo 為準，把 mergedDates 改成 [...g.dates].sort() 即可
+            const nowIso = new Date().toISOString()
+            let batch = writeBatch(investDB)
+            let ops = 0
+            let changed = 0
+            for (const [docId, g] of groups) {
+                const old = existingMap.get(docId) || []
+                const mergedDates = [...new Set([...old, ...g.dates])].sort()
+                if (mergedDates.length === old.length && mergedDates.join(',') === [...old].sort().join(',')) continue
+
+                batch.set(doc(collection(investDB, 'investorMeetings'), docId), {
+                    stockCode: g.stockCode,
+                    stockName: g.stockName,
+                    yearMonth: g.yearMonth,
+                    dates: mergedDates,
+                    updatedAt: nowIso,
+                })
+                changed++
+                ops++
+                if (ops >= 450) { await batch.commit(); batch = writeBatch(investDB); ops = 0 }
             }
+            if (ops > 0) await batch.commit()
+
+            await loadInvestorFromFirestore(year, month)
+            setInvestorInfo(`✅ Yahoo 法說會更新完成：抓到 ${list.length} 筆，${changed} 檔有變動已同步`)
         } catch (err) {
-            console.error('loadInvestorMeetings 錯誤：', err)
-            setInvestorError('法說會更新失敗，請稍後再試')
+            console.error('loadYahooCalendar 失敗：', err)
+            setInvestorError(`Yahoo 法說會更新失敗：${err instanceof Error ? err.message : '未知錯誤'}`)
         }
 
-        setLoadingInvestor(false)
+        setLoadingYahoo(false)
     }
 
     // ── xlsx 手動匯入法說會（寫入 root collection）──────────────────────
@@ -488,6 +453,12 @@ export default function CalendarHome() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                     <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>財經行事曆</h1>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button onClick={loadYahooCalendar} disabled={loadingYahoo}
+                            style={{ ...btn('#7c5cff'), opacity: loadingYahoo ? 0.6 : 1 }}
+                            title="從 Yahoo 股市台股行事曆抓取全市場法說會並更新">
+                            <RefreshCw size={14} style={loadingYahoo ? { animation: 'spin 1s linear infinite' } : undefined} />
+                            {loadingYahoo ? '抓取中…' : '抓取法說會'}
+                        </button>
                         <button onClick={() => setShowXlsxImport(true)} style={btn('#21253a')} title="從 xlsx 手動匯入法說會日期">
                             <Upload size={14} />匯入法說會
                         </button>

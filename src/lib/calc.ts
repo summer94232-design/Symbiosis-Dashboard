@@ -32,6 +32,44 @@ export function calcMarginDebt(totalPrice: number, marginRatio: number): number 
     return Math.floor(totalPrice * marginRatio / 1000) * 1000
 }
 
+/**
+ * 計算單筆交易的「收付金額」(total) ── 唯一真實來源。
+ * 買賣紀錄表單、CSV 匯入都應呼叫此函式，避免各自實作而漂移。
+ *
+ *   現股買入：股票總價 + 手續費
+ *   融資買入：自備款 + 手續費（= 股票總價 − 融資借款 + 手續費，借款由券商撥付不佔現金）
+ *   現股賣出：股票總價 − 手續費 − 交易稅
+ *   融資賣出：股票總價 − 手續費 − 交易稅 − 償還融資借款(本金＋利息)
+ *             ⚠️ 償還金額含利息、且原始借款已捨去至千元，系統無法自動推算，
+ *                故由 marginRepay 帶入（使用者依券商對帳單輸入）。
+ */
+export function calcTradeTotal(t: {
+    type: 'buy' | 'sell'
+    price: number
+    shares: number
+    fee?: number
+    tax?: number
+    isMargin?: boolean
+    marginRatio?: number
+    marginRepay?: number
+}): number {
+    const gross = (t.price || 0) * (t.shares || 0)
+    const fee = t.fee || 0
+    const tax = t.tax || 0
+    if (t.type === 'buy') {
+        if (t.isMargin) {
+            const debt = calcMarginDebt(gross, t.marginRatio ?? 0.6)
+            return gross - debt + fee
+        }
+        return gross + fee
+    }
+    // 賣出
+    if (t.isMargin) {
+        return gross - fee - tax - (t.marginRepay ?? 0)
+    }
+    return gross - fee - tax
+}
+
 export interface TradeRecord {
     date: string
     type: 'buy' | 'sell'
@@ -45,7 +83,8 @@ export interface TradeRecord {
     note?: string
     isMargin?: boolean     // 是否為融資交易
     marginRatio?: number   // 融資成數（例：0.6）
-    marginAmount?: number  // 融資借款金額
+    marginAmount?: number  // 融資借款金額（買入時）
+    marginRepay?: number   // 融資賣出時償還的借款（本金＋利息，依券商對帳單）
 }
 
 export interface DividendRecord {
@@ -199,6 +238,51 @@ export function calcAvailableCash(
     const buyTotal = trades.filter(t => t.type === 'buy').reduce((s, t) => s + (t.total || 0), 0)
     const sellTotal = trades.filter(t => t.type === 'sell').reduce((s, t) => s + (t.total || 0), 0)
     return cashIn - cashOut - buyTotal + sellTotal
+}
+
+// ── 融資部位彙總（唯一真實來源）─────────────────────────────────────────────
+// 儀表板的維持率、資產趨勢的負債扣除都應呼叫此函式，避免各頁各自實作而對不上。
+//   - 借款一律用 calcMarginDebt 重算（捨去至千元，與券商撥款一致），不採信舊存的 marginAmount
+//   - 賣出時按「賣出股數 / 當時持股」比例歸還借款與成本
+
+export interface MarginPositionAgg {
+    code: string
+    name: string
+    shares: number
+    marginAmount: number   // 目前累計融資借款（捨去至千元）
+    marginCost: number     // 目前融資部位買入時的股票市值合計
+}
+
+export function aggregateMarginPositions(trades: TradeRecord[]): MarginPositionAgg[] {
+    const map: Record<string, MarginPositionAgg> = {}
+    // 依日期排序，確保賣出歸還比例以「賣出當下」的持股為基準
+    const sorted = [...trades]
+        .filter(t => t && t.isMargin && t.date)
+        .sort((a, b) => a.date.localeCompare(b.date))
+    for (const t of sorted) {
+        if (!map[t.code]) {
+            map[t.code] = { code: t.code, name: t.name, shares: 0, marginAmount: 0, marginCost: 0 }
+        }
+        const pos = map[t.code]
+        if (t.type === 'buy') {
+            const stockVal = t.price * t.shares
+            pos.shares += t.shares
+            pos.marginAmount += calcMarginDebt(stockVal, t.marginRatio ?? 0.6)
+            pos.marginCost += stockVal
+            pos.name = t.name || pos.name
+        } else if (t.type === 'sell' && pos.shares > 0) {
+            const ratio = t.shares / pos.shares
+            pos.marginAmount -= pos.marginAmount * ratio
+            pos.marginCost -= pos.marginCost * ratio
+            pos.shares -= t.shares
+            if (pos.shares <= 0) { pos.shares = 0; pos.marginAmount = 0; pos.marginCost = 0 }
+        }
+    }
+    return Object.values(map).filter(m => m.shares > 0 && m.marginAmount > 0)
+}
+
+export function aggregateMarginDebt(trades: TradeRecord[]): number {
+    return aggregateMarginPositions(trades).reduce((s, m) => s + m.marginAmount, 0)
 }
 
 // ── 融資加碼試算 ──────────────────────────────────────────────────────────────

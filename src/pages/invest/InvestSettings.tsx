@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { collection, getDocs, getDoc, doc, setDoc, orderBy, query, addDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
-import { calcFee, calcTax } from '../../lib/calc'
+import { calcFee, calcTax, calcTradeTotal } from '../../lib/calc'
 import { Download, Upload, FileSpreadsheet, Database, FileDown, User } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
@@ -35,6 +35,9 @@ interface TradeRow {
     tax: number
     total: number
     note?: string
+    isMargin?: boolean
+    marginRatio?: number
+    marginRepay?: number
 }
 
 interface CashflowRow {
@@ -204,20 +207,32 @@ export default function InvestSettings() {
             const note = row['備註'] || row['備註/筆記'] || ''
 
             if (!date || !typeStr) { skipped++; continue }
-            if (typeStr !== '買入' && typeStr !== '賣出' && typeStr !== '買進') { skipped++; continue }
+            const validTypes = ['買入', '賣出', '買進', '現貨買入', '現貨賣出', '融資買入', '融資賣出']
+            if (!validTypes.includes(typeStr)) { skipped++; continue }
             if (!code || !price || !shares) { failed++; continue }
 
-            const tradeType: 'buy' | 'sell' = (typeStr === '買入' || typeStr === '買進') ? 'buy' : 'sell'
+            const tradeType: 'buy' | 'sell' = (typeStr === '買入' || typeStr === '買進' || typeStr === '現貨買入' || typeStr === '融資買入') ? 'buy' : 'sell'
+            const isMargin = typeStr === '融資買入' || typeStr === '融資賣出'
+            const marginRatio = isMargin
+                ? (row['融資成數'] !== undefined && row['融資成數'] !== '' ? toNum(row['融資成數']) || 0.6 : 0.6)
+                : 0
+            const marginRepay = isMargin && tradeType === 'sell'
+                ? (row['融資償還金額'] !== undefined && row['融資償還金額'] !== '' ? toNum(row['融資償還金額']) : 0)
+                : 0
 
             const feeRaw = row['手續費'] !== undefined && row['手續費'] !== '' ? toNum(row['手續費']) : null
             const taxRaw = row['交易稅'] !== undefined && row['交易稅'] !== '' ? toNum(row['交易稅']) : null
             const fee = feeRaw !== null ? feeRaw : calcFee(price, shares)
             const tax = taxRaw !== null ? taxRaw : (tradeType === 'sell' ? calcTax(price, shares, code) : 0)
             const totalRaw = row['收付金額'] !== undefined && row['收付金額'] !== '' ? toNum(row['收付金額']) : null
-            const total = totalRaw !== null ? totalRaw : (tradeType === 'buy' ? price * shares + fee : price * shares - fee - tax)
+            const total = totalRaw !== null ? totalRaw
+                : calcTradeTotal({ type: tradeType, price, shares, fee, tax, isMargin, marginRatio, marginRepay })
 
             try {
-                await addDoc(userCol(investDB, 'trades'), { date, type: tradeType, code, name, price, shares, fee, tax, total, note })
+                await addDoc(userCol(investDB, 'trades'), {
+                    date, type: tradeType, code, name, price, shares, fee, tax, total, note,
+                    isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay
+                })
                 if (name && code) await setDoc(userDoc(investDB, 'stockDict', code), { name })
                 success++
             } catch { failed++ }
@@ -340,7 +355,7 @@ export default function InvestSettings() {
                 return {
                     'Firestore ID': d.id,
                     '日期': t.date,
-                    '類型': t.type === 'buy' ? '買入' : '賣出',
+                    '類型': t.isMargin ? (t.type === 'buy' ? '融資買入' : '融資賣出') : (t.type === 'buy' ? '買入' : '賣出'),
                     '代號': t.code,
                     '名稱': t.name,
                     '價格': t.price,
@@ -348,6 +363,8 @@ export default function InvestSettings() {
                     '手續費': t.fee,
                     '交易稅': t.tax,
                     '收付金額': t.total,
+                    '融資成數': t.isMargin ? (t.marginRatio ?? 0.6) : '',
+                    '融資償還金額': t.isMargin && t.type === 'sell' ? (t.marginRepay ?? 0) : '',
                     '備註': t.note ?? '',
                 }
             })
@@ -420,8 +437,8 @@ export default function InvestSettings() {
         setExportLoading(true)
         const snap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'desc')))
         const trades = snap.docs.map(d => d.data() as TradeRow)
-        const header = ['日期', '類型', '代號', '名稱', '價格', '股數', '手續費', '交易稅', '收付金額', '備註']
-        const rows = trades.map(t => [t.date, t.type === 'buy' ? '買入' : '賣出', t.code, t.name, t.price, t.shares, t.fee, t.tax, t.total, t.note ?? ''])
+        const header = ['日期', '類型', '代號', '名稱', '價格', '股數', '手續費', '交易稅', '收付金額', '融資成數', '融資償還金額', '備註']
+        const rows = trades.map(t => [t.date, t.isMargin ? (t.type === 'buy' ? '融資買入' : '融資賣出') : (t.type === 'buy' ? '買入' : '賣出'), t.code, t.name, t.price, t.shares, t.fee, t.tax, t.total, t.isMargin ? (t.marginRatio ?? 0.6) : '', t.isMargin && t.type === 'sell' ? (t.marginRepay ?? 0) : '', t.note ?? ''])
         downloadCSV([header, ...rows].map(r => r.join(',')).join('\n'), `買賣紀錄_${today()}.csv`)
         setExportLoading(false)
         showMsg('✅ 已匯出買賣紀錄')

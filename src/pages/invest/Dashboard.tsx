@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { collection, getDocs, orderBy, query, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
-import { calcPositions, calcAvailableCash, simulateMarginBuy, calcMarginDebt, type TradeRecord, type DividendRecord } from '../../lib/calc'
+import { calcPositions, calcAvailableCash, simulateMarginBuy, aggregateMarginPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useNavigate } from 'react-router-dom'
@@ -59,9 +59,9 @@ interface Task {
 const PRIORITY_COLORS = { high: 'var(--c-danger)', medium: 'var(--c-warning)', low: 'var(--c-positive)' }
 const PRIORITY_LABELS = { high: '高', medium: '中', low: '低' }
 
-// ── 賣出追蹤通知（固定值：14天內賣出、漲超10%）─────────────────────────────
-const SOLD_WATCH_DAYS = 14
-const SOLD_RISE_THRESHOLD = 10  // %
+// ── 賣出追蹤通知預設值（實際值由 settings/soldAlert 讀取，與賣出追蹤頁共用）──
+const DEFAULT_SOLD_WATCH_DAYS = 14
+const DEFAULT_SOLD_RISE_THRESHOLD = 10  // %
 
 interface SoldAlert {
     code: string
@@ -171,6 +171,8 @@ export default function Dashboard() {
     }
     const [marginPositions, setMarginPositions] = useState<MarginPosition[]>([])
     const [soldAlerts, setSoldAlerts] = useState<SoldAlert[]>([])
+    // 賣出追蹤通知設定（與賣出追蹤頁共用 settings/soldAlert）
+    const [soldAlertCfg, setSoldAlertCfg] = useState({ watchDays: DEFAULT_SOLD_WATCH_DAYS, riseThreshold: DEFAULT_SOLD_RISE_THRESHOLD })
     // sell trades 快取，供 updatePrices 掃描通知用（不重複讀 Firebase）
     const [sellTradesCache, setSellTradesCache] = useState<Array<{ date: string; code: string; name: string; price: number; shares: number }>>([])
 
@@ -190,7 +192,7 @@ export default function Dashboard() {
             const [
                 tradesSnap, dividendsSnap, cashSnap,
                 priceDoc, groupDoc,
-                eventsSnap, tasksSnap,
+                eventsSnap, tasksSnap, soldCfgDoc,
             ] = await Promise.all([
                 getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
                 getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc'))),
@@ -199,19 +201,28 @@ export default function Dashboard() {
                 getDoc(userDocNested(investDB, 'settings', 'stockGroups')),
                 getDocs(userCol(investDB, 'calendarEvents')),
                 getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc'))),
+                getDoc(userDocNested(investDB, 'settings', 'soldAlert')),
             ])
+
+            // 賣出追蹤通知設定（與賣出追蹤頁共用同一份）
+            const soldCfg = {
+                watchDays: DEFAULT_SOLD_WATCH_DAYS,
+                riseThreshold: DEFAULT_SOLD_RISE_THRESHOLD,
+                ...(soldCfgDoc.exists() ? soldCfgDoc.data() : {}),
+            }
+            setSoldAlertCfg({ watchDays: soldCfg.watchDays, riseThreshold: soldCfg.riseThreshold })
 
             const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
             const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
             const cashRecords = cashSnap.docs.map(d => d.data() as CashRecord)
 
-            // 快取賣出紀錄（日期在 SOLD_WATCH_DAYS 內），供 updatePrices 掃描通知
+            // 快取賣出紀錄（日期在觀察天數內），供 updatePrices 掃描通知
             const sellCache = trades
                 .filter(t => t.type === 'sell')
                 .map(t => ({ date: t.date, code: t.code, name: t.name, price: t.price, shares: t.shares }))
                 .filter(t => {
                     const d = Math.floor((Date.now() - new Date(t.date).getTime()) / 86400000)
-                    return d <= SOLD_WATCH_DAYS
+                    return d <= soldCfg.watchDays
                 })
             setSellTradesCache(sellCache)
 
@@ -273,35 +284,11 @@ export default function Dashboard() {
             if (ctxLastUpdated) setLastUpdated(ctxLastUpdated)
             else if (savedAt) setLastUpdated(savedAt)
 
-            // ── 計算融資部位（按代號彙總，使用 isMargin 欄位）──
-            const marginMap: Record<string, MarginPosition> = {}
-            for (const t of trades) {
-                if (!t.isMargin) continue
-                const code = t.code
-                if (!marginMap[code]) {
-                    marginMap[code] = { code, name: t.name, shares: 0, marginAmount: 0, marginCost: 0 }
-                }
-                const pos = marginMap[code]
-                if (t.type === 'buy') {
-                    const stockVal = t.price * t.shares
-                    // ✅ 修正：永遠用 calcMarginDebt 重算（捨去至千元），不信任舊存的 marginAmount
-                    // 舊資料可能存了未捨去的值（如 90600），導致與券商對不上
-                    const marginRatio = (t as any).marginRatio ?? 0.6
-                    const mAmt = calcMarginDebt(stockVal, marginRatio)
-                    pos.shares += t.shares
-                    pos.marginAmount += mAmt
-                    pos.marginCost += stockVal
-                } else if (t.type === 'sell') {
-                    // 融資賣出：按比例歸還借款
-                    if (pos.shares > 0) {
-                        const ratio = t.shares / pos.shares
-                        pos.marginAmount -= pos.marginAmount * ratio
-                        pos.marginCost -= pos.marginCost * ratio
-                        pos.shares -= t.shares
-                    }
-                }
-            }
-            const activeMargin = Object.values(marginMap).filter(m => m.shares > 0 && m.marginAmount > 0)
+            // ── 計算融資部位（集中於 calc.ts，與資產趨勢頁口徑一致）──
+            const activeMargin: MarginPosition[] = aggregateMarginPositions(trades).map(m => ({
+                code: m.code, name: m.name, shares: m.shares,
+                marginAmount: m.marginAmount, marginCost: m.marginCost,
+            }))
             setMarginPositions(activeMargin)
         } catch (err) { console.error(err) }
         finally { setLoading(false) }
@@ -349,7 +336,7 @@ export default function Dashboard() {
                 const p = quotes[t.code]
                 if (typeof p !== 'number' || p <= 0) return false
                 const pct = ((p - t.price) / t.price) * 100
-                return pct >= SOLD_RISE_THRESHOLD
+                return pct >= soldAlertCfg.riseThreshold
             })
             .map(t => {
                 const currentPrice = quotes[t.code] as number
@@ -422,6 +409,10 @@ export default function Dashboard() {
     // 無融資時分母 = 總資產，倉位% 退化為單純的持股佔比
     const equityCapital = totalAssets - totalMarginDebt
     const positionPct = equityCapital > 0 ? (totalMarketValue / equityCapital) * 100 : null
+
+    // 淨資產 = 市值 + 現金 − 融資借款（負債）。與資產趨勢、年度回顧快照口徑一致。
+    // 註：totalAssets（毛額）仍用於圓餅圖佔比與維持率分母，故兩者並存。
+    const netAssets = totalAssets - totalMarginDebt
 
     // 維持率顏色：>160% 綠，130~160% 橙，<130% 紅
     const marginRatioColor = marginRatioValue === null ? 'var(--c-muted)'
@@ -613,7 +604,7 @@ export default function Dashboard() {
                                 <TrendingDown size={15} />
                                 賣出追蹤通知（{soldAlerts.length} 筆）
                                 <span style={{ fontSize: '11px', fontWeight: 400, color: 'var(--c-muted)' }}>
-                                    · {SOLD_WATCH_DAYS} 天內賣出，現價漲超 {SOLD_RISE_THRESHOLD}%
+                                    · {soldAlertCfg.watchDays} 天內賣出，現價漲超 {soldAlertCfg.riseThreshold}%
                                 </span>
                             </div>
                             <span style={{ fontSize: '11px', color: 'var(--c-accent)', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -650,7 +641,7 @@ export default function Dashboard() {
                     <>
                         <div className="dash-stats">
                             {[
-                                { label: '總資產', value: `$${totalAssets.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: DollarSign },
+                                { label: '總資產', value: `$${netAssets.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: DollarSign },
                                 { label: '股票總市值', value: `$${totalMarketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: BarChart2 },
                                 { label: '可用現金', value: `$${totalCash.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-warning)', icon: DollarSign },
                             ].map(({ label, value, color, icon: Icon }) => (

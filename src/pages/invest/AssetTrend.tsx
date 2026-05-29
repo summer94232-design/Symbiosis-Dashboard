@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { getDocs, setDoc, deleteDoc, orderBy, query, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
-import { calcPositions, calcAvailableCash, type TradeRecord, type DividendRecord } from '../../lib/calc'
+import { calcPositions, calcAvailableCash, aggregateMarginDebt, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts'
 import { Save, Pencil, Trash2, Plus, X, Check, Zap, AlertTriangle, TrendingUp } from 'lucide-react'
 
@@ -63,32 +63,6 @@ const ReturnTooltip = ({ active, payload, label }: any) => {
             )}
         </div>
     )
-}
-
-// ── 融資借款計算（從交易紀錄彙總現有借款）────────────────────────────────
-
-function calcMarginDebt(trades: TradeRecord[]): number {
-    const marginMap: Record<string, { shares: number; marginAmount: number }> = {}
-    for (const t of trades) {
-        if (!t.isMargin) continue
-        if (!marginMap[t.code]) {
-            marginMap[t.code] = { shares: 0, marginAmount: 0 }
-        }
-        const pos = marginMap[t.code]
-        if (t.type === 'buy') {
-            const stockVal = t.price * t.shares
-            const mAmt = (t as any).marginAmount ?? Math.floor(stockVal * ((t as any).marginRatio ?? 0.6))
-            pos.shares += t.shares
-            pos.marginAmount += mAmt
-        } else if (t.type === 'sell' && pos.shares > 0) {
-            const ratio = t.shares / pos.shares
-            pos.marginAmount -= pos.marginAmount * ratio
-            pos.shares -= t.shares
-        }
-    }
-    return Object.values(marginMap)
-        .filter(m => m.shares > 0 && m.marginAmount > 0)
-        .reduce((s, m) => s + m.marginAmount, 0)
 }
 
 // ── 主元件 ────────────────────────────────────────────────────────────────
@@ -253,7 +227,7 @@ export default function AssetTrend() {
             const cash = calcAvailableCash(cashRecords, trades)
 
             // ✅ 計算融資借款並從總資產扣除，呈現真實淨值
-            const marginDebt = calcMarginDebt(trades)
+            const marginDebt = aggregateMarginDebt(trades)
             const totalAssets = marketValue + cash - marginDebt
 
             setForm(f => ({
@@ -292,7 +266,7 @@ export default function AssetTrend() {
             const cash = calcAvailableCash(cashRecords, trades)
 
             // ✅ 計算融資借款並從總資產扣除，呈現真實淨值
-            const marginDebt = calcMarginDebt(trades)
+            const marginDebt = aggregateMarginDebt(trades)
             const totalAssets = marketValue + cash - marginDebt
             const today = new Date().toISOString().split('T')[0]
 

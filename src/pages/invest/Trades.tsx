@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { addDoc, getDocs, updateDoc, deleteDoc, orderBy, query, setDoc, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
-import { calcFee, calcTax, isETF, calcMarginDebt } from '../../lib/calc'
+import { calcFee, calcTax, isETF, calcMarginDebt, calcTradeTotal } from '../../lib/calc'
 import { Pencil, Trash2, X, Check, Upload, Search, ChevronDown, ChevronUp } from 'lucide-react'
 
 interface Trade {
@@ -20,12 +20,13 @@ interface Trade {
     isMargin?: boolean     // 是否為融資交易
     marginRatio?: number   // 融資成數（例：0.6）
     marginAmount?: number  // 融資借款金額
+    marginRepay?: number   // 融資賣出償還的借款（本金＋利息）
 }
 
 const emptyTrade: Trade = {
     date: new Date().toISOString().split('T')[0],
     type: 'buy', code: '', name: '', price: 0, shares: 0, fee: 0, tax: 0, total: 0, note: '',
-    isMargin: false, marginRatio: 0.6, marginAmount: 0
+    isMargin: false, marginRatio: 0.6, marginAmount: 0, marginRepay: 0
 }
 
 const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
@@ -134,7 +135,7 @@ export default function Trades() {
             const fee = f.price && f.shares ? calcFee(f.price, f.shares) : f.fee
             const tax = f.type === 'sell' && f.price && f.shares ? calcTax(f.price, f.shares, upper) : 0
             const u = { ...f, code: upper, fee, tax }
-            u.total = f.type === 'buy' ? f.price * f.shares + u.fee : f.price * f.shares - u.fee - u.tax
+            u.total = calcTradeTotal(u)
             return u
         })
 
@@ -151,20 +152,12 @@ export default function Trades() {
         }, 500)
     }
 
-    const calcTotal = (f: Trade) => {
-        if (f.type === 'buy' && f.isMargin) {
-            // 融資買入：total = 自備款 + 手續費（不含融資借款部分）
-            const stockValue = f.price * f.shares
-            const marginAmt = calcMarginDebt(stockValue, f.marginRatio ?? 0.6)
-            return stockValue - marginAmt + f.fee
-        }
-        return f.type === 'buy' ? f.price * f.shares + f.fee : f.price * f.shares - f.fee - f.tax
-    }
+    const calcTotal = (f: Trade) => calcTradeTotal(f)
 
     const handleChange = (key: keyof Trade, value: Trade[keyof Trade]) => {
         setForm(f => {
             const u = { ...f, [key]: value }
-            if (['price', 'shares', 'type', 'code', 'marginRatio', 'isMargin'].includes(key)) {
+            if (['price', 'shares', 'type', 'code', 'marginRatio', 'isMargin', 'marginRepay'].includes(key)) {
                 if (u.price && u.shares) {
                     u.fee = calcFee(u.price, u.shares)
                     u.tax = u.type === 'sell' ? calcTax(u.price, u.shares, u.code) : 0
@@ -263,11 +256,24 @@ export default function Trades() {
             const isSell = tradeType === 'sell'
             const fee = calcFee(price, shares)
             const tax = isSell ? calcTax(price, shares, rawCode) : 0
-            const total = isSell ? price * shares - fee - tax : price * shares + fee
+            // 若 CSV 含融資欄位（完整備份）則沿用，否則融資成數預設 0.6、償還金額 0。
+            // ⚠️ 非備份來源的融資賣出無法得知償還金額（含利息），匯入後請逐筆補上「融資償還金額」。
+            const marginRatioCSV = isMarginCSV
+                ? (row['融資成數'] ? toNum(row['融資成數']) || 0.6 : 0.6)
+                : 0
+            const marginRepayCSV = isMarginCSV && isSell
+                ? (row['融資償還金額'] ? toNum(row['融資償還金額']) : 0)
+                : 0
+            const totalRawCSV = row['收付金額'] ? toNum(row['收付金額']) : null
+            const total = totalRawCSV !== null ? totalRawCSV : calcTradeTotal({
+                type: tradeType, price, shares, fee, tax,
+                isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV
+            })
 
             try {
                 await addDoc(userCol(investDB, 'trades'), {
-                    date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total, isMargin: isMarginCSV,
+                    date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total,
+                    isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV,
                     note: row['備註/筆記'] || row['備註'] || ''
                 })
                 // ★ CSV 匯入時同步寫入 stockDict（只寫有名稱的）
@@ -336,7 +342,7 @@ export default function Trades() {
                                 <input type="number" style={inp} value={form.tax || ''} onChange={e => handleChange('tax', parseFloat(e.target.value) || 0)} />
                             </div>
                             <div>
-                                <label style={lbl}>收付金額 {form.isMargin && form.type === 'buy' && <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（自備款）</span>}</label>
+                                <label style={lbl}>收付金額 {form.isMargin && form.type === 'buy' && <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（自備款）</span>}{form.isMargin && form.type === 'sell' && <span style={{ color: 'var(--c-positive)', fontSize: '11px' }}>（已扣償還）</span>}</label>
                                 <input type="number" style={{ ...inp, color: form.type === 'buy' ? 'var(--c-danger)' : 'var(--c-positive)' }} value={form.total} readOnly />
                             </div>
                             <div className="span2">
@@ -372,6 +378,12 @@ export default function Trades() {
                                         <input type="number" style={{ ...inp, color: 'var(--c-warning)' }} value={form.marginAmount ?? 0} readOnly />
                                     </div>
                                 </>
+                            )}
+                            {form.isMargin && form.type === 'sell' && (
+                                <div>
+                                    <label style={lbl}>融資償還金額 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（含利息，依券商對帳單）</span></label>
+                                    <input type="number" style={{ ...inp, color: 'var(--c-warning)' }} value={form.marginRepay || ''} onChange={e => handleChange('marginRepay', parseFloat(e.target.value) || 0)} />
+                                </div>
                             )}
                         </div>
                         <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
@@ -464,7 +476,7 @@ export default function Trades() {
                                 <input type="number" style={inp} value={form.tax || ''} onChange={e => handleChange('tax', parseFloat(e.target.value) || 0)} />
                             </div>
                             <div>
-                                <label style={lbl}>收付金額 {form.isMargin && form.type === 'buy' && <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（自備款）</span>}</label>
+                                <label style={lbl}>收付金額 {form.isMargin && form.type === 'buy' && <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（自備款）</span>}{form.isMargin && form.type === 'sell' && <span style={{ color: 'var(--c-positive)', fontSize: '11px' }}>（已扣償還）</span>}</label>
                                 <input type="number" style={{ ...inp, color: form.type === 'buy' ? 'var(--c-danger)' : 'var(--c-positive)' }} value={form.total} readOnly />
                             </div>
                             <div className="span2">
@@ -500,6 +512,12 @@ export default function Trades() {
                                         <input type="number" style={{ ...inp, color: 'var(--c-warning)' }} value={form.marginAmount ?? 0} readOnly />
                                     </div>
                                 </>
+                            )}
+                            {form.isMargin && form.type === 'sell' && (
+                                <div>
+                                    <label style={lbl}>融資償還金額 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（含利息，依券商對帳單）</span></label>
+                                    <input type="number" style={{ ...inp, color: 'var(--c-warning)' }} value={form.marginRepay || ''} onChange={e => handleChange('marginRepay', parseFloat(e.target.value) || 0)} />
+                                </div>
                             )}
                         </div>
                         <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
