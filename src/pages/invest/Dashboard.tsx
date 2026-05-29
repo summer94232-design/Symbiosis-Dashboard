@@ -278,7 +278,7 @@ export default function Dashboard() {
             // ✅ Bug 修正：傳 false。本系統的賣出 total（收付金額）記的是「已扣除歸還券商借款後的
             //   淨入帳金額」，calcAvailableCash 直接 + sellTotal 即為正確可用現金。
             //   若傳 true 會再扣一次 calcMarginRepaid（借款本金），導致融資賣出後現金被低估。
-            setTotalCash(calcAvailableCash(cashRecords, trades, false))
+            setTotalCash(calcAvailableCash(cashRecords, trades))
             setHasPrice(priceAvailable)
             // ✅ 修正：優先用 PriceContext 的最後更新時間，再 fallback Firebase savedAt
             if (ctxLastUpdated) setLastUpdated(ctxLastUpdated)
