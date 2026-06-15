@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
-import { collection, getDocs, orderBy, query } from 'firebase/firestore'
+import { getDocs, orderBy, query } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDocNested } from '../../lib/userDB'
 import { getDoc } from 'firebase/firestore'
-import { simulateMarginBuy, type TradeRecord } from '../../lib/calc'
-import { TrendingDown, Plus, Trash2, Calculator } from 'lucide-react'
+import { simulateMarginBuy, calcMarginStress, aggregateMarginPositions, type TradeRecord } from '../../lib/calc'
+import { TrendingDown, Plus, Trash2, Calculator, AlertTriangle, Flame } from 'lucide-react'
 
 const card: React.CSSProperties = {
     backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px'
@@ -42,6 +42,9 @@ export default function MarginManager() {
         { id: 1, code: '', price: '', shares: '', ratio: '0.6' }
     ])
 
+    // 壓力測試自訂跌幅（%）
+    const [customDrop, setCustomDrop] = useState(10)
+
     // ── 載入融資部位 ─────────────────────────────────────────────────────────
     useEffect(() => {
         const load = async () => {
@@ -54,31 +57,15 @@ export default function MarginManager() {
                 const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
                 const savedPrices: Record<string, number | string> = priceDoc.exists() ? priceDoc.data() : {}
 
-                const marginMap: Record<string, MarginPosition> = {}
-                for (const t of trades) {
-                    if (!t.isMargin) continue
-                    if (!marginMap[t.code]) {
-                        marginMap[t.code] = { code: t.code, name: t.name, shares: 0, marginAmount: 0, marginCost: 0, currentPrice: null }
-                    }
-                    const pos = marginMap[t.code]
-                    if (t.type === 'buy') {
-                        const stockVal = t.price * t.shares
-                        const mAmt = (t as any).marginAmount ?? Math.floor(stockVal * ((t as any).marginRatio ?? 0.6))
-                        pos.shares += t.shares
-                        pos.marginAmount += mAmt
-                        pos.marginCost += stockVal
-                    } else if (t.type === 'sell' && pos.shares > 0) {
-                        const ratio = t.shares / pos.shares
-                        pos.marginAmount -= pos.marginAmount * ratio
-                        pos.marginCost -= pos.marginCost * ratio
-                        pos.shares -= t.shares
-                    }
-                }
-
-                const active = Object.values(marginMap).filter(m => m.shares > 0 && m.marginAmount > 0)
-                active.forEach(m => {
+                // ✅ 借款彙總一律走 calc.ts 的 aggregateMarginPositions（唯一真實來源），
+                //    與 Dashboard / 資產趨勢同口徑：
+                //    - 借款金額用 calcMarginDebt 重算（捨去至千元），不採信舊資料可能殘留的 marginAmount 欄位
+                //    - 歸還比例 = 賣出股數 / 融資股數
+                //    - 賣超／全數出清時借款自動歸零，不會出現負值或負無窮維持率
+                //    - shares > 0 且 marginAmount > 0 的過濾已在 calc.ts 內完成
+                const active: MarginPosition[] = aggregateMarginPositions(trades).map(m => {
                     const raw = savedPrices[m.code]
-                    m.currentPrice = typeof raw === 'number' && raw > 0 ? raw : null
+                    return { ...m, currentPrice: typeof raw === 'number' && raw > 0 ? raw : null }
                 })
                 setPositions(active)
             } catch (err) { console.error(err) }
@@ -95,6 +82,21 @@ export default function MarginManager() {
     }, 0)
     const currentRatio = totalDebt > 0 ? (totalMV / totalDebt) * 100 : null
     const hasPrice = positions.some(m => m.currentPrice !== null)
+
+    // ── 壓力測試：整戶臨界跌幅 + 各檔單獨觸線跌幅（calc.ts 純函式，沿用上方 positions）──
+    const stress = calcMarginStress(
+        positions.map(m => ({
+            code: m.code, name: m.name,
+            marketValue: m.currentPrice !== null ? m.currentPrice * m.shares : m.marginCost,
+        })),
+        totalDebt,
+        [0.05, 0.10, 0.15, 0.20, 0.25],
+    )
+    const dropByCode: Record<string, number | null> = Object.fromEntries(stress.perStock.map(p => [p.code, p.dropTo130]))
+    const riskiestCode = stress.perStock
+        .filter(p => p.dropTo130 !== null)
+        .sort((a, b) => (a.dropTo130! - b.dropTo130!))[0]?.code ?? null
+    const customRatio = currentRatio !== null ? currentRatio * (1 - customDrop / 100) : null
 
     // ── 試算邏輯（多筆加總）──────────────────────────────────────────────────
     const validRows = simRows.filter(r => {
@@ -238,6 +240,13 @@ export default function MarginManager() {
                                 </div>
                             )}
 
+                            {currentRatio !== null && stress.dropTo130 !== null && stress.dropTo130 > 0 && (
+                                <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', padding: '9px 12px', backgroundColor: 'color-mix(in srgb, var(--c-warning) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--c-warning) 25%, transparent)', borderRadius: '8px', fontSize: '13px', color: 'var(--c-warning)' }}>
+                                    <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+                                    <span>持股整體再跌 <strong style={{ fontWeight: 700 }}>{(stress.dropTo130 * 100).toFixed(1)}%</strong> 觸及追繳線{stress.dropTo120 !== null && stress.dropTo120 > 0 && <> · 再跌 <strong style={{ fontWeight: 700 }}>{(stress.dropTo120 * 100).toFixed(1)}%</strong> 觸及斷頭</>}</span>
+                                </div>
+                            )}
+
                             {currentRatio !== null && currentRatio < 130 && (
                                 <div style={{ marginTop: '12px', padding: '8px 12px', backgroundColor: 'color-mix(in srgb, var(--c-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--c-danger) 25%, transparent)', borderRadius: '8px', fontSize: '12px', color: 'var(--c-danger)' }}>
                                     ⚠️ 維持率低於 130%，請留意追繳風險！強制斷頭線為 120%。
@@ -257,7 +266,7 @@ export default function MarginManager() {
                                         <table className="mm-table">
                                             <thead>
                                                 <tr>
-                                                    <th>代號</th><th>股數</th><th>市值</th><th>借款</th><th>個別維持率</th>
+                                                    <th>代號</th><th>股數</th><th>市值</th><th>借款</th><th>個別維持率</th><th>單檔觸追繳</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -276,6 +285,19 @@ export default function MarginManager() {
                                                             <td>
                                                                 <span style={{ color: ratioColor(r), fontWeight: 700 }}>{r.toFixed(0)}%</span>
                                                                 <span style={{ fontSize: '11px', marginLeft: '4px', color: ratioColor(r) }}>{ratioLabel(r)}</span>
+                                                            </td>
+                                                            <td>
+                                                                {(() => {
+                                                                    const d = dropByCode[m.code]
+                                                                    const danger = m.code === riskiestCode
+                                                                    if (d === null || d === undefined) return <span style={{ color: 'var(--c-positive)', fontWeight: 600 }}>單檔安全</span>
+                                                                    if (d <= 0) return <span style={{ color: 'var(--c-danger)', fontWeight: 700 }}>已觸追繳</span>
+                                                                    return (
+                                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: danger ? 'var(--c-danger)' : 'var(--c-warning)', fontWeight: 700 }}>
+                                                                            {danger && <Flame size={12} />}−{(d * 100).toFixed(0)}%
+                                                                        </span>
+                                                                    )
+                                                                })()}
                                                             </td>
                                                         </tr>
                                                     )
@@ -395,6 +417,50 @@ export default function MarginManager() {
                                 </div>
                             </div>
                         </div>
+
+                        {/* ── 整體下跌壓力測試 ── */}
+                        {positions.length > 0 && currentRatio !== null && (
+                            <div style={{ ...card, marginTop: '16px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                    <AlertTriangle size={15} color="var(--c-warning)" />
+                                    <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>整體下跌壓力測試</span>
+                                </div>
+                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '16px' }}>假設所有融資持股一起跌同一幅度，維持率會掉到哪、距追繳線還有多遠。單一個股暴跌的觸線點見上方明細的「單檔觸追繳」。</div>
+
+                                <div className="mm-grid">
+                                    {/* 固定情境表 */}
+                                    <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '10px', padding: '12px 16px' }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.4fr', gap: '6px 12px', fontSize: '11px', color: 'var(--c-muted)' }}>
+                                            <span>整體跌幅</span><span style={{ textAlign: 'right' }}>維持率</span><span style={{ textAlign: 'right' }}>距追繳線(pp)</span>
+                                        </div>
+                                        <div style={{ height: '1px', backgroundColor: 'var(--c-border)', margin: '8px 0' }} />
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.4fr', gap: '10px 12px', fontSize: '14px', alignItems: 'center' }}>
+                                            {stress.scenarios.map(s => (
+                                                <div key={s.drop} style={{ display: 'contents' }}>
+                                                    <span style={{ color: 'var(--c-text)' }}>−{(s.drop * 100).toFixed(0)}%</span>
+                                                    <span style={{ textAlign: 'right', fontWeight: 700, color: ratioColor(s.ratio) }}>{s.ratio.toFixed(1)}%</span>
+                                                    <span style={{ textAlign: 'right', color: s.gapTo130 >= 0 ? 'var(--c-muted)' : 'var(--c-danger)' }}>{s.gapTo130 >= 0 ? `尚有 ${s.gapTo130.toFixed(1)}` : `已破 ${Math.abs(s.gapTo130).toFixed(1)}`}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* 自訂跌幅滑桿 */}
+                                    <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '10px', padding: '14px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                                            <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>自訂跌幅試算</span>
+                                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
+                                                <span style={{ fontSize: '13px', color: 'var(--c-text)' }}>跌 <strong style={{ fontWeight: 700 }}>{customDrop}%</strong> →</span>
+                                                {customRatio !== null && <span style={{ fontSize: '22px', fontWeight: 700, color: ratioColor(customRatio) }}>{customRatio.toFixed(1)}%</span>}
+                                                {customRatio !== null && <span style={{ fontSize: '12px', fontWeight: 600, color: ratioColor(customRatio) }}>{ratioLabel(customRatio)}</span>}
+                                            </div>
+                                        </div>
+                                        <input type="range" min={0} max={40} step={1} value={customDrop} onChange={e => setCustomDrop(parseInt(e.target.value, 10))} style={{ width: '100%', accentColor: customRatio !== null ? ratioColor(customRatio) : 'var(--c-accent)' }} />
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--c-muted)', marginTop: '4px' }}><span>0%</span><span>40%</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </>
                 )}
             </div>

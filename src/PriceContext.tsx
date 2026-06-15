@@ -16,6 +16,7 @@ import { setDoc } from 'firebase/firestore'
 import { investDB } from './lib/firebase'
 import { userDocNested } from './lib/userDB'
 import { getMultipleQuotes } from './lib/fugle'
+import { maybeAutoSnapshotToday } from './lib/snapshot'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -49,6 +50,29 @@ const PriceContext = createContext<PriceContextValue | null>(null)
 
 // ── Provider ───────────────────────────────────────────────────
 
+/**
+ * 把 lastPrices._updatedAt 的時間字串轉成 timestamp 供比較。
+ * ⚠️ 不能直接用字串字典序比較：toLocaleString('zh-TW') 產生「2026/2/1」，
+ *    與「2026/10/1」做字典序比較時 2026/2 會被判定大於 2026/10。
+ * 支援兩種格式：zh-TW（2026/2/1 下午3:04:05）與 ISO/其他可被 Date.parse 解析的字串。
+ * 解析失敗回傳 0（視為最舊）。
+ */
+function parseUpdatedAt(s: string): number {
+    if (!s) return 0
+    const m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})(?:\s*(上午|下午)\s*(\d{1,2}):(\d{2})(?::(\d{2}))?)?/)
+    if (m) {
+        let h = m[5] !== undefined ? parseInt(m[5], 10) : 0
+        if (m[4] === '下午' && h < 12) h += 12
+        if (m[4] === '上午' && h === 12) h = 0
+        return new Date(
+            parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10),
+            h, m[6] !== undefined ? parseInt(m[6], 10) : 0, m[7] !== undefined ? parseInt(m[7], 10) : 0
+        ).getTime()
+    }
+    const t = Date.parse(s)
+    return Number.isNaN(t) ? 0 : t
+}
+
 export function PriceProvider({ children }: { children: ReactNode }) {
     const [prices, setPrices] = useState<PriceMap>({})
     const [lastUpdated, setLastUpdated] = useState('')
@@ -62,7 +86,7 @@ export function PriceProvider({ children }: { children: ReactNode }) {
             }
         })
         setPrices(prev => ({ ...prev, ...parsed }))
-        if (savedAt) setLastUpdated(prev => (savedAt > prev ? savedAt : prev))
+        if (savedAt) setLastUpdated(prev => (parseUpdatedAt(savedAt) > parseUpdatedAt(prev) ? savedAt : prev))
     }, [])
 
     const updatePrices = useCallback(async (codes: string[]): Promise<PriceMap> => {
@@ -83,6 +107,11 @@ export function PriceProvider({ children }: { children: ReactNode }) {
                 if (val !== null) priceData[c] = val
             })
             await setDoc(userDocNested(investDB, 'settings', 'lastPrices'), priceData, { merge: true })
+
+            // ✅ 5-1（前端版）：每次現價更新成功後刷新今日快照。
+            // fire-and-forget；運作時段（08:00–22:00）、60 秒節流、防重入皆在 snapshot.ts 內處理。
+            // 所有走 PriceContext 的頁面（儀表板/持倉/賣出追蹤/觀點追蹤…）更新現價都會觸發。
+            void maybeAutoSnapshotToday({ overwrite: true })
 
             // 更新全域 state → 所有訂閱頁面重渲染
             setPrices(prev => ({ ...prev, ...result }))

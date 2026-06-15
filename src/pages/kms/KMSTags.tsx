@@ -166,24 +166,30 @@ export default function KMSTags() {
     const handleRename = async (oldTag: string) => {
         if (!editValue.trim() || editValue.trim() === oldTag) { setEditingTag(null); return }
         setSaving(true)
+        const newTag = editValue.trim()
+        // 同時處理子標籤：把「投資」改名為「理財」時，「投資/台股」也要變成「理財/台股」，
+        // 否則標籤樹會裂成「理財」與「投資/...」兩組。
+        const renameTag = (t: string) =>
+            t === oldTag ? newTag
+                : t.startsWith(oldTag + '/') ? newTag + t.slice(oldTag.length)
+                    : t
         const snap = await getDocs(query(userCol(kmsDB, 'notes')))
         let updated = 0
         const batch: Promise<void>[] = []
         snap.docs.forEach(d => {
             const data = d.data()
-            if (data.hashtags?.includes(oldTag)) {
-                const newHashtags = data.hashtags.map((t: string) => t === oldTag ? editValue.trim() : t)
+            if (data.hashtags?.some((t: string) => t === oldTag || t.startsWith(oldTag + '/'))) {
+                const newHashtags = data.hashtags.map((t: string) => renameTag(t))
                 batch.push(updateDoc(userDoc(kmsDB, 'notes', d.id), { hashtags: newHashtags }))
                 updated++
             }
         })
         await Promise.all(batch)
-        const newTag = editValue.trim()
-        const newParentOrder = parentOrder.map(n => n === oldTag ? newTag : n)
+        const newParentOrder = parentOrder.map(n => renameTag(n))
         const newChildOrder: Record<string, string[]> = {}
         Object.entries(childOrder).forEach(([pk, kids]) => {
-            const newPk = pk === oldTag ? newTag : pk
-            newChildOrder[newPk] = kids.map(k => k === oldTag ? newTag : k)
+            const newPk = renameTag(pk)
+            newChildOrder[newPk] = kids.map(k => renameTag(k))
         })
         setParentOrder(newParentOrder)
         setChildOrder(newChildOrder)
@@ -197,12 +203,18 @@ export default function KMSTags() {
         if (!toTag.trim() || fromTag === toTag.trim()) return
         if (!confirm(`確定要將「${fromTag}」合併到「${toTag}」？`)) return
         setSaving(true)
+        const target = toTag.trim()
+        // 子標籤一併合併：from/xxx → to/xxx
+        const mergeTag = (t: string) =>
+            t === fromTag ? target
+                : t.startsWith(fromTag + '/') ? target + t.slice(fromTag.length)
+                    : t
         const snap = await getDocs(query(userCol(kmsDB, 'notes')))
         const batch: Promise<void>[] = []
         snap.docs.forEach(d => {
             const data = d.data()
-            if (data.hashtags?.includes(fromTag)) {
-                const newHashtags = [...new Set(data.hashtags.map((t: string) => t === fromTag ? toTag.trim() : t))]
+            if (data.hashtags?.some((t: string) => t === fromTag || t.startsWith(fromTag + '/'))) {
+                const newHashtags = [...new Set(data.hashtags.map((t: string) => mergeTag(t)))]
                 batch.push(updateDoc(userDoc(kmsDB, 'notes', d.id), { hashtags: newHashtags }))
             }
         })

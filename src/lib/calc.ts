@@ -58,7 +58,8 @@ export function calcTradeTotal(t: {
     const tax = t.tax || 0
     if (t.type === 'buy') {
         if (t.isMargin) {
-            const debt = calcMarginDebt(gross, t.marginRatio ?? 0.6)
+            // marginRatio 為 0 視同未設定（0 成數無意義；舊 CSV 匯入會把非融資交易存成 0），一律 fallback 0.6
+            const debt = calcMarginDebt(gross, t.marginRatio || 0.6)
             return gross - debt + fee
         }
         return gross + fee
@@ -68,6 +69,19 @@ export function calcTradeTotal(t: {
         return gross - fee - tax - (t.marginRepay ?? 0)
     }
     return gross - fee - tax
+}
+
+/**
+ * 未實現損益率（%）——融資部位用「自備款」為分母，現股用全額成本。
+ * （優化建議書 1-2：原本被複製在 Dashboard 與 Holdings 兩處，上移至此共用）
+ * @param unrealizedPnL 未實現損益
+ * @param totalCost     持倉全額成本（含手續費）
+ * @param marginAmount  融資借款金額（0 = 現股）
+ */
+export function calcReturnRate(unrealizedPnL: number, totalCost: number, marginAmount: number): number {
+    const equity = totalCost - marginAmount  // 自備款 = 全額成本 - 融資借款
+    const denominator = marginAmount > 0 ? equity : totalCost
+    return denominator > 0 ? (unrealizedPnL / denominator) * 100 : 0
 }
 
 export interface TradeRecord {
@@ -148,6 +162,9 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
 
     const holdings: Record<string, HoldingPosition> = {}
     const realized: RealizedRecord[] = []
+    // 各代號目前的「融資股數」。融資歸還比例 = 賣出股數 / 融資股數，
+    // 與 aggregateMarginPositions 同一口徑，避免混合持倉（現股+融資）時兩邊算出不同的 marginAmount。
+    const marginShares: Record<string, number> = {}
 
     for (const ev of events) {
         if (ev.kind === 'stockdiv') {
@@ -181,11 +198,12 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
             pos.shares = newShares
             pos.name = name || pos.name
 
-            // 若為融資買入，累加融資借款金額（捨去至千元）
+            // 若為融資買入，累加融資借款金額（捨去至千元）與融資股數
             if (t.isMargin) {
                 const stockVal = price * shares
-                const mAmt = calcMarginDebt(stockVal, t.marginRatio ?? 0.6)
+                const mAmt = calcMarginDebt(stockVal, t.marginRatio || 0.6)
                 pos.marginAmount = (pos.marginAmount ?? 0) + mAmt
+                marginShares[code] = (marginShares[code] ?? 0) + shares
             }
         } else if (type === 'sell') {
             const sellRevenue = price * shares - (fee || 0) - (tax || 0)
@@ -197,10 +215,12 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
                 avgCost: pos.avgCost, sellPrice: price, realized: pnl, returnRate
             })
 
-            // 若為融資賣出，按比例歸還融資借款
-            if (t.isMargin && pos.shares > 0 && (pos.marginAmount ?? 0) > 0) {
-                const ratio = shares / pos.shares
+            // 若為融資賣出，按「賣出股數 / 融資股數」比例歸還融資借款（與 aggregateMarginPositions 對齊）
+            if (t.isMargin && (marginShares[code] ?? 0) > 0 && (pos.marginAmount ?? 0) > 0) {
+                const mSh = marginShares[code] ?? 0
+                const ratio = Math.min(shares / mSh, 1)
                 pos.marginAmount = (pos.marginAmount ?? 0) * (1 - ratio)
+                marginShares[code] = Math.max(mSh - shares, 0)
             }
 
             pos.shares -= shares
@@ -210,6 +230,7 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
                 pos.totalCost = 0
                 pos.avgCost = 0
                 pos.marginAmount = 0
+                marginShares[code] = 0
             }
         }
     }
@@ -220,7 +241,7 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
 /**
  * 計算可用現金。
  *
- * 可用現金 = 入金 − 出金 − 買入收付金額 + 賣出收付金額
+ * 可用現金 = 入金 − 出金 − 買入收付金額 + 賣出收付金額 + 現金股利
  *
  * ⚠️ 本系統 total（收付金額）的定義：
  *   - 買入：自備款 + 手續費（融資買入只記自備款，不含券商撥款的借款部分）
@@ -228,16 +249,26 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
  *
  * 因為賣出 total 已是淨入帳，直接 + sellTotal 即為正確可用現金，
  * 不需要、也不可以再額外扣「歸還的借款本金」（否則融資賣出後現金會被低估）。
+ *
+ * ⚠️ 現金股利口徑（全系統統一，方案 A）：
+ *   股利視同匯入交割戶、留在可用現金內（+ Σ cashDividend）。
+ *   因此凡是以「期末總淨值（持倉市值＋可用現金）」收尾的 XIRR/CAGR 現金流，
+ *   一律【不可】再把股利列為獨立正向流，否則會重複計算；
+ *   快照式 XIRR 同理（資產快照的 cash 已含股利）。
+ *   例外：YearReview 的「自訂區間 XIRR」期末值只含持倉市值、不含現金，
+ *   該處的股利（與賣出收益）必須保留為獨立流，這是刻意的口徑差異。
  */
 export function calcAvailableCash(
     cashflows: { type: string; amount: number }[],
-    trades: TradeRecord[]
+    trades: TradeRecord[],
+    dividends: { cashDividend?: number }[]
 ): number {
     const cashIn = cashflows.filter(c => c.type === 'in').reduce((s, c) => s + (c.amount || 0), 0)
     const cashOut = cashflows.filter(c => c.type === 'out').reduce((s, c) => s + (c.amount || 0), 0)
     const buyTotal = trades.filter(t => t.type === 'buy').reduce((s, t) => s + (t.total || 0), 0)
     const sellTotal = trades.filter(t => t.type === 'sell').reduce((s, t) => s + (t.total || 0), 0)
-    return cashIn - cashOut - buyTotal + sellTotal
+    const divTotal = dividends.reduce((s, d) => s + (d.cashDividend || 0), 0)
+    return cashIn - cashOut - buyTotal + sellTotal + divTotal
 }
 
 // ── 融資部位彙總（唯一真實來源）─────────────────────────────────────────────
@@ -267,7 +298,7 @@ export function aggregateMarginPositions(trades: TradeRecord[]): MarginPositionA
         if (t.type === 'buy') {
             const stockVal = t.price * t.shares
             pos.shares += t.shares
-            pos.marginAmount += calcMarginDebt(stockVal, t.marginRatio ?? 0.6)
+            pos.marginAmount += calcMarginDebt(stockVal, t.marginRatio || 0.6)
             pos.marginCost += stockVal
             pos.name = t.name || pos.name
         } else if (t.type === 'sell' && pos.shares > 0) {
@@ -339,4 +370,85 @@ export function simulateMarginBuy(
     const bufferTo120 = newMarketValue - newDebt * 1.20
 
     return { newMarginRatio, newMarketValue, newDebt, addedDebt, addedEquity, bufferTo130, bufferTo120 }
+}
+
+// ── 融資壓力測試 ──────────────────────────────────────────────────────────────
+// 純函式。回答兩種不同的風險：
+//   (1) 整戶一起跌  → 維持率掉到哪、距追繳線多遠、整體最多還能跌幾%才追繳/斷頭
+//   (2) 單一個股獨自跌（其他不動）→ 該檔自己跌幾%就把「整戶維持率」拉到追繳線
+// 維持率皆為整戶口徑：整戶融資股票市值 ÷ 整戶融資借款 × 100%。
+// 因借款不隨股價變動，整戶均勻跌 d 時：新維持率 = 目前維持率 ×(1−d)，為精確關係。
+export interface MarginStressStock {
+    code: string
+    name?: string
+    marketValue: number   // 該檔目前融資股票市值
+}
+
+export interface MarginStressScenario {
+    drop: number          // 假設整體跌幅（小數，0.10 = 跌 10%）
+    ratio: number         // 跌後整戶維持率（%）
+    gapTo130: number      // 距追繳線的百分點（正 = 尚有，負 = 已跌破）
+}
+
+export interface MarginStressPerStock {
+    code: string
+    name?: string
+    marketValue: number
+    weight: number              // 佔整戶融資市值比例（小數）
+    dropTo130: number | null    // 該檔獨自跌多少觸整戶追繳（小數）；null = 跌到 0 都不足以觸線
+}
+
+export interface MarginStressResult {
+    totalMarketValue: number
+    totalDebt: number
+    currentRatio: number | null
+    dropTo130: number | null    // 整戶一起最多還能跌多少觸追繳（小數）；<=0 代表已在追繳線下
+    dropTo120: number | null
+    scenarios: MarginStressScenario[]
+    perStock: MarginStressPerStock[]
+}
+
+const MAINTENANCE_CALL = 1.30   // 追繳線 130%
+const LIQUIDATION_LINE = 1.20   // 斷頭線 120%
+
+export function calcMarginStress(
+    stocks: MarginStressStock[],
+    totalDebt: number,
+    dropPcts: number[] = [0.10, 0.15, 0.20],
+): MarginStressResult {
+    const totalMarketValue = stocks.reduce((s, x) => s + (x.marketValue || 0), 0)
+
+    if (totalDebt <= 0 || totalMarketValue <= 0) {
+        return { totalMarketValue, totalDebt, currentRatio: null, dropTo130: null, dropTo120: null, scenarios: [], perStock: [] }
+    }
+
+    const currentRatio = (totalMarketValue / totalDebt) * 100
+
+    // 整戶均勻跌：反解觸線跌幅 d* = 1 − 線 × 借款 / 市值
+    const dropTo130 = 1 - (MAINTENANCE_CALL * totalDebt) / totalMarketValue
+    const dropTo120 = 1 - (LIQUIDATION_LINE * totalDebt) / totalMarketValue
+
+    const scenarios: MarginStressScenario[] = dropPcts.map(d => {
+        const ratio = currentRatio * (1 - d)
+        return { drop: d, ratio, gapTo130: ratio - MAINTENANCE_CALL * 100 }
+    })
+
+    // 單檔獨自跌：整戶市值少掉 (Vᵢ × dᵢ)，令整戶維持率 = 追繳線
+    //   → dᵢ = (整戶市值 − 追繳線 × 借款) / Vᵢ。分子為共用緩衝，分母越大（越集中）能撐的跌幅越小。
+    const buffer = totalMarketValue - MAINTENANCE_CALL * totalDebt
+    const perStock: MarginStressPerStock[] = stocks.map(x => {
+        const mv = x.marketValue || 0
+        let dropTo130Single: number | null = mv > 0 ? buffer / mv : null
+        // 跌幅 > 1（殺到 0 都不夠）視為單檔不足以觸線
+        if (dropTo130Single !== null && dropTo130Single > 1) dropTo130Single = null
+        return {
+            code: x.code,
+            name: x.name,
+            marketValue: mv,
+            weight: totalMarketValue > 0 ? mv / totalMarketValue : 0,
+            dropTo130: dropTo130Single,
+        }
+    })
+
+    return { totalMarketValue, totalDebt, currentRatio, dropTo130, dropTo120, scenarios, perStock }
 }

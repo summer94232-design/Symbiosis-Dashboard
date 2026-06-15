@@ -1,8 +1,13 @@
-import { useState, useEffect, useRef } from 'react'
-import { addDoc, getDocs, updateDoc, deleteDoc, orderBy, query, setDoc, getDoc } from 'firebase/firestore'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { addDoc, getDocs, updateDoc, deleteDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc, userDocNested } from '../../lib/userDB'
-import { calcFee, calcTax, isETF, calcMarginDebt, calcTradeTotal } from '../../lib/calc'
+import { userCol, userDoc } from '../../lib/userDB'
+import { calcFee, calcTax, isETF, calcMarginDebt, calcTradeTotal, calcPositions, aggregateMarginPositions, type DividendRecord } from '../../lib/calc'
+import { fetchTrades, fetchDividends, invalidateTrades, invalidateCashflow } from '../../lib/investData'
+// ✅ 1-2：共用模組（CSV 解析 / 股票字典 / UI 樣式）
+import { parseCSVLine, toNum, toInt } from '../../lib/csv'
+import { lookupStockName, cacheStockName, saveStockName } from '../../lib/stockDict'
+import { card, inp, lbl, btn } from '../../ui/styles'
 import { Pencil, Trash2, X, Check, Upload, Search, ChevronDown, ChevronUp } from 'lucide-react'
 
 interface Trade {
@@ -29,72 +34,18 @@ const emptyTrade: Trade = {
     isMargin: false, marginRatio: 0.6, marginAmount: 0, marginRepay: 0
 }
 
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }
-const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
-
 const isOddLot = (shares: number) => shares > 0 && shares < 1000
-
-function parseCSVLine(line: string): string[] {
-    const result: string[] = []
-    let current = ''
-    let inQuotes = false
-    for (let i = 0; i < line.length; i++) {
-        const ch = line[i]
-        if (ch === '"') {
-            if (inQuotes && line[i + 1] === '"') { current += '"'; i++ }
-            else { inQuotes = !inQuotes }
-        } else if (ch === ',' && !inQuotes) {
-            result.push(current.trim())
-            current = ''
-        } else {
-            current += ch
-        }
-    }
-    result.push(current.trim())
-    return result
-}
-
-const toNum = (s: string) => parseFloat((s || '').replace(/,/g, '')) || 0
-const toInt = (s: string) => parseInt((s || '').replace(/,/g, '')) || 0
-
-// ★ 本地快取：同一個 session 內不重複查詢同一代號
-const dictCache: Record<string, string> = {}
-
-// ★ 單筆查詢：先查 stockDict（常用），找不到再查 stockDictFull（完整台股）
-async function lookupStockName(code: string): Promise<string> {
-    if (dictCache[code]) return dictCache[code]
-
-    // 先查常用字典
-    const shortDoc = await getDoc(userDoc(investDB, 'stockDict', code))
-    if (shortDoc.exists()) {
-        const name = shortDoc.data().name as string
-        dictCache[code] = name
-        return name
-    }
-
-    // 找不到再查完整字典
-    const fullDoc = await getDoc(userDoc(investDB, 'stockDictFull', code))
-    if (fullDoc.exists()) {
-        const name = fullDoc.data().name as string
-        dictCache[code] = name
-        // 找到後順便寫回 stockDict，下次直接命中
-        await setDoc(userDoc(investDB, 'stockDict', code), { name })
-        return name
-    }
-
-    return ''
-}
 
 export default function Trades() {
     const [trades, setTrades] = useState<Trade[]>([])
+    // ✅ 2-5：防呆需要正確持股數（含配股攞薄），故一併載入除權息紀錄
+    const [dividends, setDividends] = useState<DividendRecord[]>([])
     const [editingId, setEditingId] = useState<string | null>(null)
     const [form, setForm] = useState<Trade>(emptyTrade)
     const [loading, setLoading] = useState(false)
     const [lookingUp, setLookingUp] = useState(false)
     const [importing, setImporting] = useState(false)
-    const [importResult, setImportResult] = useState<{ success: number; failed: number; skipped: number } | null>(null)
+    const [importResult, setImportResult] = useState<{ success: number; failed: number; skipped: number; duplicated: number } | null>(null)
     const [search, setSearch] = useState('')
     const [showForm, setShowForm] = useState(false)
     const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -111,9 +62,12 @@ export default function Trades() {
     }, [])
 
     const load = async () => {
-        const q = query(userCol(investDB, 'trades'), orderBy('date', 'desc'))
-        const snap = await getDocs(q)
-        const rawTrades = snap.docs.map(d => ({ id: d.id, ...d.data() } as Trade))
+        // ✅ 1-1：改走共用快取層（lib/investData）
+        const [rawTrades, divs] = await Promise.all([
+            fetchTrades<Trade>('desc'),
+            fetchDividends<DividendRecord>('asc'),
+        ])
+        setDividends(divs)
         // 統一所有舊格式：spot_buy/margin_buy → buy+isMargin, spot_sell/margin_sell → sell+isMargin
         const normalized = rawTrades.map(t => {
             const type = t.type as string
@@ -154,7 +108,7 @@ export default function Trades() {
 
     const calcTotal = (f: Trade) => calcTradeTotal(f)
 
-    const handleChange = (key: keyof Trade, value: Trade[keyof Trade]) => {
+    const handleChange = <K extends keyof Trade>(key: K, value: Trade[K]) => {
         setForm(f => {
             const u = { ...f, [key]: value }
             if (['price', 'shares', 'type', 'code', 'marginRatio', 'isMargin', 'marginRepay'].includes(key)) {
@@ -162,7 +116,7 @@ export default function Trades() {
                     u.fee = calcFee(u.price, u.shares)
                     u.tax = u.type === 'sell' ? calcTax(u.price, u.shares, u.code) : 0
                     if (u.type === 'buy' && u.isMargin) {
-                        u.marginAmount = calcMarginDebt(u.price * u.shares, u.marginRatio ?? 0.6)
+                        u.marginAmount = calcMarginDebt(u.price * u.shares, u.marginRatio || 0.6)
                     }
                 }
             }
@@ -171,31 +125,64 @@ export default function Trades() {
         })
     }
 
+    // ── 防呆：現股賣出但該代號目前有融資部位 ──
+    // 現股賣出不會歸還融資借款（aggregateMarginPositions 只處理 isMargin 交易），
+    // 若使用者融資買進後賣出時忘了勾「融資」，維持率分母不會減少且永遠不歸零。
+    const sellMarginWarning = useMemo(() => {
+        if (form.type !== 'sell' || form.isMargin || !form.code) return null
+        const pos = aggregateMarginPositions(trades).find(m => m.code === form.code)
+        return pos && pos.shares > 0 ? pos : null
+    }, [trades, form.type, form.isMargin, form.code])
+
+    // ── 防呆（2-5）：賣出股數 > 目前持股 ──
+    // calc.ts 對負持倉雖有歸零防呆，但超賣會讓該筆已實現損益用到錯誤均價，
+    // 後續持倉/損益數字都會失真，故在表單即時警告、儲存前再次確認。
+    // 持股數以 calcPositions（含配股攞薄）計算；編輯既有紀錄時先將該筆
+    // 從計算基準中移除，避免同一筆賣出被重複扣除造成誤報。
+    const oversellWarning = useMemo(() => {
+        if (form.type !== 'sell' || !form.code || !form.shares) return null
+        const baseTrades = editingId ? trades.filter(t => t.id !== editingId) : trades
+        const { holdings } = calcPositions(baseTrades, dividends)
+        const held = holdings[form.code]?.shares ?? 0
+        return form.shares > held ? { held } : null
+    }, [trades, dividends, form.type, form.code, form.shares, editingId])
+
     const handleSave = async () => {
         if (!form.code || !form.price || !form.shares) return
+        // ── 防呆（2-5）：儲存前確認 ──
+        if (oversellWarning) {
+            const ok = confirm(`賣出股數（${form.shares.toLocaleString()}）超過 ${form.code} 目前持股（${oversellWarning.held.toLocaleString()} 股），已實現損益將用到錯誤均價。確定仍要儲存？`)
+            if (!ok) return
+        }
+        if (form.type === 'sell' && form.isMargin && !(form.marginRepay && form.marginRepay > 0)) {
+            const ok = confirm('融資賣出未填「融資償還金額」，可用現金將被高估（賣出淨入帳少扣了還款）。確定仍要儲存？')
+            if (!ok) return
+        }
         setLoading(true)
         if (form.name && form.code) {
-            dictCache[form.code] = form.name
-            await setDoc(userDoc(investDB, 'stockDict', form.code), { name: form.name })
+            await saveStockName(form.code, form.name)
         }
         if (editingId) {
             await updateDoc(userDoc(investDB, 'trades', editingId), { ...form })
         } else {
             await addDoc(userCol(investDB, 'trades'), { ...form })
         }
+        invalidateTrades()   // ✅ 1-1：寫入後清快取，其他頁面才會拿到最新資料
         setEditingId(null); setForm(emptyTrade); setLoading(false); setShowForm(false); setEditModal(false)
         load()
     }
 
     const handleEdit = (t: Trade) => {
-        if (t.code && t.name) dictCache[t.code] = t.name
+        if (t.code && t.name) cacheStockName(t.code, t.name)
         // 已在 load() 正規化，直接使用
         setForm(t); setEditingId(t.id!); setEditModal(true)
     }
     const handleCancel = () => { setForm(emptyTrade); setEditingId(null); setShowForm(false); setEditModal(false) }
     const handleDelete = async (id: string) => {
         if (!confirm('確定要刪除？')) return
-        await deleteDoc(userDoc(investDB, 'trades', id)); load()
+        await deleteDoc(userDoc(investDB, 'trades', id))
+        invalidateTrades()   // ✅ 1-1：寫入後清快取
+        load()
     }
 
     const handleImportCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -216,7 +203,23 @@ export default function Trades() {
         }
 
         const headers = parseCSVLine(lines[0])
-        let success = 0, failed = 0, skipped = 0
+        let success = 0, failed = 0, skipped = 0, duplicated = 0
+
+        // ── 重複偵測：以既有資料建 key 集合，命中者略過不寫入 ──
+        //    交易 key = 日期|代號|類型|價格|股數；出入金 key = 日期|類型|金額|備註
+        //    ⚠️ 同日同價同量的「真實重複交易」也會被當成重複，匯入結果會單獨顯示重複筆數供核對。
+        const [existTradesSnap, existCashSnap] = await Promise.all([
+            getDocs(userCol(investDB, 'trades')),
+            getDocs(userCol(investDB, 'cashflow')),
+        ])
+        const tradeKeys = new Set(existTradesSnap.docs.map(d => {
+            const t = d.data()
+            return `${t.date}|${t.code}|${t.type}|${Number(t.price)}|${Number(t.shares)}`
+        }))
+        const cashKeys = new Set(existCashSnap.docs.map(d => {
+            const c = d.data()
+            return `${c.date}|${c.type}|${Number(c.amount)}|${c.note || ''}`
+        }))
 
         for (let i = 1; i < lines.length; i++) {
             const cols = parseCSVLine(lines[i])
@@ -229,18 +232,22 @@ export default function Trades() {
             if (type === '入金' || type === '出金') {
                 const amount = toNum(row['價格/金額'] || row['金額'] || '')
                 if (amount > 0) {
+                    const cashNote = row['備註/筆記'] || row['備註'] || ''
+                    const cashKey = `${date}|${type === '入金' ? 'in' : 'out'}|${Number(amount)}|${cashNote}`
+                    if (cashKeys.has(cashKey)) { duplicated++; continue }
+                    cashKeys.add(cashKey)
                     await addDoc(userCol(investDB, 'cashflow'), {
                         date,
                         type: type === '入金' ? 'in' : 'out',
                         amount,
-                        note: row['備註/筆記'] || row['備註'] || ''
+                        note: cashNote
                     })
                     success++
                 } else { skipped++ }
                 continue
             }
             // 支援新舊格式：現貨買入/現貨賣出/融資買入/融資賣出/買進/賣出
-            const validTypes = ['買進', '賣出', '現貨買入', '現貨賣出', '融資買入', '融資賣出']
+            const validTypes = ['買入', '買進', '賣出', '現貨買入', '現貨賣出', '融資買入', '融資賣出']
             if (!validTypes.includes(type)) { skipped++; continue }
 
             const isMarginCSV = type === '融資買入' || type === '融資賣出'
@@ -252,6 +259,10 @@ export default function Trades() {
             const shares = toInt(row['股數'])
 
             if (!rawCode || !price || !shares) { failed++; continue }
+
+            const tradeKey = `${date}|${rawCode}|${tradeType}|${Number(price)}|${Number(shares)}`
+            if (tradeKeys.has(tradeKey)) { duplicated++; continue }
+            tradeKeys.add(tradeKey)
 
             const isSell = tradeType === 'sell'
             const fee = calcFee(price, shares)
@@ -278,14 +289,16 @@ export default function Trades() {
                 })
                 // ★ CSV 匯入時同步寫入 stockDict（只寫有名稱的）
                 if (name && rawCode) {
-                    dictCache[rawCode] = name
-                    await setDoc(userDoc(investDB, 'stockDict', rawCode), { name })
+                    await saveStockName(rawCode, name)
                 }
                 success++
             } catch { failed++ }
         }
 
-        setImportResult({ success, failed, skipped })
+        // ✅ 1-1：匯入會寫入 trades 與 cashflow，兩種快取都要清
+        invalidateTrades()
+        invalidateCashflow()
+        setImportResult({ success, failed, skipped, duplicated })
         setImporting(false); e.target.value = ''
         load()
     }
@@ -316,7 +329,7 @@ export default function Trades() {
                         <div className="trades-grid">
                             <div><label style={lbl}>日期</label><input type="date" style={inp} value={form.date} onChange={e => handleChange('date', e.target.value)} /></div>
                             <div><label style={lbl}>類型</label>
-                                <select style={inp} value={form.type} onChange={e => handleChange('type', e.target.value)}>
+                                <select style={inp} value={form.type} onChange={e => handleChange('type', e.target.value as 'buy' | 'sell')}>
                                     <option value="buy">買入</option>
                                     <option value="sell">賣出</option>
                                 </select>
@@ -371,7 +384,7 @@ export default function Trades() {
                                 <>
                                     <div>
                                         <label style={lbl}>融資成數 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（例：0.6 = 六成）</span></label>
-                                        <input type="number" step="0.1" min="0" max="1" style={inp} value={form.marginRatio ?? 0.6} onChange={e => handleChange('marginRatio', parseFloat(e.target.value) || 0.6)} />
+                                        <input type="number" step="0.1" min="0" max="1" style={inp} value={form.marginRatio || 0.6} onChange={e => handleChange('marginRatio', parseFloat(e.target.value) || 0.6)} />
                                     </div>
                                     <div>
                                         <label style={lbl}>融資金額 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（自動計算）</span></label>
@@ -383,6 +396,18 @@ export default function Trades() {
                                 <div>
                                     <label style={lbl}>融資償還金額 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（含利息，依券商對帳單）</span></label>
                                     <input type="number" style={{ ...inp, color: 'var(--c-warning)' }} value={form.marginRepay || ''} onChange={e => handleChange('marginRepay', parseFloat(e.target.value) || 0)} />
+                                </div>
+                            )}
+                            {oversellWarning && (
+                                <div className="span2" style={{ backgroundColor: 'color-mix(in srgb, var(--c-danger) 10%, transparent)', border: '1px solid var(--c-danger)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--c-danger)', lineHeight: 1.6 }}>
+                                    ⚠️ 賣出股數（{form.shares.toLocaleString()}）超過 {form.code} 目前持股（{oversellWarning.held.toLocaleString()} 股）。
+                                    超賣會讓已實現損益用到錯誤均價，請確認股數或先補登先前的買入紀錄。
+                                </div>
+                            )}
+                            {sellMarginWarning && (
+                                <div className="span2" style={{ backgroundColor: 'color-mix(in srgb, var(--c-warning) 10%, transparent)', border: '1px solid var(--c-warning)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--c-warning)', lineHeight: 1.6 }}>
+                                    ⚠️ {form.code} 目前有融資部位（{sellMarginWarning.shares.toLocaleString()} 股、借款約 {Math.round(sellMarginWarning.marginAmount).toLocaleString()} 元）。
+                                    此筆為「現股賣出」，不會歸還融資借款；若實際是融資賣出，請開啟「融資」開關並填入償還金額，否則維持率與可用現金會失真。
                                 </div>
                             )}
                         </div>
@@ -433,6 +458,7 @@ export default function Trades() {
                         <div><span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>成功匯入</span><div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--c-positive)' }}>{importResult.success} 筆</div></div>
                         {importResult.failed > 0 && <div><span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>失敗</span><div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--c-danger)' }}>{importResult.failed} 筆</div></div>}
                         {importResult.skipped > 0 && <div><span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>略過</span><div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--c-muted)' }}>{importResult.skipped} 筆</div></div>}
+                        {importResult.duplicated > 0 && <div><span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>重複略過</span><div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--c-warning)' }}>{importResult.duplicated} 筆</div></div>}
                     </div>
                 )}
 
@@ -450,7 +476,7 @@ export default function Trades() {
                         <div className="trades-grid">
                             <div><label style={lbl}>日期</label><input type="date" style={inp} value={form.date} onChange={e => handleChange('date', e.target.value)} /></div>
                             <div><label style={lbl}>類型</label>
-                                <select style={inp} value={form.type} onChange={e => handleChange('type', e.target.value)}>
+                                <select style={inp} value={form.type} onChange={e => handleChange('type', e.target.value as 'buy' | 'sell')}>
                                     <option value="buy">買入</option>
                                     <option value="sell">賣出</option>
                                 </select>
@@ -505,7 +531,7 @@ export default function Trades() {
                                 <>
                                     <div>
                                         <label style={lbl}>融資成數 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（例：0.6 = 六成）</span></label>
-                                        <input type="number" step="0.1" min="0" max="1" style={inp} value={form.marginRatio ?? 0.6} onChange={e => handleChange('marginRatio', parseFloat(e.target.value) || 0.6)} />
+                                        <input type="number" step="0.1" min="0" max="1" style={inp} value={form.marginRatio || 0.6} onChange={e => handleChange('marginRatio', parseFloat(e.target.value) || 0.6)} />
                                     </div>
                                     <div>
                                         <label style={lbl}>融資金額 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（自動計算）</span></label>
@@ -517,6 +543,18 @@ export default function Trades() {
                                 <div>
                                     <label style={lbl}>融資償還金額 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（含利息，依券商對帳單）</span></label>
                                     <input type="number" style={{ ...inp, color: 'var(--c-warning)' }} value={form.marginRepay || ''} onChange={e => handleChange('marginRepay', parseFloat(e.target.value) || 0)} />
+                                </div>
+                            )}
+                            {oversellWarning && (
+                                <div className="span2" style={{ backgroundColor: 'color-mix(in srgb, var(--c-danger) 10%, transparent)', border: '1px solid var(--c-danger)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--c-danger)', lineHeight: 1.6 }}>
+                                    ⚠️ 賣出股數（{form.shares.toLocaleString()}）超過 {form.code} 目前持股（{oversellWarning.held.toLocaleString()} 股）。
+                                    超賣會讓已實現損益用到錯誤均價，請確認股數或先補登先前的買入紀錄。
+                                </div>
+                            )}
+                            {sellMarginWarning && (
+                                <div className="span2" style={{ backgroundColor: 'color-mix(in srgb, var(--c-warning) 10%, transparent)', border: '1px solid var(--c-warning)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--c-warning)', lineHeight: 1.6 }}>
+                                    ⚠️ {form.code} 目前有融資部位（{sellMarginWarning.shares.toLocaleString()} 股、借款約 {Math.round(sellMarginWarning.marginAmount).toLocaleString()} 元）。
+                                    此筆為「現股賣出」，不會歸還融資借款；若實際是融資賣出，請開啟「融資」開關並填入償還金額，否則維持率與可用現金會失真。
                                 </div>
                             )}
                         </div>

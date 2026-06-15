@@ -1,19 +1,21 @@
-import { useState, useEffect, useRef } from 'react'
-import { collection, getDocs, orderBy, query, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { getDocs, orderBy, query, getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
-import { calcPositions, calcAvailableCash, simulateMarginBuy, aggregateMarginPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
+import { calcPositions, calcAvailableCash, calcReturnRate, simulateMarginBuy, aggregateMarginPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
+// ✅ 1-2：共用 UI 樣式與損益顏色
+import { card } from '../../ui/styles'
+import { pnlColor } from '../../ui/format'
 import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { usePrices } from '../../PriceContext'
+import { fetchTrades, fetchDividends, fetchCashflow } from '../../lib/investData'
+import { maybeAutoSnapshotToday } from '../../lib/snapshot'
+import InfoHint from '../../components/InfoHint'
 
-const COLORS = ['var(--c-accent)', 'var(--c-positive)', 'var(--c-warning)', 'var(--c-danger)', '#a78bfa', '#34d399', '#fb923c', '#60a5fa', '#f472b6', '#facc15', '#38bdf8', '#4ade80']
+const COLORS = ['var(--c-accent)', 'var(--c-positive)', 'var(--c-warning)', 'var(--c-danger)', 'var(--c-purple)', '#34d399', '#fb923c', '#60a5fa', '#f472b6', '#facc15', '#38bdf8', '#4ade80']
 const CASH_COLOR = 'var(--c-muted)'
-const pnlColor = (v: number) => v >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
-const card: React.CSSProperties = {
-    backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px'
-}
 
 interface HoldingItem {
     code: string
@@ -74,13 +76,6 @@ interface SoldAlert {
     opportunityCost: number
 }
 
-// ✅ 融資損益率輔助函式：融資用自備款為分母，現股用全額成本
-function calcReturnRate(unrealizedPnL: number, totalCost: number, marginAmount: number): number {
-    const equity = totalCost - marginAmount  // 自備款 = 全額成本 - 融資借款
-    const denominator = marginAmount > 0 ? equity : totalCost
-    return denominator > 0 ? (unrealizedPnL / denominator) * 100 : 0
-}
-
 // 族群圓餅圖 active label
 function renderCustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) {
     if (percent < 0.05) return null
@@ -135,7 +130,7 @@ function GroupTooltip({ active, payload, totalAssets }: any) {
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', fontSize: '12px', marginTop: '4px' }}>
                 <span style={{ color: 'var(--c-muted)' }}>佔比</span>
-                <span style={{ color: '#a78bfa', fontWeight: 600 }}>{pct}%</span>
+                <span style={{ color: 'var(--c-purple)', fontWeight: 600 }}>{pct}%</span>
             </div>
         </div>
     )
@@ -150,6 +145,8 @@ export default function Dashboard() {
     const [totalCash, setTotalCash] = useState(0)
     const [realizedPnL, setRealizedPnL] = useState(0)
     const [loading, setLoading] = useState(true)
+    // ✅ 3-1：行程/任務側卡獨立載入狀態，不擋核心指標渲染
+    const [sideLoading, setSideLoading] = useState(true)
     const [lastUpdated, setLastUpdated] = useState('')
     const [hasPrice, setHasPrice] = useState(false)
     const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
@@ -183,24 +180,21 @@ export default function Dashboard() {
     const [simRatio, setSimRatio] = useState('0.6')
 
     // ✅ 優化：單一 Promise.all 並行抓取所有資料，消除串行等待
-    const loadData = async () => {
+    // ✅ 3-1：載入瘦身——核心資料（持倉/現金/融資/賣出追蹤）獨立載入、先到先渲染；
+    //    行事曆/任務側卡由 loadSideCards 平行延後載入，感知載入時間約減半。
+    const loadCore = async () => {
         setLoading(true)
         try {
-            const todayStr_ = new Date().toISOString().split('T')[0]
-            const future14Str = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]
-
             const [
-                tradesSnap, dividendsSnap, cashSnap,
-                priceDoc, groupDoc,
-                eventsSnap, tasksSnap, soldCfgDoc,
+                trades, dividends, cashRecords,
+                priceDoc, groupDoc, soldCfgDoc,
             ] = await Promise.all([
-                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc'))),
-                getDocs(userCol(investDB, 'cashflow')),
+                // ✅ 1-1：改走共用快取層（lib/investData），多頁共用同一份資料
+                fetchTrades<TradeRecord>('asc'),
+                fetchDividends<DividendRecord>('asc'),
+                fetchCashflow<CashRecord>('asc'),
                 getDoc(userDocNested(investDB, 'settings', 'lastPrices')),
                 getDoc(userDocNested(investDB, 'settings', 'stockGroups')),
-                getDocs(userCol(investDB, 'calendarEvents')),
-                getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc'))),
                 getDoc(userDocNested(investDB, 'settings', 'soldAlert')),
             ])
 
@@ -211,10 +205,6 @@ export default function Dashboard() {
                 ...(soldCfgDoc.exists() ? soldCfgDoc.data() : {}),
             }
             setSoldAlertCfg({ watchDays: soldCfg.watchDays, riseThreshold: soldCfg.riseThreshold })
-
-            const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
-            const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
-            const cashRecords = cashSnap.docs.map(d => d.data() as CashRecord)
 
             // 快取賣出紀錄（日期在觀察天數內），供 updatePrices 掃描通知
             const sellCache = trades
@@ -234,17 +224,6 @@ export default function Dashboard() {
 
             const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
             setStockGroups(groups)
-
-            // 行事曆事件
-            const calEvents: CalendarEvent[] = eventsSnap.docs
-                .map(d => ({ id: d.id, ...d.data() } as CalendarEvent))
-                .filter(e => e.date >= todayStr_ && e.date <= future14Str)
-                .sort((a, b) => a.date.localeCompare(b.date))
-            setUpcomingEvents(calEvents)
-
-            // 待辦任務
-            const allTasks = tasksSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task))
-            setTasks(allTasks.filter(t => !t.done))
 
             let totalMarketValue = 0
             let priceAvailable = false
@@ -278,7 +257,8 @@ export default function Dashboard() {
             // ✅ Bug 修正：傳 false。本系統的賣出 total（收付金額）記的是「已扣除歸還券商借款後的
             //   淨入帳金額」，calcAvailableCash 直接 + sellTotal 即為正確可用現金。
             //   若傳 true 會再扣一次 calcMarginRepaid（借款本金），導致融資賣出後現金被低估。
-            setTotalCash(calcAvailableCash(cashRecords, trades))
+            // ✅ 方案 A：可用現金含現金股利（與 calcAvailableCash 的全系統口徑一致）
+            setTotalCash(calcAvailableCash(cashRecords, trades, dividends))
             setHasPrice(priceAvailable)
             // ✅ 修正：優先用 PriceContext 的最後更新時間，再 fallback Firebase savedAt
             if (ctxLastUpdated) setLastUpdated(ctxLastUpdated)
@@ -292,6 +272,32 @@ export default function Dashboard() {
             setMarginPositions(activeMargin)
         } catch (err) { console.error(err) }
         finally { setLoading(false) }
+        // ✅ 5-1：核心資料就緒後嘗試自動快照（fire-and-forget，規則見 lib/snapshot.ts：
+        //    同日只寫一次、不覆蓋手動快照、現價須為今日、缺價跳過）
+        void maybeAutoSnapshotToday()
+    }
+
+    // ✅ 3-1：行程/任務側卡——與核心資料平行載入，慢了也不擋主畫面
+    const loadSideCards = async () => {
+        setSideLoading(true)
+        try {
+            const todayStr_ = new Date().toISOString().split('T')[0]
+            const future14Str = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]
+            const [eventsSnap, tasksSnap] = await Promise.all([
+                getDocs(userCol(investDB, 'calendarEvents')),
+                getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc'))),
+            ])
+            // 行事曆事件
+            const calEvents: CalendarEvent[] = eventsSnap.docs
+                .map(d => ({ id: d.id, ...d.data() } as CalendarEvent))
+                .filter(e => e.date >= todayStr_ && e.date <= future14Str)
+                .sort((a, b) => a.date.localeCompare(b.date))
+            setUpcomingEvents(calEvents)
+            // 待辦任務
+            const allTasks = tasksSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task))
+            setTasks(allTasks.filter(t => !t.done))
+        } catch (err) { console.error(err) }
+        finally { setSideLoading(false) }
     }
 
     const toggleTask = async (id: string, done: boolean) => {
@@ -350,11 +356,15 @@ export default function Dashboard() {
             })
             .sort((a, b) => b.changePct - a.changePct)
         setSoldAlerts(alerts)
+
+        // ✅ 5-1：現價剛寫回 lastPrices（_updatedAt 為今日），是自動快照最準的時機
+        void maybeAutoSnapshotToday()
     }
 
     // ✅ 優化：直接呼叫，移除不必要的 setTimeout 延遲
     useEffect(() => {
-        void loadData()
+        void loadCore()
+        void loadSideCards()
         return () => {
             if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current)
         }
@@ -369,7 +379,8 @@ export default function Dashboard() {
 
     const confirmReload = () => {
         setShowReloadConfirm(false)
-        void loadData()
+        void loadCore()
+        void loadSideCards()
         setReloadCooldown(30)
         cooldownTimerRef.current = setInterval(() => {
             setReloadCooldown(prev => {
@@ -433,72 +444,84 @@ export default function Dashboard() {
                 : 'var(--c-danger)'
 
     // 個股圓餅圖
-    const pieData: PieEntry[] = [
+    // ✅ 3-3：依賴 holdings/totalCash 的衍生值包 useMemo，
+    //    避免試算表單輸入等無關 state 變動時每次 render 重算
+    const pieData: PieEntry[] = useMemo(() => [
         ...holdings.map((h, i) => ({
             name: `${h.code} ${h.name}`,
             value: h.marketValue,
             fill: COLORS[i % COLORS.length]
         })),
         ...(totalCash > 0 ? [{ name: '現金', value: totalCash, fill: CASH_COLOR }] : [])
-    ]
+    ], [holdings, totalCash])
 
-    // 族群圓餅圖 — 依 stockGroups 彙總市值
-    const groupMap: Record<string, number> = {}
-    let ungroupedValue = 0
-    holdings.forEach(h => {
-        const g = stockGroups[h.code]
-        if (g) {
-            groupMap[g] = (groupMap[g] || 0) + h.marketValue
-        } else {
-            ungroupedValue += h.marketValue
-        }
-    })
-    // 族群佔比不含現金
-    if (ungroupedValue > 0) groupMap['未分類'] = (groupMap['未分類'] || 0) + ungroupedValue
+    // 族群圓餅圖 — 依 stockGroups 彙總市值（✅ 3-3：useMemo）
+    const groupPieData: PieEntry[] = useMemo(() => {
+        const groupMap: Record<string, number> = {}
+        let ungroupedValue = 0
+        holdings.forEach(h => {
+            const g = stockGroups[h.code]
+            if (g) {
+                groupMap[g] = (groupMap[g] || 0) + h.marketValue
+            } else {
+                ungroupedValue += h.marketValue
+            }
+        })
+        // 族群佔比不含現金
+        if (ungroupedValue > 0) groupMap['未分類'] = (groupMap['未分類'] || 0) + ungroupedValue
 
-    const groupPieData: PieEntry[] = Object.entries(groupMap)
-        .sort((a, b) => b[1] - a[1])
-        .map(([name, value], i) => ({
-            name,
-            value,
-            fill: name === '現金' ? CASH_COLOR : name === '未分類' ? '#3d4460' : COLORS[i % COLORS.length]
-        }))
+        return Object.entries(groupMap)
+            .sort((a, b) => b[1] - a[1])
+            .map(([name, value], i) => ({
+                name,
+                value,
+                fill: name === '現金' ? CASH_COLOR : name === '未分類' ? 'var(--c-dim)' : COLORS[i % COLORS.length]
+            }))
+    }, [holdings, stockGroups])
+
+    // 未分類市值合計（族群圓餅圖下方提示文案用；計算口徑與 groupPieData 內一致）
+    const ungroupedValue = useMemo(
+        () => holdings.reduce((s, h) => s + (stockGroups[h.code] ? 0 : h.marketValue), 0),
+        [holdings, stockGroups]
+    )
 
     const hasAnyGroup = Object.keys(stockGroups).length > 0
 
-    // ── 目前持倉表格排序 ──
+    // ── 目前持倉表格排序（✅ 3-3：useMemo）──
     // 依族群模式：先依「族群總市值」大到小排族群，未分類排最後；同族群內再依個股市值大到小
-    const groupTotalMV: Record<string, number> = {}
-    holdings.forEach(h => {
-        const g = stockGroups[h.code] || '__未分類__'
-        groupTotalMV[g] = (groupTotalMV[g] || 0) + h.marketValue
-    })
-    const sortedHoldings = [...holdings].sort((a, b) => {
-        switch (sortMode) {
-            case 'group': {
-                const ga = stockGroups[a.code] || '__未分類__'
-                const gb = stockGroups[b.code] || '__未分類__'
-                if (ga !== gb) {
-                    // 未分類永遠排最後
-                    if (ga === '__未分類__') return 1
-                    if (gb === '__未分類__') return -1
-                    const diff = (groupTotalMV[gb] || 0) - (groupTotalMV[ga] || 0)
-                    if (diff !== 0) return diff
-                    return ga.localeCompare(gb, 'zh-TW') // 族群總市值相同時依名稱
+    const sortedHoldings = useMemo(() => {
+        const groupTotalMV: Record<string, number> = {}
+        holdings.forEach(h => {
+            const g = stockGroups[h.code] || '__未分類__'
+            groupTotalMV[g] = (groupTotalMV[g] || 0) + h.marketValue
+        })
+        return [...holdings].sort((a, b) => {
+            switch (sortMode) {
+                case 'group': {
+                    const ga = stockGroups[a.code] || '__未分類__'
+                    const gb = stockGroups[b.code] || '__未分類__'
+                    if (ga !== gb) {
+                        // 未分類永遠排最後
+                        if (ga === '__未分類__') return 1
+                        if (gb === '__未分類__') return -1
+                        const diff = (groupTotalMV[gb] || 0) - (groupTotalMV[ga] || 0)
+                        if (diff !== 0) return diff
+                        return ga.localeCompare(gb, 'zh-TW') // 族群總市值相同時依名稱
+                    }
+                    return b.marketValue - a.marketValue // 同族群內依市值
                 }
-                return b.marketValue - a.marketValue // 同族群內依市值
+                case 'returnRate':
+                    return b.returnRate - a.returnRate
+                case 'unrealizedPnL':
+                    return b.unrealizedPnL - a.unrealizedPnL
+                case 'code':
+                    return a.code.localeCompare(b.code, 'zh-TW')
+                case 'marketValue':
+                default:
+                    return b.marketValue - a.marketValue
             }
-            case 'returnRate':
-                return b.returnRate - a.returnRate
-            case 'unrealizedPnL':
-                return b.unrealizedPnL - a.unrealizedPnL
-            case 'code':
-                return a.code.localeCompare(b.code, 'zh-TW')
-            case 'marketValue':
-            default:
-                return b.marketValue - a.marketValue
-        }
-    })
+        })
+    }, [holdings, stockGroups, sortMode])
 
     const unrealizedLabel = hasPrice && holdingsWithoutPrice.length > 0
         ? `未實現損益（${holdingsWithPrice.length}/${holdings.length} 檔）`
@@ -674,7 +697,11 @@ export default function Dashboard() {
                                 },
                             ].map(({ label, value, color }) => (
                                 <div key={label} style={card}>
-                                    <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}</div>
+                                    <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px', display: 'flex', alignItems: 'center' }}>
+                                        {label}
+                                        {label === unrealizedLabel && <InfoHint text="（現價 − 平均成本）× 股數。平均成本為移動平均、含手續費並經配股攤薄。下方表格的個股報酬率對融資部位改以自備款為分母。" />}
+                                        {label === '已實現損益' && <InfoHint text="賣出價 − 賣出當時的移動平均成本（含配股攤薄），與歷史損益頁口徑一致；年度回顧的 XIRR 為另一種口徑，數字不同屬正常。" />}
+                                    </div>
                                     <div style={{ fontSize: 'clamp(16px, 2vw, 20px)', fontWeight: 700, color }}>{value}</div>
                                 </div>
                             ))}
@@ -726,7 +753,7 @@ export default function Dashboard() {
                                     const segs = [
                                         { label: '現金', value: cashVal, color: 'var(--c-warning)' },
                                         { label: '股票部位', value: ownStockVal, color: 'var(--c-positive)' },
-                                        { label: '槓桿部位', value: leverVal, color: '#a78bfa' },
+                                        { label: '槓桿部位', value: leverVal, color: 'var(--c-purple)' },
                                     ]
                                     return (
                                         <div style={{ marginTop: '20px' }}>
@@ -755,7 +782,7 @@ export default function Dashboard() {
                                     {[
                                         { label: '現金', value: Math.max(totalCash, 0), color: 'var(--c-warning)' },
                                         { label: '股票部位', value: Math.max(totalMarketValue - marginStockMarketValue, 0), color: 'var(--c-positive)' },
-                                        { label: '槓桿部位', value: marginStockMarketValue, color: '#a78bfa' },
+                                        { label: '槓桿部位', value: marginStockMarketValue, color: 'var(--c-purple)' },
                                     ].map(({ label, value, color }) => (
                                         <div key={label} style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '10px 12px' }}>
                                             <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>{label}</div>
@@ -817,7 +844,7 @@ export default function Dashboard() {
                                             </div>
                                             <div>
                                                 <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>融資部位數</div>
-                                                <div style={{ fontSize: '15px', fontWeight: 600, color: '#a78bfa' }}>{marginPositions.length} 檔</div>
+                                                <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-purple)' }}>{marginPositions.length} 檔</div>
                                             </div>
                                         </div>
                                     </div>
@@ -943,7 +970,7 @@ export default function Dashboard() {
                                                         </div>
                                                     </div>
                                                 ) : (
-                                                    <div style={{ marginTop: '10px', fontSize: '12px', color: '#3d4460' }}>輸入買入價格與股數後自動計算</div>
+                                                    <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--c-dim)' }}>輸入買入價格與股數後自動計算</div>
                                                 )}
                                             </div>
                                         )}
@@ -1005,7 +1032,7 @@ export default function Dashboard() {
                                         <p style={{ margin: 0, fontSize: '12px' }}>
                                             前往
                                             <button onClick={() => navigate('/invest/holdings')}
-                                                style={{ background: 'none', border: 'none', color: '#a78bfa', cursor: 'pointer', fontSize: '12px', padding: '0 4px', textDecoration: 'underline' }}>
+                                                style={{ background: 'none', border: 'none', color: 'var(--c-purple)', cursor: 'pointer', fontSize: '12px', padding: '0 4px', textDecoration: 'underline' }}>
                                                 持倉明細
                                             </button>
                                             設定每檔股票的族群
@@ -1046,7 +1073,7 @@ export default function Dashboard() {
                                         </div>
                                         {ungroupedValue > 0 && (
                                             <div style={{ marginTop: '10px', padding: '6px 10px', backgroundColor: 'rgba(167,139,250,0.07)', borderRadius: '6px', fontSize: '11px', color: 'var(--c-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                <Tag size={11} color="#a78bfa" />
+                                                <Tag size={11} color="var(--c-purple)" />
                                                 有 {holdings.filter(h => !stockGroups[h.code]).length} 檔尚未設定族群，已歸入「未分類」
                                             </div>
                                         )}
@@ -1114,12 +1141,12 @@ export default function Dashboard() {
                                                     <td style={{ color: 'var(--c-muted)' }}>{h.ratio.toFixed(1)}%</td>
                                                     <td>
                                                         {stockGroups[h.code] ? (
-                                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.12)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
+                                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--c-purple)', backgroundColor: 'rgba(167,139,250,0.12)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
                                                                 <Tag size={10} />
                                                                 {stockGroups[h.code]}
                                                             </span>
                                                         ) : (
-                                                            <span style={{ fontSize: '12px', color: '#3d4460' }}>—</span>
+                                                            <span style={{ fontSize: '12px', color: 'var(--c-dim)' }}>—</span>
                                                         )}
                                                     </td>
                                                 </tr>
@@ -1146,7 +1173,9 @@ export default function Dashboard() {
                                     </button>
                                 </div>
 
-                                {upcomingEvents.length === 0 ? (
+                                {sideLoading ? (
+                                    <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--c-muted)', fontSize: '13px' }}>載入中…</div>
+                                ) : upcomingEvents.length === 0 ? (
                                     <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--c-muted)', fontSize: '13px' }}>近 14 天無行程</div>
                                 ) : (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '300px', overflowY: 'auto' }}>
@@ -1183,7 +1212,9 @@ export default function Dashboard() {
                                     </button>
                                 </div>
 
-                                {tasks.length === 0 ? (
+                                {sideLoading ? (
+                                    <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--c-muted)', fontSize: '13px' }}>載入中…</div>
+                                ) : tasks.length === 0 ? (
                                     <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--c-muted)', fontSize: '13px' }}>🎉 沒有待辦任務！</div>
                                 ) : (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '300px', overflowY: 'auto' }}>

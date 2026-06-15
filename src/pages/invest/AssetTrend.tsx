@@ -3,6 +3,9 @@ import { getDocs, setDoc, deleteDoc, orderBy, query, getDoc } from 'firebase/fir
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { calcPositions, calcAvailableCash, aggregateMarginDebt, type TradeRecord, type DividendRecord } from '../../lib/calc'
+import { fetchTrades, fetchDividends, fetchCashflow } from '../../lib/investData'
+import { calcMarketValue } from '../../lib/snapshot'
+import InfoHint from '../../components/InfoHint'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts'
 import { Save, Pencil, Trash2, Plus, X, Check, Zap, AlertTriangle, TrendingUp } from 'lucide-react'
 
@@ -14,6 +17,7 @@ interface SnapshotRecord {
     marketValue: number
     cash: number
     marginDebt?: number  // 融資借款（負債），記錄用，總資產已扣除
+    auto?: boolean       // ✅ 5-1：由自動快照寫入時為 true
 }
 
 const emptySnap: SnapshotRecord = {
@@ -117,13 +121,11 @@ export default function AssetTrend() {
     // │   那是 XIRR 期初流出需為負的緣故，兩邊各自正確，請勿改成一致。       │
     // └─────────────────────────────────────────────────────────────────┘
     useEffect(() => {
-        getDocs(query(userCol(investDB, 'cashflow'), orderBy('date', 'asc')))
-            .then(snap => {
-                setCashflows(snap.docs.map(d => {
-                    const c = d.data() as { date: string; type: 'in' | 'out'; amount: number }
-                    // 入金為帳戶資金流入(正)，出金為流出(負)
-                    return { date: c.date, amount: c.type === 'in' ? c.amount : -c.amount }
-                }))
+        // ✅ 1-1：改走共用快取層（lib/investData）
+        fetchCashflow<{ date: string; type: 'in' | 'out'; amount: number }>('asc')
+            .then(records => {
+                // 入金為帳戶資金流入(正)，出金為流出(負)
+                setCashflows(records.map(c => ({ date: c.date, amount: c.type === 'in' ? c.amount : -c.amount })))
             })
             .catch(err => console.error('[cashflow] load failed:', err))
     }, [])
@@ -183,24 +185,7 @@ export default function AssetTrend() {
     }, [chartMode, showBenchmark])
 
     // ── 市值計算 ──────────────────────────────────────────────────────────
-
-    const calcMarketValue = (
-        positions: Record<string, { code: string; shares: number; totalCost: number }>,
-        savedPrices: Record<string, number>
-    ): { marketValue: number; missing: string[] } => {
-        let marketValue = 0
-        const missing: string[] = []
-        Object.values(positions).forEach(pos => {
-            const price = savedPrices[pos.code]
-            if (price !== undefined && price > 0) {
-                marketValue += price * pos.shares
-            } else {
-                marketValue += pos.totalCost
-                missing.push(pos.code)
-            }
-        })
-        return { marketValue, missing }
-    }
+    // ✅ 5-1：calcMarketValue 抽至 lib/snapshot.ts，手動快照與自動快照共用同一口徑
 
     // ── 自動帶入（含扣除融資借款）────────────────────────────────────────
 
@@ -208,14 +193,12 @@ export default function AssetTrend() {
         setAutoLoading(true)
         setMissingPriceCodes([])
         try {
-            const [tradesSnap, cashSnap, dividendsSnap] = await Promise.all([
-                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(userCol(investDB, 'cashflow')),
-                getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc'))),
+            // ✅ 1-1：改走共用快取層（lib/investData）
+            const [trades, cashRecords, dividends] = await Promise.all([
+                fetchTrades<TradeRecord>('asc'),
+                fetchCashflow<{ type: string; amount: number }>('asc'),
+                fetchDividends<DividendRecord>('asc'),
             ])
-            const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
-            const cashRecords = cashSnap.docs.map(d => d.data() as { type: string; amount: number })
-            const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
 
             const { holdings: positions } = calcPositions(trades, dividends)
             const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
@@ -224,7 +207,8 @@ export default function AssetTrend() {
             const { marketValue, missing } = calcMarketValue(positions, savedPrices)
             setMissingPriceCodes(missing)
 
-            const cash = calcAvailableCash(cashRecords, trades)
+            // ✅ 方案 A：可用現金含現金股利（快照的 cash 自此口徑起含股利）
+            const cash = calcAvailableCash(cashRecords, trades, dividends)
 
             // ✅ 計算融資借款並從總資產扣除，呈現真實淨值
             const marginDebt = aggregateMarginDebt(trades)
@@ -241,20 +225,39 @@ export default function AssetTrend() {
         setAutoLoading(false)
     }
 
+    // ── 自動每日快照開關（5-1）───────────────────────────────────────────
+
+    const [autoSnapEnabled, setAutoSnapEnabled] = useState(true)
+
+    useEffect(() => {
+        getDoc(userDocNested(investDB, 'settings', 'autoSnapshot'))
+            .then(snap => { if (snap.exists()) setAutoSnapEnabled(snap.data().enabled !== false) })
+            .catch(err => console.error('[autoSnapshot] 讀取設定失敗:', err))
+    }, [])
+
+    const toggleAutoSnap = async () => {
+        const next = !autoSnapEnabled
+        setAutoSnapEnabled(next)   // 樂觀更新
+        try {
+            await setDoc(userDocNested(investDB, 'settings', 'autoSnapshot'), { enabled: next })
+        } catch (err) {
+            console.error('[autoSnapshot] 寫入設定失敗:', err)
+            setAutoSnapEnabled(!next)   // 失敗回滾
+        }
+    }
+
     // ── 儲存今日快照（含扣除融資借款）───────────────────────────────────
 
     const saveToday = async () => {
         setSaving(true)
         setMissingPriceCodes([])
         try {
-            const [tradesSnap, cashSnap, dividendsSnap] = await Promise.all([
-                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(userCol(investDB, 'cashflow')),
-                getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc'))),
+            // ✅ 1-1：改走共用快取層（lib/investData）
+            const [trades, cashRecords, dividends] = await Promise.all([
+                fetchTrades<TradeRecord>('asc'),
+                fetchCashflow<{ type: string; amount: number }>('asc'),
+                fetchDividends<DividendRecord>('asc'),
             ])
-            const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
-            const cashRecords = cashSnap.docs.map(d => d.data() as { type: string; amount: number })
-            const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
 
             const { holdings: positions } = calcPositions(trades, dividends)
             const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
@@ -263,7 +266,8 @@ export default function AssetTrend() {
             const { marketValue, missing } = calcMarketValue(positions, savedPrices)
             setMissingPriceCodes(missing)
 
-            const cash = calcAvailableCash(cashRecords, trades)
+            // ✅ 方案 A：可用現金含現金股利（快照的 cash 自此口徑起含股利）
+            const cash = calcAvailableCash(cashRecords, trades, dividends)
 
             // ✅ 計算融資借款並從總資產扣除，呈現真實淨值
             const marginDebt = aggregateMarginDebt(trades)
@@ -276,6 +280,7 @@ export default function AssetTrend() {
                 marketValue: Math.round(marketValue),
                 cash: Math.round(cash),
                 marginDebt: Math.round(marginDebt),
+                dividendAdjusted: true,  // 新口徑快照（cash 已含股利），遷移時略過
             })
             await loadSnapshots()
         } catch (err) { console.error(err) }
@@ -424,7 +429,19 @@ export default function AssetTrend() {
                 {/* ── 標題列 ── */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
                     <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>資產趨勢</h2>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                        {/* ✅ 5-1：自動每日快照開關 */}
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <button
+                                onClick={toggleAutoSnap}
+                                style={autoSnapEnabled
+                                    ? btn('var(--c-accent)')
+                                    : { ...btn('var(--c-card)'), border: '1px solid var(--c-border)', color: 'var(--c-muted)' }}
+                            >
+                                <Zap size={15} />
+                                自動快照：{autoSnapEnabled ? '開' : '關'}
+                            </button>
+                        </div>
                         <button onClick={saveToday} disabled={saving} style={btn('var(--c-positive)')}>
                             <Save size={15} style={{ animation: saving ? 'spin 1s linear infinite' : 'none' }} />
                             {saving ? '儲存中...' : '儲存今日快照'}
@@ -747,7 +764,12 @@ export default function AssetTrend() {
                                 <tbody>
                                     {[...snapshots].reverse().map(s => (
                                         <tr key={s.date} style={{ borderBottom: '1px solid #1e2235' }}>
-                                            <td style={{ padding: '10px 12px', color: '#c8d0e0' }}>{s.date}</td>
+                                            <td style={{ padding: '10px 12px', color: '#c8d0e0' }}>
+                                                {s.date}
+                                                {s.auto && (
+                                                    <span style={{ marginLeft: '6px', fontSize: '10px', backgroundColor: 'color-mix(in srgb, var(--c-accent) 15%, transparent)', color: 'var(--c-accent)', padding: '1px 6px', borderRadius: '10px', verticalAlign: 'middle' }}>自動</span>
+                                                )}
+                                            </td>
                                             <td style={{ padding: '10px 12px', color: 'var(--c-accent)', fontWeight: 600, textAlign: 'right' }}>${s.totalAssets.toLocaleString()}</td>
                                             <td style={{ padding: '10px 12px', color: 'var(--c-positive)', textAlign: 'right' }}>${s.marketValue.toLocaleString()}</td>
                                             <td style={{ padding: '10px 12px', color: 'var(--c-warning)', textAlign: 'right' }}>${s.cash.toLocaleString()}</td>

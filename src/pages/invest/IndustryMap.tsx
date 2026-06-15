@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { getDocs, setDoc, deleteDoc, getDoc } from 'firebase/firestore'
+import { getDocs, setDoc, deleteDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { Plus, X, Search, Pencil, Trash2, ChevronDown, ChevronRight, Map, Tag, Loader } from 'lucide-react'
@@ -12,26 +12,8 @@ interface StockEntry {
     note?: string
 }
 
-// ── 股票名稱查詢 ──────────────────────────────────────────────────
-const dictCache: Record<string, string> = {}
-
-async function lookupStockName(code: string): Promise<string> {
-    if (dictCache[code]) return dictCache[code]
-    const shortDoc = await getDoc(userDoc(investDB, 'stockDict', code))
-    if (shortDoc.exists()) {
-        const name = shortDoc.data().name as string
-        dictCache[code] = name
-        return name
-    }
-    const fullDoc = await getDoc(userDoc(investDB, 'stockDictFull', code))
-    if (fullDoc.exists()) {
-        const name = fullDoc.data().name as string
-        dictCache[code] = name
-        await setDoc(userDoc(investDB, 'stockDict', code), { name })
-        return name
-    }
-    return ''
-}
+// ── 股票名稱查詢（✅ 1-2：改走 lib/stockDict 共用模組與快取）──
+import { lookupStockName } from '../../lib/stockDict'
 
 // ── 題材顏色 ──────────────────────────────────────────────────────
 const THEME_COLORS = [

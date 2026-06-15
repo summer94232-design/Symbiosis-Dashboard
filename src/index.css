@@ -1,60 +1,80 @@
 @import "tailwindcss";
 
 @theme {
-  --color-c-bg: #14182a;
-  --color-c-sidebar: #0f1220;
-  --color-c-card: #1c2235;
-  --color-c-border: #2a3050;
-  --color-c-text: #dde2f0;
-  --color-c-muted: #7a88aa;
-  --color-c-accent: #8b9ef5;
-  --color-c-positive: #4aaa80;
-  --color-c-danger: #e06060;
-  --color-c-warning: #c49030;
+    --color-c-bg: #14182a;
+    --color-c-sidebar: #0f1220;
+    --color-c-card: #1c2235;
+    --color-c-border: #2a3050;
+    --color-c-text: #dde2f0;
+    --color-c-muted: #7a88aa;
+    --color-c-accent: #8b9ef5;
+    --color-c-positive: #4aaa80;
+    --color-c-danger: #e06060;
+    --color-c-warning: #c49030;
+    --color-c-purple: #a78bfa;
+    --color-c-dim: #3d4460;
 }
 
 @layer base {
-  :root {
-    --c-bg: #14182a;
-    --c-sidebar: #0f1220;
-    --c-card: #1c2235;
-    --c-border: #2a3050;
-    --c-text: #dde2f0;
-    --c-muted: #7a88aa;
-    --c-accent: #8b9ef5;
-    --c-positive: #4aaa80;
-    --c-danger: #e06060;
-    --c-warning: #c49030;
-  }
+    :root {
+        --c-bg: #14182a;
+        --c-sidebar: #0f1220;
+        --c-card: #1c2235;
+        --c-border: #2a3050;
+        --c-text: #dde2f0;
+        --c-muted: #7a88aa;
+        --c-accent: #8b9ef5;
+        --c-positive: #4aaa80;
+        --c-danger: #e06060;
+        --c-warning: #c49030;
+        /* 1-4 新增：裝飾用紫色（族群/槓桿/均線標示）與低調文字色（佔位、停用提示） */
+        --c-purple: #a78bfa;
+        --c-dim: #3d4460;
+    }
 
-  [data-theme="light"] {
-    --c-bg: #f0f2f5;
-    --c-sidebar: #e6eaf0;
-    --c-card: #f8f9fb;
-    --c-border: #d0d6e0;
-    --c-text: #1e2535;
-    --c-muted: #6b7894;
-    --c-accent: #5b6fd4;
-    --c-positive: #2a7a5a;
-    --c-danger: #c44040;
-    --c-warning: #a07020;
-  }
+    [data-theme="light"] {
+        --c-bg: #f0f2f5;
+        --c-sidebar: #e6eaf0;
+        --c-card: #f8f9fb;
+        --c-border: #d0d6e0;
+        --c-text: #1e2535;
+        --c-muted: #6b7894;
+        --c-accent: #5b6fd4;
+        --c-positive: #2a7a5a;
+        --c-danger: #c44040;
+        --c-warning: #a07020;
+        --c-purple: #6d51c8;
+        --c-dim: #a4aec4;
+    }
 
-  html, body {
-    background-color: var(--c-bg);
-    color: var(--c-text);
-    font-family: sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
+    html, body {
+        background-color: var(--c-bg);
+        color: var(--c-text);
+        font-family: sans-serif;
+        -webkit-font-smoothing: antialiased;
+    }
 
-  ::-webkit-scrollbar {
-    width: 6px;
-  }
-  ::-webkit-scrollbar-track {
-    background: var(--c-bg);
-  }
-  ::-webkit-scrollbar-thumb {
-    background: var(--c-border);
-    border-radius: 999px;
-  }
+    ::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: var(--c-bg);
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: var(--c-border);
+        border-radius: 999px;
+    }
+
+    /* 1-2 預備：spin 動畫全域定義（批次 B 移除各頁 <style> 內的重複定義時直接沿用） */
+    @keyframes spin {
+        from {
+            transform: rotate(0deg);
+        }
+
+        to {
+            transform: rotate(360deg);
+        }
+    }
 }

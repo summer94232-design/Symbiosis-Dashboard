@@ -76,7 +76,7 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
     if (!data || data.length < 2) {
         return (
             <div style={{ height: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ fontSize: '11px', color: '#3d4460' }}>無圖表資料</span>
+                <span style={{ fontSize: '11px', color: 'var(--c-dim)' }}>無圖表資料</span>
             </div>
         )
     }
@@ -147,12 +147,12 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
                     top: -2,
                     left: tooltip!.x < W / 2 ? tooltip!.x + 8 : undefined,
                     right: tooltip!.x >= W / 2 ? W - tooltip!.x + 8 : undefined,
-                    backgroundColor: '#0d1017',
+                    backgroundColor: 'var(--c-sidebar)',
                     border: '1px solid var(--c-border)',
                     borderRadius: '6px',
                     padding: '5px 8px',
                     fontSize: '10px',
-                    color: '#c8d0e0',
+                    color: 'var(--c-text)',
                     pointerEvents: 'none',
                     whiteSpace: 'nowrap',
                     zIndex: 10,
@@ -160,7 +160,7 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
                 }}>
                     <div style={{ color: 'var(--c-muted)' }}>{hovered.date}</div>
                     <div>收盤 <span style={{ color: lineColor, fontWeight: 700 }}>{formatPrice(hovered.close)}</span></div>
-                    <div>量 <span style={{ color: '#a78bfa' }}>{formatVol(hovered.volume)}</span></div>
+                    <div>量 <span style={{ color: 'var(--c-purple)' }}>{formatVol(hovered.volume)}</span></div>
                 </div>
             )}
 
@@ -193,7 +193,7 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
                         y={volY + (VOL_H - b.h)}
                         width={barW}
                         height={b.h}
-                        fill={tooltip?.i === i ? '#a78bfa' : 'rgba(167,139,250,0.35)'}
+                        fill={tooltip?.i === i ? 'var(--c-purple)' : 'rgba(167,139,250,0.35)'}
                         rx="1"
                     />
                 ))}
@@ -204,7 +204,7 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
                         <line
                             x1={pts[tooltip.i].x} y1={0}
                             x2={pts[tooltip.i].x} y2={H}
-                            stroke="#3d4460" strokeWidth="1" strokeDasharray="3,2"
+                            stroke="var(--c-dim)" strokeWidth="1" strokeDasharray="3,2"
                         />
                         <circle
                             cx={pts[tooltip.i].x}
@@ -220,8 +220,8 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
 
             {/* 首尾價格標示 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
-                <span style={{ fontSize: '9px', color: '#4a5568' }}>{data[0]?.date?.slice(5)}</span>
-                <span style={{ fontSize: '9px', color: '#4a5568' }}>{data[data.length - 1]?.date?.slice(5)}</span>
+                <span style={{ fontSize: '9px', color: 'var(--c-dim)' }}>{data[0]?.date?.slice(5)}</span>
+                <span style={{ fontSize: '9px', color: 'var(--c-dim)' }}>{data[data.length - 1]?.date?.slice(5)}</span>
             </div>
         </div>
     )
@@ -254,7 +254,7 @@ function TargetCell({ current, target, type }: { current?: number; target: numbe
     if (!current) return (
         <div>
             <span style={{ fontSize: '12px', fontWeight: 600, color: type === 'high' ? 'var(--c-positive)' : 'var(--c-danger)' }}>{target}</span>
-            <span style={{ fontSize: '10px', color: '#4a5568', marginLeft: '4px' }}>—</span>
+            <span style={{ fontSize: '10px', color: 'var(--c-dim)', marginLeft: '4px' }}>—</span>
         </div>
     )
     const pct = (target - current) / current * 100
@@ -279,7 +279,7 @@ function TargetCell({ current, target, type }: { current?: number; target: numbe
 }
 
 function MABadge({ label, value, currentPrice }: { label: string; value: number | null; currentPrice?: number }) {
-    if (value === null) return <span style={{ fontSize: '10px', color: '#3d4460' }}>{label}:—</span>
+    if (value === null) return <span style={{ fontSize: '10px', color: 'var(--c-dim)' }}>{label}:—</span>
     const above = currentPrice ? currentPrice > value : null
     const color = above === null ? 'var(--c-muted)' : above ? 'var(--c-positive)' : 'var(--c-danger)'
     return (
@@ -301,40 +301,40 @@ function TableRow({ item, ma, onEdit, onDelete }: {
     const isTW = market === 'tw'
 
     return (
-        <tr style={{ backgroundColor: rowBg, borderBottom: '1px solid #1e2235' }}>
+        <tr style={{ backgroundColor: rowBg, borderBottom: '1px solid var(--c-border)' }}>
             <td style={{ padding: '6px 10px 6px 12px', whiteSpace: 'nowrap', borderLeft: leftBorder }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <MarketBadge market={market || 'tw'} />
                     <span style={{ fontWeight: 700, color: 'var(--c-accent)', fontSize: '13px' }}>{code}</span>
-                    <span style={{ fontSize: '11px', color: '#6b7690' }}>{name}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>{name}</span>
                     {group && group !== UNGROUPED &&
                         <span style={{ fontSize: '10px', backgroundColor: 'color-mix(in srgb, var(--c-accent) 12%, transparent)', color: 'var(--c-accent)', borderRadius: '6px', padding: '0px 5px' }}>{group}</span>}
                 </div>
             </td>
             <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700, fontSize: '13px', color: 'var(--c-text)', whiteSpace: 'nowrap' }}>
                 {currentPrice
-                    ? (market === 'jp' ? <span>{Math.round(currentPrice).toLocaleString()} <span style={{ fontSize: '10px', color: '#4a5568' }}>円</span></span> : currentPrice.toFixed(2))
-                    : <span style={{ color: '#3a4560' }}>—</span>}
+                    ? (market === 'jp' ? <span>{Math.round(currentPrice).toLocaleString()} <span style={{ fontSize: '10px', color: 'var(--c-dim)' }}>円</span></span> : currentPrice.toFixed(2))
+                    : <span style={{ color: 'var(--c-dim)' }}>—</span>}
             </td>
             <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
-                {!isTW ? <span style={{ fontSize: '10px', color: '#3d4460' }}>不支援</span>
+                {!isTW ? <span style={{ fontSize: '10px', color: 'var(--c-dim)' }}>不支援</span>
                     : ma ? (
                         <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                             <MABadge label="5MA" value={ma.ma5} currentPrice={currentPrice} />
                             <MABadge label="10MA" value={ma.ma10} currentPrice={currentPrice} />
                             <MABadge label="20MA" value={ma.ma20} currentPrice={currentPrice} />
                         </div>
-                    ) : <span style={{ fontSize: '10px', color: '#3d4460' }}>—</span>}
+                    ) : <span style={{ fontSize: '10px', color: 'var(--c-dim)' }}>—</span>}
             </td>
             <td style={{ padding: '6px 10px' }}>
-                {targetLow ? <TargetCell current={currentPrice} target={targetLow} type="low" /> : <span style={{ fontSize: '11px', color: '#3a4560' }}>—</span>}
+                {targetLow ? <TargetCell current={currentPrice} target={targetLow} type="low" /> : <span style={{ fontSize: '11px', color: 'var(--c-dim)' }}>—</span>}
             </td>
             <td style={{ padding: '6px 10px' }}>
-                {targetHigh ? <TargetCell current={currentPrice} target={targetHigh} type="high" /> : <span style={{ fontSize: '11px', color: '#3a4560' }}>—</span>}
+                {targetHigh ? <TargetCell current={currentPrice} target={targetHigh} type="high" /> : <span style={{ fontSize: '11px', color: 'var(--c-dim)' }}>—</span>}
             </td>
             <td style={{ padding: '6px 8px', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                <button onClick={() => onEdit(item)} style={{ background: 'none', border: 'none', color: '#3a4560', cursor: 'pointer', padding: '2px 3px' }}><Pencil size={11} /></button>
-                <button onClick={() => onDelete(code)} style={{ background: 'none', border: 'none', color: '#3a4560', cursor: 'pointer', padding: '2px 3px' }}><Trash2 size={11} /></button>
+                <button onClick={() => onEdit(item)} style={{ background: 'none', border: 'none', color: 'var(--c-dim)', cursor: 'pointer', padding: '2px 3px' }}><Pencil size={11} /></button>
+                <button onClick={() => onDelete(code)} style={{ background: 'none', border: 'none', color: 'var(--c-dim)', cursor: 'pointer', padding: '2px 3px' }}><Trash2 size={11} /></button>
             </td>
         </tr>
     )
@@ -557,7 +557,7 @@ export default function Watchlist() {
                 .watch-card { transition: box-shadow 0.2s, border-color 0.2s; }
                 .watch-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
                 .overview-table { width: 100%; border-collapse: collapse; }
-                .overview-table thead th { position: sticky; top: 0; background: #12151f; z-index: 1; padding: 6px 10px; text-align: left; font-size: 11px; color: #6b7690; font-weight: 600; border-bottom: 1px solid var(--c-border); letter-spacing: 0.03em; text-transform: uppercase; }
+                .overview-table thead th { position: sticky; top: 0; background: var(--c-bg); z-index: 1; padding: 6px 10px; text-align: left; font-size: 11px; color: var(--c-muted); font-weight: 600; border-bottom: 1px solid var(--c-border); letter-spacing: 0.03em; text-transform: uppercase; }
                 .overview-table tbody tr:hover td { background-color: rgba(79,142,247,0.05) !important; }
                 .market-toggle { display: flex; border-radius: 8px; overflow: hidden; border: 1px solid var(--c-border); max-width: 280px; }
                 .market-toggle button { flex: 1; padding: 8px 0; border: none; cursor: pointer; font-size: 12px; font-weight: 700; transition: background 0.15s, color 0.15s; }
@@ -580,7 +580,7 @@ export default function Watchlist() {
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        <div style={{ display: 'flex', backgroundColor: '#12151f', borderRadius: '8px', padding: '3px', border: '1px solid var(--c-border)' }}>
+                        <div style={{ display: 'flex', backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '3px', border: '1px solid var(--c-border)' }}>
                             <button onClick={() => setViewMode('card')} style={{ ...btn(viewMode === 'card' ? 'var(--c-border)' : 'transparent'), padding: '5px 10px', fontSize: '12px', borderRadius: '6px' }}><LayoutGrid size={13} />卡片</button>
                             <button onClick={() => setViewMode('table')} style={{ ...btn(viewMode === 'table' ? 'var(--c-border)' : 'transparent'), padding: '5px 10px', fontSize: '12px', borderRadius: '6px' }}><Table2 size={13} />一覽表</button>
                         </div>
@@ -633,7 +633,7 @@ export default function Watchlist() {
                             <div>
                                 <label style={lbl}>
                                     股票代號 *
-                                    <span style={{ color: '#4a5568', marginLeft: '6px', fontWeight: 400 }}>
+                                    <span style={{ color: 'var(--c-dim)', marginLeft: '6px', fontWeight: 400 }}>
                                         {form.market === 'tw' && '（如：2330）'}
                                         {form.market === 'jp' && '（如：7203，不需加 .T）'}
                                         {form.market === 'us' && '（如：AAPL）'}
@@ -693,7 +693,7 @@ export default function Watchlist() {
                     <div style={{ ...card, textAlign: 'center', padding: '60px' }}>
                         <TrendingUp size={32} color="var(--c-border)" style={{ marginBottom: '16px' }} />
                         <p style={{ color: 'var(--c-muted)', fontSize: '15px', margin: '0 0 8px' }}>尚無自選股</p>
-                        <p style={{ color: '#3d4460', fontSize: '13px', margin: 0 }}>點擊「新增自選股」開始追蹤</p>
+                        <p style={{ color: 'var(--c-dim)', fontSize: '13px', margin: 0 }}>點擊「新增自選股」開始追蹤</p>
                     </div>
                 ) : viewMode === 'table' ? (
                     <div style={{ ...card, padding: '0', overflow: 'hidden' }}>
@@ -703,7 +703,7 @@ export default function Watchlist() {
                                     <tr>
                                         <th>代號 / 名稱</th>
                                         <th style={{ textAlign: 'right' }}>現價</th>
-                                        <th style={{ color: '#a78bfa' }}>均線 (5/10/20MA)</th>
+                                        <th style={{ color: 'var(--c-purple)' }}>均線 (5/10/20MA)</th>
                                         <th>下標（買入）</th>
                                         <th>上標（賣出）</th>
                                         <th style={{ textAlign: 'center' }}>操作</th>
@@ -727,7 +727,7 @@ export default function Watchlist() {
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', cursor: 'pointer' }} onClick={() => toggleGroup(groupName)}>
                                         {isCollapsed ? <ChevronRight size={14} color="var(--c-muted)" /> : <ChevronDown size={14} color="var(--c-muted)" />}
                                         <span style={{ fontSize: '13px', fontWeight: 600, color: groupName === UNGROUPED ? 'var(--c-muted)' : 'var(--c-accent)' }}>{groupName}</span>
-                                        <span style={{ fontSize: '11px', color: '#3d4460' }}>{groupItems.length} 檔</span>
+                                        <span style={{ fontSize: '11px', color: 'var(--c-dim)' }}>{groupItems.length} 檔</span>
                                     </div>
 
                                     {!isCollapsed && (
@@ -748,11 +748,11 @@ export default function Watchlist() {
                                                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: 0 }}>
                                                                 <MarketBadge market={item.market || 'tw'} />
                                                                 <span style={{ fontWeight: 700, color: 'var(--c-accent)', fontSize: '14px' }}>{item.code}</span>
-                                                                <span style={{ fontSize: '12px', color: '#6b7690', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                                                                <span style={{ fontSize: '12px', color: 'var(--c-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
                                                             </div>
                                                             <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                                                                <button onClick={() => openEdit(item)} style={{ background: 'none', border: 'none', color: '#3a4560', cursor: 'pointer', padding: '2px' }}><Pencil size={12} /></button>
-                                                                <button onClick={() => handleDelete(item.code)} style={{ background: 'none', border: 'none', color: '#3a4560', cursor: 'pointer', padding: '2px' }}><Trash2 size={12} /></button>
+                                                                <button onClick={() => openEdit(item)} style={{ background: 'none', border: 'none', color: 'var(--c-dim)', cursor: 'pointer', padding: '2px' }}><Pencil size={12} /></button>
+                                                                <button onClick={() => handleDelete(item.code)} style={{ background: 'none', border: 'none', color: 'var(--c-dim)', cursor: 'pointer', padding: '2px' }}><Trash2 size={12} /></button>
                                                             </div>
                                                         </div>
 
@@ -761,15 +761,15 @@ export default function Watchlist() {
                                                             <span style={{ fontSize: '20px', fontWeight: 700, color: 'var(--c-text)', lineHeight: 1 }}>
                                                                 {item.currentPrice
                                                                     ? (item.market === 'jp'
-                                                                        ? <span>{Math.round(item.currentPrice).toLocaleString()} <span style={{ fontSize: '11px', color: '#4a5568' }}>円</span></span>
+                                                                        ? <span>{Math.round(item.currentPrice).toLocaleString()} <span style={{ fontSize: '11px', color: 'var(--c-dim)' }}>円</span></span>
                                                                         : item.currentPrice.toFixed(2))
-                                                                    : <span style={{ fontSize: '13px', color: '#4a5568' }}>—</span>}
+                                                                    : <span style={{ fontSize: '13px', color: 'var(--c-dim)' }}>—</span>}
                                                             </span>
                                                             {/* 10日漲跌幅 */}
                                                             {chart && chart.length >= 2 && (() => {
                                                                 const chg = (chart[chart.length - 1].close - chart[0].close) / chart[0].close * 100
                                                                 const color = chg >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
-                                                                return <span style={{ fontSize: '11px', color, fontWeight: 600 }}>{chg >= 0 ? '+' : ''}{chg.toFixed(2)}% <span style={{ color: '#4a5568', fontWeight: 400 }}>10日</span></span>
+                                                                return <span style={{ fontSize: '11px', color, fontWeight: 600 }}>{chg >= 0 ? '+' : ''}{chg.toFixed(2)}% <span style={{ color: 'var(--c-dim)', fontWeight: 400 }}>10日</span></span>
                                                             })()}
                                                         </div>
 
@@ -855,7 +855,7 @@ export default function Watchlist() {
                                                                 {item.note && (
                                                                     <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: '6px', marginTop: '2px' }}>
                                                                         <button onClick={() => setExpandedNote(expandedNote === item.code ? null : item.code)}
-                                                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', color: '#4a5568', cursor: 'pointer', fontSize: '11px', padding: 0 }}>
+                                                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', color: 'var(--c-dim)', cursor: 'pointer', fontSize: '11px', padding: 0 }}>
                                                                             <FileText size={11} />筆記
                                                                             {expandedNote === item.code ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                                                                         </button>

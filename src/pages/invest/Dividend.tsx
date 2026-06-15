@@ -1,7 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { addDoc, getDocs, updateDoc, deleteDoc, orderBy, query, setDoc, getDoc } from 'firebase/firestore'
+import { addDoc, updateDoc, deleteDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
+import { fetchDividends, invalidateDividends } from '../../lib/investData'
+// ✅ 1-2：共用模組（股票字典 / UI 樣式）
+import { lookupStockName, cacheStockName, saveStockName } from '../../lib/stockDict'
+import { card, inp, lbl, btn } from '../../ui/styles'
 import { Pencil, Trash2, X, Check } from 'lucide-react'
 
 interface DividendRecord {
@@ -15,32 +19,6 @@ interface DividendRecord {
 }
 
 const empty: DividendRecord = { date: new Date().toISOString().split('T')[0], code: '', name: '', cashDividend: 0, stockDividend: 0, note: '' }
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }
-const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
-
-// ★ 本地快取，與 Trades.tsx 共用同一個 module-level 快取
-const dictCache: Record<string, string> = {}
-
-async function lookupStockName(code: string): Promise<string> {
-    if (dictCache[code]) return dictCache[code]
-    const shortDoc = await getDoc(userDoc(investDB, 'stockDict', code))
-    if (shortDoc.exists()) {
-        const name = shortDoc.data().name as string
-        dictCache[code] = name
-        return name
-    }
-    const fullDoc = await getDoc(userDoc(investDB, 'stockDictFull', code))
-    if (fullDoc.exists()) {
-        const name = fullDoc.data().name as string
-        dictCache[code] = name
-        await setDoc(userDoc(investDB, 'stockDict', code), { name })
-        return name
-    }
-    return ''
-}
-
 export default function Dividend() {
     const [records, setRecords] = useState<DividendRecord[]>([])
     const [editingId, setEditingId] = useState<string | null>(null)
@@ -50,9 +28,8 @@ export default function Dividend() {
     const lookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const load = async () => {
-        const q = query(userCol(investDB, 'dividends'), orderBy('date', 'desc'))
-        const snap = await getDocs(q)
-        setRecords(snap.docs.map(d => ({ id: d.id, ...d.data() } as DividendRecord)))
+        // ✅ 1-1：改走共用快取層（lib/investData）
+        setRecords(await fetchDividends<DividendRecord>('desc'))
     }
 
     useEffect(() => { load() }, [])
@@ -81,22 +58,24 @@ export default function Dividend() {
         } else {
             await addDoc(userCol(investDB, 'dividends'), { ...form })
         }
-        // 儲存時同步寫入常用字典
+        invalidateDividends()   // ✅ 1-1：寫入後清快取
+        // 儲存時同步寫入常用字典（✅ 1-2：改走共用 stockDict 模組）
         if (form.name && form.code) {
-            dictCache[form.code] = form.name
-            await setDoc(userDoc(investDB, 'stockDict', form.code), { name: form.name })
+            await saveStockName(form.code, form.name)
         }
         setEditingId(null); setForm(empty); setLoading(false); load()
     }
 
     const handleEdit = (r: DividendRecord) => {
-        if (r.code && r.name) dictCache[r.code] = r.name
+        if (r.code && r.name) cacheStockName(r.code, r.name)
         setForm(r); setEditingId(r.id!)
     }
     const handleCancel = () => { setForm(empty); setEditingId(null) }
     const handleDelete = async (id: string) => {
         if (!confirm('確定要刪除？')) return
-        await deleteDoc(userDoc(investDB, 'dividends', id)); load()
+        await deleteDoc(userDoc(investDB, 'dividends', id))
+        invalidateDividends()   // ✅ 1-1：寫入後清快取
+        load()
     }
 
     const totalCash = records.reduce((s, r) => s + r.cashDividend, 0)

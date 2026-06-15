@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { addDoc, getDocs, deleteDoc, updateDoc, orderBy, query } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
-import { getQuote, extractPrice } from '../../lib/fugle'
+import { usePrices } from '../../PriceContext'
 import { Plus, Trash2, RefreshCw, TrendingUp, TrendingDown, Target, Minus, ChevronDown, ChevronRight, Pencil, Check, X } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -134,6 +134,9 @@ export default function SentimentTracker() {
     const [editForm, setEditForm] = useState<{ direction: 'bull' | 'bear'; recordPrice: string; reason: string }>({ direction: 'bull', recordPrice: '', reason: '' })
     const [savingEditId, setSavingEditId] = useState<string | null>(null)
 
+    // ✅ 1-3：統一現價來源 — 改用全域 PriceContext，報價會寫回 settings/lastPrices 並與其他頁同步
+    const { updatePrices } = usePrices()
+
     const [form, setForm] = useState({
         code: '',
         name: '',
@@ -188,11 +191,8 @@ export default function SentimentTracker() {
         setPriceLoading(true)
         try {
             const codes = [...new Set(records.map(r => r.code))]
-            const priceMap: Record<string, number | null> = {}
-            await Promise.all(codes.map(async code => {
-                const quote = await getQuote(code)
-                priceMap[code] = extractPrice(quote)
-            }))
+            // ✅ 1-3：改用 PriceContext.updatePrices（會寫回 lastPrices、跨頁同步、不重複扣 Fugle 額度）
+            const priceMap = await updatePrices(codes)
             setRecords(prev => prev.map(r => ({
                 ...r,
                 currentPrice: priceMap[r.code] ?? r.currentPrice,
@@ -209,8 +209,10 @@ export default function SentimentTracker() {
         if (!form.code.trim()) return
         setSaving(true)
         try {
-            const quote = await getQuote(form.code.toUpperCase())
-            const recordPrice = extractPrice(quote) ?? 0
+            // ✅ 1-3：改用 PriceContext.updatePrices 取得記錄當下價格
+            const upperCode = form.code.toUpperCase()
+            const quotes = await updatePrices([upperCode])
+            const recordPrice = quotes[upperCode] ?? 0
             const now = new Date()
             const newRecord: Omit<SentimentRecord, 'id'> = {
                 code: form.code.toUpperCase(),

@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { collection, addDoc, getDocs, updateDoc, doc, orderBy, query, where, writeBatch } from 'firebase/firestore'
+import { addDoc, getDocs, updateDoc, orderBy, query, where, writeBatch } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { kmsDB, kmsStorage, investDB } from '../../lib/firebase'
-import { userCol, userDoc, userDocNested } from '../../lib/userDB'
+import { userCol, userDoc } from '../../lib/userDB'
+// ✅ 1-2：共用 CSV 解析模組
+import { parseCSVLine } from '../../lib/csv'
 import { generateHashtags, findRelatedNotes } from '../../lib/gemini'
 import { getQuote, extractPrice } from '../../lib/fugle'
 import { Plus, Search, Pencil, Trash2, X, Check, Link, FileText, Image, Sparkles, ChevronDown, ChevronUp, ArrowUpDown, Link2, Upload, ClipboardList } from 'lucide-react'
@@ -435,26 +437,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     // ───────────────────────────────────────────────────────────────────
 
     // ── 批次匯入筆記（JSON / CSV） ────────────────────────────────────────
-    // ✅ 修正：CSV 解析改用支援引號包裹欄位的 parser，避免 content 含逗號時斷行
-    function parseCSVLine(line: string): string[] {
-        const result: string[] = []
-        let current = ''
-        let inQuotes = false
-        for (let i = 0; i < line.length; i++) {
-            const ch = line[i]
-            if (ch === '"') {
-                if (inQuotes && line[i + 1] === '"') { current += '"'; i++ }
-                else { inQuotes = !inQuotes }
-            } else if (ch === ',' && !inQuotes) {
-                result.push(current.trim())
-                current = ''
-            } else {
-                current += ch
-            }
-        }
-        result.push(current.trim())
-        return result
-    }
+    // ✅ 1-2：CSV 解析改用 lib/csv 共用模組（支援引號包裹欄位）
 
     const handleImportNotes = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]

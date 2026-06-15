@@ -3,13 +3,14 @@ import { getDocs, addDoc, deleteDoc, orderBy, query, where, setDoc, getDoc, upda
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { calcPositions, type TradeRecord } from '../../lib/calc'
+import { fetchTrades, fetchDividends, invalidateDividends } from '../../lib/investData'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS, type CalendarEvent } from '../../lib/calendarData'
 import { Plus, X, ChevronLeft, ChevronRight, ExternalLink, Upload, Pencil, RefreshCw } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
-const card: React.CSSProperties = { backgroundColor: '#1a1d27', border: '1px solid #2e3349', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: '#0f1117', border: '1px solid #2e3349', borderRadius: '8px', padding: '8px 12px', color: '#e2e8f0', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const lbl: React.CSSProperties = { fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '4px' }
+const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
+const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
+const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }
 const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
@@ -54,16 +55,16 @@ export default function CalendarHome() {
     }
 
     const loadWatchList = async () => {
-        const [watchSnap, tradesSnap] = await Promise.all([
+        // ✅ 1-1：trades 改走共用快取層（lib/investData）
+        const [watchSnap, trades] = await Promise.all([
             getDocs(userCol(investDB, 'calendarWatchList')),
-            getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
+            fetchTrades<TradeRecord>('asc'),
         ])
         const list = watchSnap.docs.map(d => ({
             code: d.data().code || d.id,
             name: d.data().name || d.data().code || d.id
         }))
         watchListRef.current = list
-        const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
         refreshMyStockCodes(trades, list.map(w => w.code))
     }
 
@@ -77,9 +78,9 @@ export default function CalendarHome() {
     }
 
     const loadDividends = async () => {
-        const snap = await getDocs(userCol(investDB, 'dividends'))
-        const divEvents: CalendarEvent[] = snap.docs
-            .map(d => d.data())
+        // ✅ 1-1：改走共用快取層（lib/investData）
+        const divs = await fetchDividends<Record<string, any>>('asc')
+        const divEvents: CalendarEvent[] = divs
             .filter(d => d.date)
             .map(d => ({
                 id: `div-${d.code}-${d.date}`,
@@ -414,13 +415,12 @@ export default function CalendarHome() {
 
     const handleDeleteDividend = async (ev: CalendarEvent) => {
         if (!confirm(`確定要刪除 ${ev.title}？`)) return
-        const snap = await getDocs(userCol(investDB, 'dividends'))
-        const match = snap.docs.find(d => {
-            const data = d.data()
-            return data.code === ev.stockCode && data.date === ev.date
-        })
+        // ✅ 1-1：改走共用快取層找出對應文件 id（快取資料已含 id）
+        const divs = await fetchDividends<{ id: string; code?: string; date?: string }>('asc')
+        const match = divs.find(d => d.code === ev.stockCode && d.date === ev.date)
         if (match) {
             await deleteDoc(userDoc(investDB, 'dividends', match.id))
+            invalidateDividends()   // ✅ 1-1：寫入後清快取
             loadDividends()
         }
     }
@@ -442,7 +442,7 @@ export default function CalendarHome() {
         .cal-day { min-height: 80px; padding: 6px; border-radius: 6px; cursor: pointer; transition: background 0.15s; position: relative; }
         .cal-day:hover { background: rgba(79,142,247,0.06); }
         .cal-day.today { background: rgba(79,142,247,0.10); }
-        .cal-day.selected { background: rgba(79,142,247,0.15); outline: 1px solid #4f8ef7; }
+        .cal-day.selected { background: rgba(79,142,247,0.15); outline: 1px solid var(--c-accent); }
         @media (max-width: 768px) { .cal-day { min-height: 56px; } }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
@@ -451,7 +451,7 @@ export default function CalendarHome() {
 
                 {/* 標題列 */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-                    <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>財經行事曆</h1>
+                    <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>財經行事曆</h1>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <button onClick={loadYahooCalendar} disabled={loadingYahoo}
                             style={{ ...btn('#7c5cff'), opacity: loadingYahoo ? 0.6 : 1 }}
@@ -459,10 +459,10 @@ export default function CalendarHome() {
                             <RefreshCw size={14} style={loadingYahoo ? { animation: 'spin 1s linear infinite' } : undefined} />
                             {loadingYahoo ? '抓取中…' : '抓取法說會'}
                         </button>
-                        <button onClick={() => setShowXlsxImport(true)} style={btn('#21253a')} title="從 xlsx 手動匯入法說會日期">
+                        <button onClick={() => setShowXlsxImport(true)} style={btn('var(--c-border)')} title="從 xlsx 手動匯入法說會日期">
                             <Upload size={14} />匯入法說會
                         </button>
-                        <button onClick={() => setShowForm(true)} style={btn('#4f8ef7')}>
+                        <button onClick={() => setShowForm(true)} style={btn('var(--c-accent)')}>
                             <Plus size={14} />新增行程
                         </button>
                     </div>
@@ -471,14 +471,14 @@ export default function CalendarHome() {
                 {/* 錯誤 / 成功提示 */}
                 {investorError && (
                     <div style={{ backgroundColor: 'rgba(255,180,0,0.10)', border: '1px solid rgba(255,180,0,0.35)', borderRadius: '8px', padding: '10px 16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-                        <span style={{ fontSize: '13px', color: '#f5c842' }}>⚠️ {investorError}</span>
-                        <button onClick={() => setInvestorError(null)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={14} /></button>
+                        <span style={{ fontSize: '13px', color: 'var(--c-warning)' }}>⚠️ {investorError}</span>
+                        <button onClick={() => setInvestorError(null)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={14} /></button>
                     </div>
                 )}
                 {investorInfo && (
                     <div style={{ backgroundColor: 'rgba(0,200,150,0.10)', border: '1px solid rgba(0,200,150,0.35)', borderRadius: '8px', padding: '10px 16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-                        <span style={{ fontSize: '13px', color: '#00c896' }}>{investorInfo}</span>
-                        <button onClick={() => setInvestorInfo(null)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={14} /></button>
+                        <span style={{ fontSize: '13px', color: 'var(--c-positive)' }}>{investorInfo}</span>
+                        <button onClick={() => setInvestorInfo(null)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={14} /></button>
                     </div>
                 )}
 
@@ -486,7 +486,7 @@ export default function CalendarHome() {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                     {Object.entries(EVENT_LABELS).map(([type, label]) => (
                         <button key={type} onClick={() => toggleFilter(type)}
-                            style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 12px', borderRadius: '20px', border: '1px solid', borderColor: filterTypes.has(type) ? EVENT_COLORS[type] : '#2e3349', backgroundColor: filterTypes.has(type) ? `${EVENT_COLORS[type]}18` : 'transparent', color: filterTypes.has(type) ? EVENT_COLORS[type] : '#8892a4', fontSize: '12px', cursor: 'pointer' }}>
+                            style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 12px', borderRadius: '20px', border: '1px solid', borderColor: filterTypes.has(type) ? EVENT_COLORS[type] : 'var(--c-border)', backgroundColor: filterTypes.has(type) ? `${EVENT_COLORS[type]}18` : 'transparent', color: filterTypes.has(type) ? EVENT_COLORS[type] : 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}>
                             <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: EVENT_COLORS[type], display: 'inline-block' }} />
                             {label}
                         </button>
@@ -498,8 +498,8 @@ export default function CalendarHome() {
                     <div style={{ marginBottom: '16px' }}>
                         <button
                             onClick={() => setMyStocksOnly(v => !v)}
-                            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 14px', borderRadius: '20px', border: `1px solid ${myStocksOnly ? '#00c896' : '#2e3349'}`, backgroundColor: myStocksOnly ? 'rgba(0,200,150,0.12)' : 'transparent', color: myStocksOnly ? '#00c896' : '#8892a4', fontSize: '12px', cursor: 'pointer' }}>
-                            <span style={{ width: '28px', height: '15px', borderRadius: '8px', backgroundColor: myStocksOnly ? '#00c896' : '#2e3349', display: 'inline-flex', alignItems: 'center', padding: '2px', transition: 'background 0.2s', flexShrink: 0 }}>
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 14px', borderRadius: '20px', border: `1px solid ${myStocksOnly ? 'var(--c-positive)' : 'var(--c-border)'}`, backgroundColor: myStocksOnly ? 'rgba(0,200,150,0.12)' : 'transparent', color: myStocksOnly ? 'var(--c-positive)' : 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}>
+                            <span style={{ width: '28px', height: '15px', borderRadius: '8px', backgroundColor: myStocksOnly ? 'var(--c-positive)' : 'var(--c-border)', display: 'inline-flex', alignItems: 'center', padding: '2px', transition: 'background 0.2s', flexShrink: 0 }}>
                                 <span style={{ width: '11px', height: '11px', borderRadius: '50%', backgroundColor: '#fff', transform: myStocksOnly ? 'translateX(13px)' : 'translateX(0)', transition: 'transform 0.2s', display: 'block' }} />
                             </span>
                             法說會：只顯示持倉 &amp; 關注清單的股票
@@ -511,14 +511,14 @@ export default function CalendarHome() {
                     {/* 月曆 */}
                     <div style={card}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                            <button onClick={prevMonth} style={{ background: 'none', border: 'none', color: '#e2e8f0', cursor: 'pointer', display: 'flex', padding: '6px' }}><ChevronLeft size={20} /></button>
-                            <span style={{ fontSize: '18px', fontWeight: 700, color: '#e2e8f0' }}>{year} 年 {month} 月</span>
-                            <button onClick={nextMonth} style={{ background: 'none', border: 'none', color: '#e2e8f0', cursor: 'pointer', display: 'flex', padding: '6px' }}><ChevronRight size={20} /></button>
+                            <button onClick={prevMonth} style={{ background: 'none', border: 'none', color: 'var(--c-text)', cursor: 'pointer', display: 'flex', padding: '6px' }}><ChevronLeft size={20} /></button>
+                            <span style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-text)' }}>{year} 年 {month} 月</span>
+                            <button onClick={nextMonth} style={{ background: 'none', border: 'none', color: 'var(--c-text)', cursor: 'pointer', display: 'flex', padding: '6px' }}><ChevronRight size={20} /></button>
                         </div>
 
                         <div className="cal-grid" style={{ marginBottom: '4px' }}>
                             {WEEKDAYS.map(d => (
-                                <div key={d} style={{ textAlign: 'center', fontSize: '12px', color: '#8892a4', padding: '4px', fontWeight: 600 }}>{d}</div>
+                                <div key={d} style={{ textAlign: 'center', fontSize: '12px', color: 'var(--c-muted)', padding: '4px', fontWeight: 600 }}>{d}</div>
                             ))}
                         </div>
 
@@ -534,14 +534,14 @@ export default function CalendarHome() {
                                 return (
                                     <div key={d} className={`cal-day${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}`}
                                         onClick={() => setSelectedDay(isSelected ? null : dateStr)}>
-                                        <div style={{ fontSize: '13px', fontWeight: isToday ? 700 : 400, color: isToday ? '#4f8ef7' : isWeekend ? '#ff8888' : '#e2e8f0', marginBottom: '4px' }}>{d}</div>
+                                        <div style={{ fontSize: '13px', fontWeight: isToday ? 700 : 400, color: isToday ? 'var(--c-accent)' : isWeekend ? 'var(--c-danger)' : 'var(--c-text)', marginBottom: '4px' }}>{d}</div>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                                             {dayEvents.slice(0, 3).map(ev => (
                                                 <div key={ev.id} style={{ fontSize: '10px', backgroundColor: `${EVENT_COLORS[ev.type]}22`, color: EVENT_COLORS[ev.type], borderRadius: '3px', padding: '1px 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                     {ev.title}
                                                 </div>
                                             ))}
-                                            {dayEvents.length > 3 && <div style={{ fontSize: '10px', color: '#8892a4' }}>+{dayEvents.length - 3} 更多</div>}
+                                            {dayEvents.length > 3 && <div style={{ fontSize: '10px', color: 'var(--c-muted)' }}>+{dayEvents.length - 3} 更多</div>}
                                         </div>
                                     </div>
                                 )
@@ -553,36 +553,36 @@ export default function CalendarHome() {
                     {selectedDay && (
                         <div style={card}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>{selectedDay.replace(/-/g, '/')}</span>
-                                <button onClick={() => setSelectedDay(null)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={16} /></button>
+                                <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>{selectedDay.replace(/-/g, '/')}</span>
+                                <button onClick={() => setSelectedDay(null)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={16} /></button>
                             </div>
                             {selectedEvents.length === 0 ? (
-                                <div style={{ textAlign: 'center', padding: '32px', color: '#8892a4', fontSize: '13px' }}>這天沒有事件</div>
+                                <div style={{ textAlign: 'center', padding: '32px', color: 'var(--c-muted)', fontSize: '13px' }}>這天沒有事件</div>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                     {selectedEvents.map(ev => (
-                                        <div key={ev.id} style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '12px', borderLeft: `3px solid ${EVENT_COLORS[ev.type]}` }}>
+                                        <div key={ev.id} style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '12px', borderLeft: `3px solid ${EVENT_COLORS[ev.type]}` }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                                                 <div style={{ flex: 1 }}>
                                                     <div style={{ fontSize: '12px', color: EVENT_COLORS[ev.type], fontWeight: 600, marginBottom: '4px' }}>{EVENT_LABELS[ev.type]}</div>
-                                                    <div style={{ fontSize: '13px', color: '#e2e8f0', fontWeight: 600, marginBottom: '4px' }}>{ev.title}</div>
-                                                    {ev.description && <div style={{ fontSize: '12px', color: '#8892a4' }}>{ev.description}</div>}
+                                                    <div style={{ fontSize: '13px', color: 'var(--c-text)', fontWeight: 600, marginBottom: '4px' }}>{ev.title}</div>
+                                                    {ev.description && <div style={{ fontSize: '12px', color: 'var(--c-muted)' }}>{ev.description}</div>}
                                                 </div>
                                                 <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                                                     {ev.url && (
                                                         <a href={ev.url} target="_blank" rel="noopener noreferrer"
-                                                            style={{ color: '#4f8ef7', display: 'flex' }}><ExternalLink size={14} /></a>
+                                                            style={{ color: 'var(--c-accent)', display: 'flex' }}><ExternalLink size={14} /></a>
                                                     )}
                                                     {/* 手動建立的行程（存在 calendarEvents collection）才顯示編輯／刪除鈕 */}
                                                     {['personal', 'tech', 'fomc', 'dividend', 'shareholder', 'futures'].includes(ev.type) && ev.id && !ev.id.startsWith('fomc-') && !ev.id.startsWith('gtc-') && !ev.id.startsWith('wwdc-') && !ev.id.startsWith('build-') && !ev.id.startsWith('google-io-') && !ev.id.startsWith('ces-') && !ev.id.startsWith('futures-') && !ev.id.startsWith('div-') && (
                                                         <>
                                                             <button onClick={() => handleEditEvent(ev)}
-                                                                style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', padding: 0 }}
+                                                                style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer', padding: 0 }}
                                                                 title="編輯此行程">
                                                                 <Pencil size={13} />
                                                             </button>
                                                             <button onClick={() => handleDeleteEvent(ev.id)}
-                                                                style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer', padding: 0 }}
+                                                                style={{ background: 'none', border: 'none', color: 'var(--c-danger)', cursor: 'pointer', padding: 0 }}
                                                                 title="刪除此行程">
                                                                 <X size={14} />
                                                             </button>
@@ -590,14 +590,14 @@ export default function CalendarHome() {
                                                     )}
                                                     {ev.type === 'investor' && ev.stockCode && (
                                                         <button onClick={() => handleDeleteInvestorDate(ev.stockCode!, ev.date)}
-                                                            style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer', padding: 0 }}
+                                                            style={{ background: 'none', border: 'none', color: 'var(--c-danger)', cursor: 'pointer', padding: 0 }}
                                                             title="刪除此法說會日期">
                                                             <X size={14} />
                                                         </button>
                                                     )}
                                                     {ev.type === 'dividend' && (
                                                         <button onClick={() => handleDeleteDividend(ev)}
-                                                            style={{ background: 'none', border: 'none', color: '#ff5757', cursor: 'pointer', padding: 0 }}
+                                                            style={{ background: 'none', border: 'none', color: 'var(--c-danger)', cursor: 'pointer', padding: 0 }}
                                                             title="刪除此除權息記錄">
                                                             <X size={14} />
                                                         </button>
@@ -609,7 +609,7 @@ export default function CalendarHome() {
                                 </div>
                             )}
                             <button onClick={() => { setForm(f => ({ ...f, date: selectedDay, type: 'personal' })); setShowForm(true) }}
-                                style={{ ...btn('#21253a'), border: '1px solid #2e3349', width: '100%', justifyContent: 'center', marginTop: '12px', fontSize: '13px' }}>
+                                style={{ ...btn('var(--c-border)'), border: '1px solid var(--c-border)', width: '100%', justifyContent: 'center', marginTop: '12px', fontSize: '13px' }}>
                                 <Plus size={13} />新增行程到這天
                             </button>
                         </div>
@@ -621,8 +621,8 @@ export default function CalendarHome() {
                     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                         <div style={{ ...card, width: '100%', maxWidth: '480px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                                <span style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0' }}>編輯行程</span>
-                                <button onClick={() => setEditingEvent(null)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
+                                <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>編輯行程</span>
+                                <button onClick={() => setEditingEvent(null)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={18} /></button>
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                                 {/* 類型選擇 */}
@@ -639,9 +639,9 @@ export default function CalendarHome() {
                                             <button key={t} onClick={() => setForm(f => ({ ...f, type: t }))}
                                                 style={{
                                                     padding: '5px 14px', borderRadius: '20px', border: `1px solid`,
-                                                    borderColor: form.type === t ? EVENT_COLORS[t] : '#2e3349',
+                                                    borderColor: form.type === t ? EVENT_COLORS[t] : 'var(--c-border)',
                                                     backgroundColor: form.type === t ? `${EVENT_COLORS[t]}22` : 'transparent',
-                                                    color: form.type === t ? EVENT_COLORS[t] : '#8892a4',
+                                                    color: form.type === t ? EVENT_COLORS[t] : 'var(--c-muted)',
                                                     fontSize: '12px', cursor: 'pointer', fontWeight: form.type === t ? 600 : 400,
                                                     display: 'flex', alignItems: 'center', gap: '5px'
                                                 }}>
@@ -669,8 +669,8 @@ export default function CalendarHome() {
                                 </div>
                             </div>
                             <div style={{ display: 'flex', gap: '8px', marginTop: '20px', justifyContent: 'flex-end' }}>
-                                <button style={btn('#2e3349')} onClick={() => setEditingEvent(null)}><X size={14} />取消</button>
-                                <button style={{ ...btn(EVENT_COLORS[form.type] || '#4f8ef7') }} onClick={handleUpdateEvent}><Pencil size={14} />儲存</button>
+                                <button style={btn('var(--c-border)')} onClick={() => setEditingEvent(null)}><X size={14} />取消</button>
+                                <button style={{ ...btn(EVENT_COLORS[form.type] || 'var(--c-accent)') }} onClick={handleUpdateEvent}><Pencil size={14} />儲存</button>
                             </div>
                         </div>
                     </div>
@@ -681,21 +681,21 @@ export default function CalendarHome() {
                     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                         <div style={{ ...card, width: '100%', maxWidth: '520px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                <span style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0' }}>手動匯入法說會日期</span>
-                                <button onClick={() => setShowXlsxImport(false)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
+                                <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>手動匯入法說會日期</span>
+                                <button onClick={() => setShowXlsxImport(false)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={18} /></button>
                             </div>
-                            <div style={{ backgroundColor: '#0f1117', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', border: '1px solid #2e3349', fontSize: '12px', color: '#8892a4', lineHeight: 1.8 }}>
-                                <span style={{ color: '#4f8ef7', fontWeight: 600 }}>支援 .xlsx / .xls 格式，必要欄位（順序不限）：</span><br />
-                                <span style={{ color: '#e2e8f0' }}>股票代號</span>、<span style={{ color: '#e2e8f0' }}>股票名稱</span>、<span style={{ color: '#e2e8f0' }}>法說會日期</span><br />
-                                日期格式：<span style={{ color: '#00c896' }}>YYYY-MM-DD</span>、<span style={{ color: '#00c896' }}>YYYY/MM/DD</span> 或 <span style={{ color: '#00c896' }}>Excel 日期格式</span> 皆可<br />
-                                <span style={{ color: '#f5a623' }}>※ 匯入的日期會與 Firestore 既有資料合併（不覆蓋）</span>
+                            <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', border: '1px solid var(--c-border)', fontSize: '12px', color: 'var(--c-muted)', lineHeight: 1.8 }}>
+                                <span style={{ color: 'var(--c-accent)', fontWeight: 600 }}>支援 .xlsx / .xls 格式，必要欄位（順序不限）：</span><br />
+                                <span style={{ color: 'var(--c-text)' }}>股票代號</span>、<span style={{ color: 'var(--c-text)' }}>股票名稱</span>、<span style={{ color: 'var(--c-text)' }}>法說會日期</span><br />
+                                日期格式：<span style={{ color: 'var(--c-positive)' }}>YYYY-MM-DD</span>、<span style={{ color: 'var(--c-positive)' }}>YYYY/MM/DD</span> 或 <span style={{ color: 'var(--c-positive)' }}>Excel 日期格式</span> 皆可<br />
+                                <span style={{ color: 'var(--c-warning)' }}>※ 匯入的日期會與 Firestore 既有資料合併（不覆蓋）</span>
                             </div>
-                            <label style={{ ...btn('#00c896'), width: 'fit-content', cursor: 'pointer', opacity: xlsxImporting ? 0.6 : 1 }}>
+                            <label style={{ ...btn('var(--c-positive)'), width: 'fit-content', cursor: 'pointer', opacity: xlsxImporting ? 0.6 : 1 }}>
                                 <Upload size={15} />
                                 {xlsxImporting ? '匯入中...' : '選擇 Excel 檔案匯入'}
                                 <input type="file" accept=".xlsx,.xls" onChange={handleXlsxImport} disabled={xlsxImporting} style={{ display: 'none' }} />
                             </label>
-                            <button style={{ ...btn('#2e3349'), marginTop: '12px' }} onClick={() => setShowXlsxImport(false)}><X size={14} />關閉</button>
+                            <button style={{ ...btn('var(--c-border)'), marginTop: '12px' }} onClick={() => setShowXlsxImport(false)}><X size={14} />關閉</button>
                         </div>
                     </div>
                 )}
@@ -705,8 +705,8 @@ export default function CalendarHome() {
                     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                         <div style={{ ...card, width: '100%', maxWidth: '480px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                                <span style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0' }}>新增行程</span>
-                                <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer' }}><X size={18} /></button>
+                                <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>新增行程</span>
+                                <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={18} /></button>
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                                 {/* 類型選擇 */}
@@ -724,9 +724,9 @@ export default function CalendarHome() {
                                             <button key={t} onClick={() => setForm(f => ({ ...f, type: t }))}
                                                 style={{
                                                     padding: '5px 14px', borderRadius: '20px', border: `1px solid`,
-                                                    borderColor: form.type === t ? EVENT_COLORS[t] : '#2e3349',
+                                                    borderColor: form.type === t ? EVENT_COLORS[t] : 'var(--c-border)',
                                                     backgroundColor: form.type === t ? `${EVENT_COLORS[t]}22` : 'transparent',
-                                                    color: form.type === t ? EVENT_COLORS[t] : '#8892a4',
+                                                    color: form.type === t ? EVENT_COLORS[t] : 'var(--c-muted)',
                                                     fontSize: '12px', cursor: 'pointer', fontWeight: form.type === t ? 600 : 400,
                                                     display: 'flex', alignItems: 'center', gap: '5px'
                                                 }}>
@@ -736,7 +736,7 @@ export default function CalendarHome() {
                                         ))}
                                     </div>
                                     {form.type === 'investor' && (
-                                        <div style={{ fontSize: '11px', color: '#f5a623', marginTop: '6px' }}>
+                                        <div style={{ fontSize: '11px', color: 'var(--c-warning)', marginTop: '6px' }}>
                                             ⚠️ 法說會請在標題填入「股票代號 公司名稱」，如：2330 台積電
                                         </div>
                                     )}
@@ -769,8 +769,8 @@ export default function CalendarHome() {
                                 </div>
                             </div>
                             <div style={{ display: 'flex', gap: '8px', marginTop: '20px', justifyContent: 'flex-end' }}>
-                                <button style={btn('#2e3349')} onClick={() => setShowForm(false)}><X size={14} />取消</button>
-                                <button style={{ ...btn(EVENT_COLORS[form.type] || '#4f8ef7') }} onClick={handleAddEvent}>新增</button>
+                                <button style={btn('var(--c-border)')} onClick={() => setShowForm(false)}><X size={14} />取消</button>
+                                <button style={{ ...btn(EVENT_COLORS[form.type] || 'var(--c-accent)') }} onClick={handleAddEvent}>新增</button>
                             </div>
                         </div>
                     </div>

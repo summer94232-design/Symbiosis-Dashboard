@@ -1,17 +1,29 @@
 /**
- * SoldTracker.tsx — 賣出追蹤 v2
+ * SoldTracker.tsx — 賣出追蹤 v2.1
  *
- * 新增功能：
+ * v2 功能：
  * 1. 可設定決策判斷閾值（預設 ±3%，neutral 區間說明清楚）
  * 2. 追蹤期間新增 7 日、14 日選項
  * 3. 通知面板：偵測 14 日內賣出的股票現價超過設定閾值（預設 +10%）即顯示警示
+ *
+ * v2.1 修正（優化建議書 1-1 / 1-3 補套用）：
+ * - load() 改走 investData 共用快取（fetchTrades），不再各自 getDocs 全量讀取
+ * - refreshPrices() 改走 PriceContext.updatePrices：報價寫回 settings/lastPrices、
+ *   跨頁同步、不重複扣 Fugle 額度；同時會觸發自動快照（見 snapshot.ts）
+ * - 通知設定載入改為逐欄位驗證型別後建構，避免 spread Record<string, unknown>
+ *   造成的型別不安全
+ * - 修正通知設定面板 bug：開啟設定時同步 draft 與最新 config（原本 draft 只在
+ *   mount 時初始化，Firestore 設定載回來後開面板會看到預設值，按套用會把
+ *   已儲存設定蓋回預設）
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import { getDocs, getDoc, setDoc, orderBy, query } from 'firebase/firestore'
+import { getDoc, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDocNested } from '../../lib/userDB'
-import { getHistoricalCandles, getMultipleQuotes } from '../../lib/fugle'
+import { userDocNested } from '../../lib/userDB'
+import { getHistoricalCandles } from '../../lib/fugle'
+import { fetchTrades } from '../../lib/investData'
+import { usePrices } from '../../PriceContext'
 import {
     RefreshCw, TrendingDown, ChevronDown, ChevronRight,
     BarChart2, Bell, Settings2, X, AlertTriangle, Info
@@ -224,6 +236,16 @@ function AlertPanel({
     const hasAlerts = alerts.length > 0
     const saveSettings = () => { onConfigChange(draft); setShowSettings(false) }
 
+    // ✅ v2.1 修正：開啟設定面板時以最新 config 重置 draft。
+    // 原本 draft 只在 mount 初始化，Firestore 設定非同步載回後 config 已更新
+    // 但 draft 還是預設值，直接按「套用」會把已儲存的設定蓋回預設。
+    const toggleSettings = () => {
+        setShowSettings(v => {
+            if (!v) setDraft(config)
+            return !v
+        })
+    }
+
     return (
         <div style={{
             border: `1px solid ${hasAlerts ? 'color-mix(in srgb, var(--c-danger) 40%, transparent)' : 'var(--c-border)'}`,
@@ -244,7 +266,7 @@ function AlertPanel({
                         {!hasAlerts && ' — 目前無觸發'}
                     </span>
                 </div>
-                <button onClick={() => setShowSettings(v => !v)}
+                <button onClick={toggleSettings}
                     style={{ background: 'none', border: '1px solid var(--c-border)', borderRadius: '6px', cursor: 'pointer', color: 'var(--c-muted)', display: 'flex', gap: '4px', alignItems: 'center', fontSize: '12px', padding: '4px 10px' }}>
                     <Settings2 size={13} /> 設定
                 </button>
@@ -596,11 +618,29 @@ export default function SoldTracker() {
     const [alertConfig, setAlertConfig] = useState<AlertConfig>(DEFAULT_ALERT_CONFIG)
     const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set())
 
+    // ✅ 1-3：報價統一走 PriceContext（寫回 lastPrices、跨頁同步、不重複扣額度）
+    const { updatePrices } = usePrices()
+
     // ── 通知設定持久化（與儀表板共用 settings/soldAlert）──────────────────────
     useEffect(() => {
         getDoc(userDocNested(investDB, 'settings', 'soldAlert'))
             .then(snap => {
-                if (snap.exists()) setAlertConfig({ ...DEFAULT_ALERT_CONFIG, ...snap.data() })
+                if (!snap.exists()) return
+                // ✅ v2.1：逐欄位驗證型別後建構，取代 spread Record<string, unknown>
+                //（spread 索引簽名物件會讓欄位型別退化，且無法擋掉 DB 內的非法值）
+                const d = snap.data() as Record<string, unknown>
+                setAlertConfig({
+                    watchDays: typeof d.watchDays === 'number' && d.watchDays >= 1
+                        ? d.watchDays : DEFAULT_ALERT_CONFIG.watchDays,
+                    riseThreshold: typeof d.riseThreshold === 'number' && d.riseThreshold > 0
+                        ? d.riseThreshold : DEFAULT_ALERT_CONFIG.riseThreshold,
+                    dropThreshold: typeof d.dropThreshold === 'number' && d.dropThreshold >= 0
+                        ? d.dropThreshold : DEFAULT_ALERT_CONFIG.dropThreshold,
+                })
+                // 決策判斷閾值與通知設定共用同一份文件，重整後不再回到預設 3%
+                if (typeof d.verdictThreshold === 'number' && d.verdictThreshold >= 0.5) {
+                    setVerdictThreshold(d.verdictThreshold)
+                }
             })
             .catch(() => { })
     }, [])
@@ -610,13 +650,19 @@ export default function SoldTracker() {
         setDoc(userDocNested(investDB, 'settings', 'soldAlert'), c, { merge: true }).catch(() => { })
     }, [])
 
+    const updateVerdictThreshold = useCallback((v: number) => {
+        setVerdictThreshold(v)
+        setDoc(userDocNested(investDB, 'settings', 'soldAlert'), { verdictThreshold: v }, { merge: true }).catch(() => { })
+    }, [])
+
     // ── 載入 ──────────────────────────────────────────────────────────────
 
     const load = useCallback(async () => {
         setLoading(true)
         try {
-            const snap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'desc')))
-            const trades: Trade[] = snap.docs.map(d => ({ id: d.id, ...d.data() } as Trade))
+            // ✅ 1-1：改走 investData 共用快取（TTL 內與其他頁共用同一份 trades，
+            //         不再各自 getDocs 全量讀取）。'desc' 與原 orderBy('date','desc') 行為一致。
+            const trades = await fetchTrades<Trade>('desc')
             setAllSold(trades
                 .filter(t => t.type === 'sell')
                 .map(t => ({
@@ -639,13 +685,14 @@ export default function SoldTracker() {
         setDismissedAlerts(new Set()) // 每次刷新重新掃描通知
         try {
             const codes = [...new Set(allSold.map(r => r.code))]
-            const quotes = await getMultipleQuotes(codes)
+            // ✅ 1-3：經 PriceContext 取價（內部仍走 Fugle 節流），並同步觸發自動快照
+            const quotes = await updatePrices(codes)
             setAllSold(prev => prev.map(r => ({ ...r, currentPrice: quotes[r.code] ?? r.currentPrice })))
             setLastUpdated(new Date().toLocaleString('zh-TW'))
         } finally {
             setPriceLoading(false)
         }
-    }, [allSold])
+    }, [allSold, updatePrices])
 
     // ── 通知計算 ──────────────────────────────────────────────────────────
 
@@ -722,7 +769,7 @@ export default function SoldTracker() {
 
             {/* 決策閾值說明列 */}
             {!loading && allSold.length > 0 && (
-                <VerdictLegend threshold={verdictThreshold} onChangeThreshold={setVerdictThreshold} />
+                <VerdictLegend threshold={verdictThreshold} onChangeThreshold={updateVerdictThreshold} />
             )}
 
             {/* 篩選條 */}
@@ -746,7 +793,7 @@ export default function SoldTracker() {
                         { key: 'change', label: '漲跌幅' },
                         { key: 'cost', label: '機會損益' },
                     ].map(({ key, label }) => (
-                        <button key={key} onClick={() => setSortBy(key as any)}
+                        <button key={key} onClick={() => setSortBy(key as 'date' | 'change' | 'cost')}
                             style={{
                                 border: `1px solid ${sortBy === key ? 'var(--c-accent)' : 'var(--c-border)'}`,
                                 borderRadius: '6px', padding: '4px 10px', fontSize: '12px', cursor: 'pointer',

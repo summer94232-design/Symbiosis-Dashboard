@@ -1,9 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
-import { getDocs, orderBy, query, getDoc, setDoc } from 'firebase/firestore'
+import { getDoc, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc, userDocNested } from '../../lib/userDB'
-import { calcPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
-import { RefreshCw, TrendingUp, TrendingDown, Tag, Check, X } from 'lucide-react'
+import { userDocNested } from '../../lib/userDB'
+import { fetchTrades, fetchDividends } from '../../lib/investData'
+import InfoHint from '../../components/InfoHint'
+import { calcPositions, calcReturnRate, type TradeRecord, type DividendRecord } from '../../lib/calc'
+// ✅ 1-2：共用 UI 樣式與損益顏色
+import { card } from '../../ui/styles'
+import { pnlColor } from '../../ui/format'
+import { RefreshCw, TrendingUp, TrendingDown, Check, X } from 'lucide-react'
 import { usePrices } from '../../PriceContext'
 
 interface DisplayHolding {
@@ -43,11 +48,11 @@ function GroupCell({
         return (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }} onClick={() => setEditing(true)} title="點擊編輯族群">
                 {group ? (
-                    <span style={{ fontSize: '12px', color: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.12)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
+                    <span style={{ fontSize: '12px', color: 'var(--c-purple)', backgroundColor: 'rgba(167,139,250,0.12)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
                         {group}
                     </span>
                 ) : (
-                    <span style={{ fontSize: '12px', color: '#3d4460' }}>+ 設定族群</span>
+                    <span style={{ fontSize: '12px', color: 'var(--c-dim)' }}>+ 設定族群</span>
                 )}
             </div>
         )
@@ -79,13 +84,6 @@ function GroupCell({
     )
 }
 
-// ✅ 融資損益率輔助函式：融資用自備款為分母，現股用全額成本
-function calcReturnRate(unrealizedPnL: number, totalCost: number, marginAmount: number): number {
-    const equity = totalCost - marginAmount  // 自備款 = 全額成本 - 融資借款
-    const denominator = marginAmount > 0 ? equity : totalCost
-    return denominator > 0 ? (unrealizedPnL / denominator) * 100 : 0
-}
-
 export default function Holdings() {
     // ── 全域現價 Context ──
     const { prices, lastUpdated, priceLoading, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
@@ -98,12 +96,11 @@ export default function Holdings() {
     const load = async () => {
         setLoading(true)
         try {
-            const [snap, divSnap] = await Promise.all([
-                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(userCol(investDB, 'dividends')),
+            // ✅ 1-1：改走共用快取層（lib/investData）
+            const [trades, dividends] = await Promise.all([
+                fetchTrades<TradeRecord>('asc'),
+                fetchDividends<DividendRecord>('asc'),
             ])
-            const trades = snap.docs.map(d => d.data() as TradeRecord)
-            const dividends = divSnap.docs.map(d => d.data() as DividendRecord)
             const { holdings: positions } = calcPositions(trades, dividends)
             const activePositions = Object.values(positions).filter((pos: any) => pos.shares > 0)
 
@@ -174,8 +171,6 @@ export default function Holdings() {
     const totalPnL = holdings.reduce((s, h) => s + h.unrealizedPnL, 0)
     const totalReturn = totalCost > 0 ? (totalPnL / totalCost) * 100 : 0
     const hasPrice = holdings.some(h => h.currentPrice !== null)
-    const pnlColor = (v: number) => v >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
-    const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
     const allGroups = Array.from(new Set(Object.values(stockGroups).filter(Boolean)))
 
     return (
@@ -199,7 +194,7 @@ export default function Holdings() {
                         <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>股票持倉</h1>
                         <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
                             {lastUpdated ? `更新：${lastUpdated}` : '尚未更新現價，請點「更新現價」'}
-                            {groupSaving && <span style={{ marginLeft: '8px', color: '#a78bfa' }}>· 族群儲存中...</span>}
+                            {groupSaving && <span style={{ marginLeft: '8px', color: 'var(--c-purple)' }}>· 族群儲存中...</span>}
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -222,7 +217,10 @@ export default function Holdings() {
                         { label: '整體報酬率', value: totalReturn, color: pnlColor(totalReturn), fmt: (v: number) => hasPrice ? `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` : '—' },
                     ].map(({ label, value, color, fmt }) => (
                         <div key={label} style={card}>
-                            <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}</div>
+                            <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px', display: 'flex', alignItems: 'center' }}>
+                                {label}
+                                {label === '整體報酬率' && <InfoHint text="未實現損益 ÷ 持倉總成本（含融資借款的全額成本）。下方表格的個股報酬率對融資部位改以自備款為分母，兩者口徑不同。" />}
+                            </div>
                             <div style={{ fontSize: 'clamp(16px, 2vw, 22px)', fontWeight: 700, color, display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 {fmt(value)}
                                 {label === '未實現損益' && hasPrice && (value >= 0 ? <TrendingUp size={16} /> : <TrendingDown size={16} />)}
@@ -245,7 +243,7 @@ export default function Holdings() {
                                 <thead>
                                     <tr>
                                         {['代號', '名稱', '股數', '均價（含手續費）', '現價', '成本', '市值', '未實現損益', '報酬率', '族群'].map(h => (
-                                            <th key={h} style={h === '族群' ? { color: '#a78bfa' } : {}}>{h}</th>
+                                            <th key={h} style={h === '族群' ? { color: 'var(--c-purple)' } : {}}>{h}</th>
                                         ))}
                                     </tr>
                                 </thead>

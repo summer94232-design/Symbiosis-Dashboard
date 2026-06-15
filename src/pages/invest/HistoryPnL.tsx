@@ -1,13 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
-import { getDocs, orderBy, query } from 'firebase/firestore'
-import { investDB } from '../../lib/firebase'
-import { userCol } from '../../lib/userDB'
 import { calcPositions, type TradeRecord, type DividendRecord, type RealizedRecord } from '../../lib/calc'
+import { fetchTrades, fetchDividends } from '../../lib/investData'
+import InfoHint from '../../components/InfoHint'
+// ✅ 1-2：共用 UI 樣式與損益顏色
+import { card, inp } from '../../ui/styles'
+import { pnlColor } from '../../ui/format'
 import { Search, TrendingUp, TrendingDown, Calendar, X } from 'lucide-react'
 
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const pnlColor = (v: number) => v >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
 
 // 快速時間範圍選項
 const RANGE_OPTIONS = [
@@ -19,6 +18,20 @@ const RANGE_OPTIONS = [
     { label: '自訂', value: 'custom' },
 ] as const
 type RangeOption = typeof RANGE_OPTIONS[number]['value']
+
+// ── 5-2：個股級績效（含息）──
+interface StockPerfRow {
+    code: string
+    name: string
+    tradeCount: number      // 已實現賣出筆數
+    wins: number
+    winRate: number         // %
+    realized: number        // 已實現價差損益合計
+    costBasis: number       // 已實現部位的成本基礎合計（均價×股數）
+    dividend: number        // 該代號篩選區間內的現金股利合計
+    totalPnL: number        // 含息總損益 = realized + dividend
+    totalReturnRate: number | null  // 含息報酬率 = totalPnL / costBasis（無已實現成本時為 null）
+}
 
 function getPresetDates(range: RangeOption): { from: string; to: string } {
     const today = new Date()
@@ -46,7 +59,7 @@ export default function HistoryPnL() {
     const [records, setRecords] = useState<RealizedRecord[]>([])
     const [dividends, setDividends] = useState<DividendRecord[]>([])
     const [loading, setLoading] = useState(true)
-    const [tab, setTab] = useState<'realized' | 'dividend'>('realized')
+    const [tab, setTab] = useState<'realized' | 'dividend' | 'bystock'>('realized')
     const [search, setSearch] = useState('')
 
     // ── 時間篩選 ────────────────────────────────────────────────────────
@@ -57,12 +70,11 @@ export default function HistoryPnL() {
     const load = async () => {
         setLoading(true)
         try {
-            const [tradesSnap, divSnap] = await Promise.all([
-                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
-                getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'desc'))),
+            // ✅ 1-1：改走共用快取層（lib/investData）
+            const [trades, dividendRecords] = await Promise.all([
+                fetchTrades<TradeRecord>('asc'),
+                fetchDividends<DividendRecord>('desc'),
             ])
-            const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
-            const dividendRecords = divSnap.docs.map(d => d.data() as DividendRecord)
             setDividends(dividendRecords)
             const { realized } = calcPositions(trades, dividendRecords)
             // 最新賣出日期在最前面（降冪）
@@ -107,6 +119,49 @@ export default function HistoryPnL() {
         }),
         [dividends, search, activeFrom, activeTo]
     )
+
+    // ── 5-2：個股級績效（含息）──
+    // 依代號彙總已實現損益與現金股利（dividends 本來就有 code，只是過去沒 join）。
+    const stockPerf = useMemo<StockPerfRow[]>(() => {
+        const map: Record<string, StockPerfRow> = {}
+        const getRow = (code: string, name: string): StockPerfRow => {
+            const existing = map[code]
+            if (existing) {
+                if (!existing.name && name) existing.name = name
+                return existing
+            }
+            const created: StockPerfRow = {
+                code, name,
+                tradeCount: 0, wins: 0, winRate: 0,
+                realized: 0, costBasis: 0, dividend: 0,
+                totalPnL: 0, totalReturnRate: null,
+            }
+            map[code] = created
+            return created
+        }
+        filteredRecords.forEach(r => {
+            const row = getRow(r.code, r.name)
+            row.tradeCount += 1
+            if (r.realized > 0.5) row.wins += 1
+            row.realized += r.realized
+            row.costBasis += r.avgCost * r.shares
+        })
+        filteredDividends.forEach(d => {
+            const row = getRow(d.code, d.name)
+            row.dividend += d.cashDividend
+        })
+        return Object.values(map)
+            .map(row => {
+                const totalPnL = row.realized + row.dividend
+                return {
+                    ...row,
+                    winRate: row.tradeCount > 0 ? (row.wins / row.tradeCount) * 100 : 0,
+                    totalPnL,
+                    totalReturnRate: row.costBasis > 0 ? (totalPnL / row.costBasis) * 100 : null,
+                }
+            })
+            .sort((a, b) => b.totalPnL - a.totalPnL)
+    }, [filteredRecords, filteredDividends])
 
     // ── 統計（依篩選後資料即時計算） ─────────────────────────────────
     const totalRealized = filteredRecords.reduce((s, r) => s + r.realized, 0)
@@ -156,14 +211,15 @@ export default function HistoryPnL() {
                             {isFiltered && <span style={{ marginLeft: '8px', color: 'var(--c-accent)' }}>・篩選中</span>}
                         </p>
                     </div>
-                    
+
                     {/* ── Tab（帶筆數） ── */}
                     <div style={{ display: 'flex', gap: '4px', backgroundColor: 'var(--c-card)', padding: '4px', borderRadius: '8px', width: 'fit-content' }}>
                         {[
                             { key: 'realized', label: `已實現損益（${filteredRecords.length}）` },
                             { key: 'dividend', label: `股利紀錄（${filteredDividends.length}）` },
+                            { key: 'bystock', label: `個股績效（${stockPerf.length}）` },
                         ].map(t => (
-                            <button key={t.key} onClick={() => setTab(t.key as 'realized' | 'dividend')}
+                            <button key={t.key} onClick={() => setTab(t.key as 'realized' | 'dividend' | 'bystock')}
                                 style={{ backgroundColor: tab === t.key ? 'var(--c-sidebar)' : 'transparent', border: 'none', borderRadius: '6px', padding: '6px 18px', color: tab === t.key ? 'var(--c-text)' : 'var(--c-muted)', fontSize: '13px', cursor: 'pointer', fontWeight: tab === t.key ? 600 : 400, whiteSpace: 'nowrap' }}>
                                 {t.label}
                             </button>
@@ -211,7 +267,11 @@ export default function HistoryPnL() {
                         },
                     ].map(({ label, main, color, Icon, sub }) => (
                         <div key={label} style={card}>
-                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '6px' }}>{label}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '6px', display: 'flex', alignItems: 'center' }}>
+                                {label}
+                                {(label === '累計已實現損益' || label === '區間已實現損益') && <InfoHint text="賣出價 − 賣出當時的移動平均成本（含手續費、配股攤薄）。與年度回顧的 XIRR、資產趨勢的 TWR 口徑不同，數字不同屬正常。" />}
+                                {label === '平均報酬率' && <InfoHint text="各筆已實現交易報酬率的簡單平均（每筆等權、非金額加權），大額與小額交易權重相同。" />}
+                            </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                                 {Icon && <Icon size={14} color={color} />}
                                 <span style={{ fontSize: 'clamp(14px, 1.8vw, 18px)', fontWeight: 700, color }}>{main}</span>
@@ -273,7 +333,7 @@ export default function HistoryPnL() {
                     {range !== 'all' && (activeFrom || activeTo) && (
                         <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--c-accent)' }}>
                             📅 {activeFrom || '最早'} ～ {activeTo || '今日'}
-                            　損益 {filteredRecords.length} 筆・股利 {filteredDividends.length} 筆
+                            損益 {filteredRecords.length} 筆・股利 {filteredDividends.length} 筆
                         </div>
                     )}
                 </div>
@@ -287,7 +347,7 @@ export default function HistoryPnL() {
                             <div style={{ textAlign: 'center', padding: '60px', color: 'var(--c-muted)' }}>
                                 <div style={{ fontSize: '32px', marginBottom: '12px' }}>📭</div>
                                 <div style={{ fontSize: '14px' }}>{isFiltered ? '此條件下沒有損益紀錄' : '還沒有已實現損益紀錄'}</div>
-                                {isFiltered && <div style={{ fontSize: '12px', color: '#3d4460', marginTop: '6px' }}>試著調整篩選條件</div>}
+                                {isFiltered && <div style={{ fontSize: '12px', color: 'var(--c-dim)', marginTop: '6px' }}>試著調整篩選條件</div>}
                             </div>
                         ) : (
                             <div style={{ overflowX: 'auto' }}>
@@ -302,9 +362,9 @@ export default function HistoryPnL() {
                                     <tbody>
                                         {filteredRecords.map((r, i) => (
                                             <tr key={i}>
-                                                <td style={{ color: '#6b7690', fontSize: '13px' }}>{r.date}</td>
+                                                <td style={{ color: 'var(--c-muted)', fontSize: '13px' }}>{r.date}</td>
                                                 <td><span style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{r.code}</span></td>
-                                                <td style={{ color: '#c8d0e0' }}>{r.name}</td>
+                                                <td style={{ color: 'var(--c-text)' }}>{r.name}</td>
                                                 <td style={{ color: 'var(--c-muted)' }}>{r.shares.toLocaleString()}</td>
                                                 <td style={{ color: 'var(--c-muted)', fontFamily: 'monospace' }}>{r.avgCost.toFixed(2)}</td>
                                                 <td style={{ color: 'var(--c-text)', fontFamily: 'monospace', fontWeight: 600 }}>{r.sellPrice.toFixed(2)}</td>
@@ -379,9 +439,9 @@ export default function HistoryPnL() {
                                     <tbody>
                                         {filteredDividends.map((d, i) => (
                                             <tr key={i}>
-                                                <td style={{ color: '#6b7690', fontSize: '13px' }}>{d.date}</td>
+                                                <td style={{ color: 'var(--c-muted)', fontSize: '13px' }}>{d.date}</td>
                                                 <td><span style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{d.code}</span></td>
-                                                <td style={{ color: '#c8d0e0' }}>{d.name}</td>
+                                                <td style={{ color: 'var(--c-text)' }}>{d.name}</td>
                                                 <td>
                                                     <span style={{ color: 'var(--c-positive)', fontWeight: 700 }}>{d.cashDividend.toLocaleString()}</span>
                                                     <span style={{ color: 'var(--c-muted)', fontSize: '12px' }}> 元</span>
@@ -389,10 +449,10 @@ export default function HistoryPnL() {
                                                 <td>
                                                     {d.stockDividend > 0
                                                         ? <><span style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{d.stockDividend.toLocaleString()}</span><span style={{ color: 'var(--c-muted)', fontSize: '12px' }}> 股</span></>
-                                                        : <span style={{ color: '#3d4460' }}>—</span>
+                                                        : <span style={{ color: 'var(--c-dim)' }}>—</span>
                                                     }
                                                 </td>
-                                                <td style={{ color: '#6b7690', fontSize: '13px' }}>{d.note || '—'}</td>
+                                                <td style={{ color: 'var(--c-muted)', fontSize: '13px' }}>{d.note || '—'}</td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -413,6 +473,68 @@ export default function HistoryPnL() {
                                         </div>
                                     </div>
                                 )}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* ── 5-2：個股績效（含息）表格 ── */}
+                {tab === 'bystock' && (
+                    <div style={card}>
+                        <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '12px', display: 'flex', alignItems: 'center' }}>
+                            含息總損益 = 已實現價差 + 篩選區間內的現金股利
+                            <InfoHint text="價差為移動平均成本口徑（與已實現損益表一致）。股利含仍持有部位領到的現金股利；含息報酬率分母為已實現成本基礎，從未賣出的存股部位無分母故顯示 —。股票股利不計入金額（已透過攤薄反映在均價）。" />
+                        </div>
+                        {stockPerf.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '60px', color: 'var(--c-muted)' }}>
+                                <div style={{ fontSize: '32px', marginBottom: '12px' }}>📭</div>
+                                <div style={{ fontSize: '14px' }}>{isFiltered ? '此條件下沒有個股紀錄' : '還沒有已實現損益或股利紀錄'}</div>
+                            </div>
+                        ) : (
+                            <div style={{ overflowX: 'auto' }}>
+                                <table className="history-table">
+                                    <thead>
+                                        <tr>
+                                            {['代號', '名稱', '賣出筆數', '勝率', '已實現價差', '累計股利', '含息總損益', '含息報酬率'].map(h => (
+                                                <th key={h}>{h}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {stockPerf.map(s => (
+                                            <tr key={s.code}>
+                                                <td><span style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{s.code}</span></td>
+                                                <td style={{ color: 'var(--c-text)' }}>{s.name || '—'}</td>
+                                                <td style={{ color: 'var(--c-muted)' }}>{s.tradeCount > 0 ? `${s.tradeCount} 筆` : '—'}</td>
+                                                <td style={{ color: s.tradeCount > 0 ? (s.winRate >= 50 ? 'var(--c-positive)' : 'var(--c-danger)') : 'var(--c-muted)', fontWeight: 600 }}>
+                                                    {s.tradeCount > 0 ? `${s.winRate.toFixed(1)}%` : '—'}
+                                                </td>
+                                                <td style={{ color: s.tradeCount > 0 ? pnlColor(s.realized) : 'var(--c-muted)', fontWeight: 600 }}>
+                                                    {s.tradeCount > 0 ? `${s.realized >= 0 ? '+' : ''}${s.realized.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` : '—'}
+                                                </td>
+                                                <td style={{ color: s.dividend > 0 ? 'var(--c-accent)' : 'var(--c-dim)', fontWeight: 600 }}>
+                                                    {s.dividend > 0 ? `+${s.dividend.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` : '—'}
+                                                </td>
+                                                <td>
+                                                    <span style={{ color: pnlColor(s.totalPnL), fontWeight: 700 }}>
+                                                        {s.totalPnL >= 0 ? '+' : ''}{s.totalPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    {s.totalReturnRate !== null ? (
+                                                        <span style={{
+                                                            backgroundColor: s.totalReturnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)',
+                                                            color: pnlColor(s.totalReturnRate),
+                                                            padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 700
+                                                        }}>
+                                                            {s.totalReturnRate >= 0 ? '+' : ''}{s.totalReturnRate.toFixed(2)}%
+                                                        </span>
+                                                    ) : <span style={{ color: 'var(--c-dim)' }}>—</span>}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
                             </div>
                         )}
                     </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, orderBy, query, where, writeBatch } from 'firebase/firestore'
+import { addDoc, getDocs, updateDoc, deleteDoc, orderBy, query, where, writeBatch } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc, userDocNested } from '../../lib/userDB'
+import { userCol, userDoc } from '../../lib/userDB'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import type { DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
@@ -49,7 +49,8 @@ function SortableTask({ task, onToggle, onDelete, onEdit }: {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
     const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }
 
-    const isOverdue = task.dueDate && !task.done && new Date(task.dueDate) < new Date()
+    // 與 Dashboard / DailyBrief 統一口徑：字串比較，今天到期不算逾期
+    const isOverdue = task.dueDate && !task.done && task.dueDate < new Date().toISOString().split('T')[0]
 
     return (
         <div ref={setNodeRef} style={{ ...style, display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '10px 12px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', border: '1px solid var(--c-border)', marginBottom: '6px' }}>
@@ -238,7 +239,9 @@ export default function TaskManager() {
     const todoTasks = filteredTasks.filter(t => !t.done)
     const doneTasks = filteredTasks.filter(t => t.done)
     const allTags = [...new Set(tasks.map(t => t.tag).filter(Boolean) as string[])]
-    const overdueCount = tasks.filter(t => !t.done && t.dueDate && new Date(t.dueDate) < new Date()).length
+    // 與 Dashboard / DailyBrief 統一口徑：字串比較，今天到期不算逾期
+    const todayStr = new Date().toISOString().split('T')[0]
+    const overdueCount = tasks.filter(t => !t.done && t.dueDate && t.dueDate < todayStr).length
 
     return (
         <>

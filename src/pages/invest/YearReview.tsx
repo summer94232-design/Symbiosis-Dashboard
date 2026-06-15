@@ -1,10 +1,14 @@
 // YearReview.tsx
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { collection, getDocs, orderBy, query, doc, getDoc } from 'firebase/firestore'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { getDocs, orderBy, query, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc, userDocNested } from '../../lib/userDB'
+import { userCol, userDocNested } from '../../lib/userDB'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { type TradeRecord } from '../../lib/calc'
+import { calcAvailableCash, type TradeRecord } from '../../lib/calc'
+import { fetchTrades, fetchDividends, fetchCashflow } from '../../lib/investData'
+// ✅ 1-2：共用 UI 樣式與格式化（inp 因本頁刻意無 width:100%，保留本地定義）
+import { card } from '../../ui/styles'
+import { pnlColor, fmtMoney, fmtPct } from '../../ui/format'
 
 
 interface MonthlyPnL {
@@ -41,6 +45,8 @@ interface YearStat {
     total: number
     costBasis: number
     returnRate: number | null
+    /** ✅ 5-2：含息報酬率 =（已實現價差＋現金股利）/ 已實現成本基礎 */
+    totalReturnRate: number | null
     winRate: number | null
     tradeCount: number
 }
@@ -116,11 +122,8 @@ function calcCAGR(startValue: number, endValue: number, years: number): number {
     return (Math.pow(endValue / startValue, 1 / years) - 1) * 100
 }
 
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
+// 本頁的 inp 刻意不帶 width:100%（用於行內 select），與共用版不同，故保留本地定義
 const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', outline: 'none' }
-const pnlColor = (v: number) => v >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
-const fmtMoney = (v: number) => `${v >= 0 ? '+' : ''}$${Math.abs(v).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`
-const fmtPct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
 
 interface TooltipProps {
     active?: boolean
@@ -195,14 +198,15 @@ export default function YearReview() {
 
     // ✅ 修正：年度報酬率改用 XIRR，排除出入金（增資）影響。
     //   原本 (年末資產 − 年初資產) / 年初資產 會把入金當成獲利而高估。
-    //   新做法：把每年視為一段現金流，期初淨值=流出(負)、區間出入金、區間股利、期末淨值=流入(正)，
+    //   新做法：把每年視為一段現金流，期初淨值=流出(負)、區間出入金、期末淨值=流入(正)，
     //   以 XIRR 求年化報酬，金額多寡與時點都不再扭曲報酬率。
+    //   （方案 A 後快照 cash 已含股利，故股利不另列現金流。）
     const calcYearlyPerf = useCallback((
         allYears: number[],
         snapshots: Record<string, number>,
         _trades: TradeRecord[],
         cashflows: AccountCashflow[],
-        dividends: { date: string; cashDividend: number }[]
+        _dividends: { date: string; cashDividend: number }[]
     ) => {
         const perf: YearlyPerf[] = []
         allYears.forEach(year => {
@@ -219,14 +223,13 @@ export default function YearReview() {
                 .filter(c => c.date > startDate && c.date <= endDate)
                 .reduce((s, c) => s - c.amount, 0) // amount 入金為負 → 取負還原成「投入金額為正」
 
-            // 組現金流：期初淨值(負) + 區間出入金(入金負/出金正) + 區間股利(正) + 期末淨值(正)
+            // 組現金流：期初淨值(負) + 區間出入金(入金負/出金正) + 期末淨值(正)
             const cf: { date: string; amount: number }[] = [{ date: startDate, amount: -startValue }]
             cashflows
                 .filter(c => c.date > startDate && c.date <= endDate)
                 .forEach(c => cf.push({ date: c.date, amount: c.amount }))
-            dividends
-                .filter(dv => dv.date > startDate && dv.date <= endDate && dv.cashDividend > 0)
-                .forEach(dv => cf.push({ date: dv.date, amount: dv.cashDividend }))
+            // ✅ 方案 A：快照的 cash 已含現金股利（期初/期末淨值都吸收了股利），
+            //    股利不再列為獨立正向流，否則重複計算。
             cf.push({ date: endDate, amount: endValue })
 
             const xirr = calcXIRR(cf.sort((a, b) => a.date.localeCompare(b.date)))
@@ -300,15 +303,17 @@ export default function YearReview() {
             // ── 只有第一次才讀 Firestore，之後切換年份從快取重算 ──
             if (!rawDataLoadedRef.current) {
                 // ✅ 多讀 cashflow，供 snapshot 分頁排除出入金
-                const [tradesSnap, dividendsSnap, snapshotsSnap, cashflowSnap] = await Promise.all([
-                    getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
-                    getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc'))),
+                // ✅ 1-1：trades/dividends/cashflow 改走共用快取層（lib/investData），
+                //    assetSnapshots 非高頻共用資料，維持直接讀取。
+                const [tradesData, dividendsData, snapshotsSnap, cashflowData] = await Promise.all([
+                    fetchTrades<TradeRecord>('asc'),
+                    fetchDividends<DividendRecord>('asc'),
                     getDocs(query(userCol(investDB, 'assetSnapshots'), orderBy('date', 'asc'))),
-                    getDocs(query(userCol(investDB, 'cashflow'), orderBy('date', 'asc')))
+                    fetchCashflow<{ date: string; type: 'in' | 'out'; amount: number }>('asc')
                 ])
 
-                trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
-                dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
+                trades = tradesData
+                dividends = dividendsData
                 snapshots = {}
                 snapshotsSnap.docs.forEach(d => { snapshots[d.data().date as string] = d.data().totalAssets as number })
                 setAssetSnapshots(snapshots)
@@ -322,10 +327,7 @@ export default function YearReview() {
                 // │ ⚠️ 注意：AssetTrend.tsx 的 TWR 口徑正負號「相反」(入金記正)，     │
                 // │   兩邊用途不同、各自正確，請勿為了統一而改動任一邊。            │
                 // └─────────────────────────────────────────────────────────────┘
-                cashflows = cashflowSnap.docs.map(d => {
-                    const c = d.data() as { date: string; type: 'in' | 'out'; amount: number }
-                    return { date: c.date, amount: c.type === 'in' ? -c.amount : c.amount }
-                })
+                cashflows = cashflowData.map(c => ({ date: c.date, amount: c.type === 'in' ? -c.amount : c.amount }))
 
                 allTradesRef.current = trades
                 allDividendsRef.current = dividends
@@ -531,16 +533,14 @@ export default function YearReview() {
     const loadPerformance = useCallback(async () => {
         setXirrLoading(true)
         try {
-            const tradesSnap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc')))
-            const allTrades = tradesSnap.docs.map(d => d.data() as TradeRecord)
+            // ✅ 1-1：改走共用快取層（lib/investData）
+            const allTrades = await fetchTrades<TradeRecord>('asc')
 
             interface CashflowRecord { date: string; type: 'in' | 'out'; amount: number }
-            const cashSnap = await getDocs(query(userCol(investDB, 'cashflow'), orderBy('date', 'asc')))
-            const cashflows = cashSnap.docs.map(d => d.data() as CashflowRecord)
+            const cashflows = await fetchCashflow<CashflowRecord>('asc')
 
             interface DividendRecord { date: string; cashDividend: number }
-            const dividendsSnap = await getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc')))
-            const dividends = dividendsSnap.docs.map(d => d.data() as DividendRecord)
+            const dividends = await fetchDividends<DividendRecord>('asc')
 
             const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
             const savedPrices: Record<string, number | string> = priceDoc.exists() ? priceDoc.data() : {}
@@ -611,6 +611,9 @@ export default function YearReview() {
             }
 
             // 股利也加入原始現金流
+            // ⚠️ 此處刻意保留股利為獨立正向流：自訂區間 XIRR 的期初/期末值只含「持倉市值」、
+            //    不含現金，股利（與賣出收益）是已回收價值，必須以獨立流入帳才完整。
+            //    與全期 XIRR（期末含可用現金、股利不另列）口徑不同，是兩種模型各自自洽。
             dividends.forEach(d => {
                 if (d.cashDividend > 0) rawCfs.push({ date: d.date, amount: d.cashDividend })
             })
@@ -636,11 +639,14 @@ export default function YearReview() {
             setAvgHoldingDays(realized.length > 0 ? realized.reduce((s, r) => s + r.holdingDays, 0) / realized.length : null)
             setMdd(equityCurve.length > 0 ? calcMDD(equityCurve) : null)
 
-            // 全期 XIRR（出入金 + 股利，終值用現價）
-            // 正負號 = XIRR 口徑：入金負、出金正、股利正、期末市值正
+            // 全期 XIRR（終值用現價）
+            // 正負號 = XIRR 口徑：入金負、出金正、期末總淨值正
+            // ⚠️ 入金/出金是「帳戶層級」外部金流，期末回收值必須是帳戶總淨值 = 持倉市值 + 可用現金。
+            //    若只算持倉市值，賣股後留在帳上的現金與閒置入金都會被漏掉，
+            //    部位了結越多 XIRR 失真越大（極端：全數獲利了結未出金 → 解出極度負值）。
+            // ⚠️ 方案 A：calcAvailableCash 已含現金股利，故股利【不再】列為獨立正向流，否則重複計算。
             const xirrBase: { date: string; amount: number }[] = []
             cashflows.forEach(cf => { xirrBase.push({ date: cf.date, amount: cf.type === 'in' ? -cf.amount : cf.amount }) })
-            dividends.forEach(d => { if (d.cashDividend > 0) xirrBase.push({ date: d.date, amount: d.cashDividend }) })
 
             let endMV = 0, endCost = 0
             Object.entries(posDetail).forEach(([code, p]) => {
@@ -651,11 +657,13 @@ export default function YearReview() {
                 }
             })
 
+            const endCash = calcAvailableCash(cashflows, allTrades, dividends)
+
             const today = new Date().toISOString().split('T')[0]
             const mkXirr = (ev: number) => calcXIRR(
                 [...xirrBase, { date: today, amount: ev }].sort((a, b) => a.date.localeCompare(b.date))
             )
-            setXirr(mkXirr(endMV)); setXirrCost(mkXirr(endCost))
+            setXirr(mkXirr(endMV + endCash)); setXirrCost(mkXirr(endCost + endCash))
 
             const allYrs = [...new Set(realized.map(r => parseInt(r.date.slice(0, 4))))].sort()
             const divByYear: Record<number, number> = {}
@@ -667,7 +675,13 @@ export default function YearReview() {
                 const totalCb = yr.reduce((s, r) => s + r.costBasis, 0)
                 const totalD = divByYear[y] || 0
                 const w = yr.filter(r => r.pnl > 0.5).length
-                return { year: y, realized: totalR, dividend: totalD, total: totalR + totalD, costBasis: totalCb, returnRate: totalCb > 0 ? (totalR / totalCb) * 100 : null, winRate: yr.length > 0 ? (w / yr.length) * 100 : null, tradeCount: yr.length }
+                return {
+                    year: y, realized: totalR, dividend: totalD, total: totalR + totalD, costBasis: totalCb,
+                    returnRate: totalCb > 0 ? (totalR / totalCb) * 100 : null,
+                    // ✅ 5-2：含息報酬率（分母同已實現成本基礎，與已實現報酬率可直接比較）
+                    totalReturnRate: totalCb > 0 ? ((totalR + totalD) / totalCb) * 100 : null,
+                    winRate: yr.length > 0 ? (w / yr.length) * 100 : null, tradeCount: yr.length,
+                }
             }))
 
             const heat: Record<string, number> = {}
@@ -713,7 +727,8 @@ export default function YearReview() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tab])
 
-    const filtered = monthlyData.slice(startMonth - 1, endMonth)
+    // ✅ 3-3：衍生值包 useMemo，避免月份滑桿/輸入互動時整批重算
+    const filtered = useMemo(() => monthlyData.slice(startMonth - 1, endMonth), [monthlyData, startMonth, endMonth])
     const totalRealized = filtered.reduce((s, m) => s + m.realized, 0)
     const totalDividend = filtered.reduce((s, m) => s + m.dividend, 0)
     const totalPnL = totalRealized + totalDividend
@@ -722,7 +737,9 @@ export default function YearReview() {
     const months = Array.from({ length: 12 }, (_, i) => i + 1)
 
     // ✅ 修正：整體 CAGR 改用 XIRR（排除全期出入金影響），與年度表同口徑。
-    const overallCAGR = (() => {
+    // ✅ 3-3：XIRR 二分法 200 次迭代不便宜，包 useMemo 只在快照更新時重算
+    //   （allCashflowsRef 為 ref 非反應式，但它在 setAssetSnapshots 之前就緒，以 assetSnapshots 觸發即正確）
+    const overallCAGR = useMemo(() => {
         const dates = Object.keys(assetSnapshots).sort()
         if (dates.length < 2) return null
         const startDate = dates[0]
@@ -732,35 +749,33 @@ export default function YearReview() {
         if (startValue <= 0 || endValue <= 0) return null
 
         const cashflows = allCashflowsRef.current
-        const dividends = allDividendsRef.current
 
         const cf: { date: string; amount: number }[] = [{ date: startDate, amount: -startValue }]
         cashflows
             .filter(c => c.date > startDate && c.date <= endDate)
             .forEach(c => cf.push({ date: c.date, amount: c.amount }))
-        dividends
-            .filter(dv => dv.date > startDate && dv.date <= endDate && dv.cashDividend > 0)
-            .forEach(dv => cf.push({ date: dv.date, amount: dv.cashDividend }))
+        // ✅ 方案 A：快照的 cash 已含現金股利，股利不再列為獨立正向流，否則重複計算。
         cf.push({ date: endDate, amount: endValue })
 
         const xirr = calcXIRR(cf.sort((a, b) => a.date.localeCompare(b.date)))
         return xirr != null ? xirr * 100 : null
-    })()
+    }, [assetSnapshots])
 
-    const perfChartData: BarChartEntry[] = yearlyPerf.map(p => ({
+    // ✅ 3-3：圖表資料衍生陣列包 useMemo（recharts 對 data 參考變動敏感，順便減少重繪）
+    const perfChartData: BarChartEntry[] = useMemo(() => yearlyPerf.map(p => ({
         year: `${p.year}`,
         '年度報酬率%': parseFloat(p.totalReturn.toFixed(2)),
         '年末資產': p.endValue,
         fill: p.totalReturn >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
-    }))
+    })), [yearlyPerf])
 
-    const filteredWithFill: MonthlyBarEntry[] = filtered.map(m => ({
+    const filteredWithFill: MonthlyBarEntry[] = useMemo(() => filtered.map(m => ({
         ...m,
         realizedFill: m.realized >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
-    }))
+    })), [filtered])
 
-    const heatYears = [...new Set(Object.keys(heatmapData).map(k => k.slice(0, 4)))].sort()
-    const heatMax = Math.max(...Object.values(heatmapData).map(Math.abs), 1)
+    const heatYears = useMemo(() => [...new Set(Object.keys(heatmapData).map(k => k.slice(0, 4)))].sort(), [heatmapData])
+    const heatMax = useMemo(() => Math.max(...Object.values(heatmapData).map(Math.abs), 1), [heatmapData])
 
     const tabBtn = (active: boolean): React.CSSProperties => ({
         backgroundColor: active ? 'var(--c-sidebar)' : 'transparent', border: 'none', borderRadius: '6px',
@@ -1140,7 +1155,7 @@ export default function YearReview() {
                                                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                                                     <thead>
                                                         <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
-                                                            {['年度', '已實現損益', '股利收入', '合計', '已實現報酬率', '勝率', '交易筆數'].map(h => (
+                                                            {['年度', '已實現損益', '股利收入', '合計', '已實現報酬率', '含息報酬率', '勝率', '交易筆數'].map(h => (
                                                                 <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--c-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>{h}</th>
                                                             ))}
                                                         </tr>
@@ -1155,6 +1170,12 @@ export default function YearReview() {
                                                                 <td style={{ padding: '12px' }}>
                                                                     {y.returnRate !== null
                                                                         ? <span style={{ backgroundColor: y.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(y.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>{fmtPct(y.returnRate)}</span>
+                                                                        : '—'}
+                                                                </td>
+                                                                {/* ✅ 5-2：含息報酬率（已實現價差＋股利，分母同已實現成本基礎） */}
+                                                                <td style={{ padding: '12px' }}>
+                                                                    {y.totalReturnRate !== null
+                                                                        ? <span style={{ backgroundColor: y.totalReturnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(y.totalReturnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>{fmtPct(y.totalReturnRate)}</span>
                                                                         : '—'}
                                                                 </td>
                                                                 <td style={{ padding: '12px', color: y.winRate !== null ? (y.winRate >= 50 ? 'var(--c-positive)' : 'var(--c-danger)') : 'var(--c-muted)', fontWeight: 600 }}>
