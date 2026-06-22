@@ -3,6 +3,7 @@ import { getDocs, setDoc, deleteDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { Plus, X, Search, Pencil, Trash2, ChevronDown, ChevronRight, Map, Tag, Loader } from 'lucide-react'
+import { ChainView } from './IndustryChainView'
 
 // ── 型別 ──────────────────────────────────────────────────────────
 interface StockEntry {
@@ -111,10 +112,11 @@ function StockCard({ entry, onEdit, onDelete, onThemeClick, highlighted }: {
 }
 
 // ── 新增/編輯表單 ─────────────────────────────────────────────────
-function StockForm({ initial, allThemes, onSave, onCancel }: {
+function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
     initial?: Partial<StockEntry>
     allThemes: string[]
-    onSave: (entry: StockEntry) => Promise<void>
+    allStocks: { code: string; name: string }[]
+    onSave: (entry: StockEntry, rels: { up: string[]; down: string[] }) => Promise<void>
     onCancel: () => void
 }) {
     const [code, setCode] = useState(initial?.code || '')
@@ -122,6 +124,8 @@ function StockForm({ initial, allThemes, onSave, onCancel }: {
     const [themes, setThemes] = useState<string[]>(initial?.themes || [])
     const [note, setNote] = useState(initial?.note || '')
     const [themeInput, setThemeInput] = useState('')
+    const [upCodes, setUpCodes] = useState<string[]>([])
+    const [downCodes, setDownCodes] = useState<string[]>([])
     const [saving, setSaving] = useState(false)
     const [lookingUp, setLookingUp] = useState(false)
     const [nameTouched, setNameTouched] = useState(!!initial?.name)
@@ -152,7 +156,7 @@ function StockForm({ initial, allThemes, onSave, onCancel }: {
     const handleSave = async () => {
         if (!canSave) return
         setSaving(true)
-        await onSave({ code: code.trim(), name: name.trim(), themes, note: note.trim() || undefined })
+        await onSave({ code: code.trim(), name: name.trim(), themes, note: note.trim() || undefined }, { up: upCodes, down: downCodes })
         setSaving(false)
     }
 
@@ -195,6 +199,45 @@ function StockForm({ initial, allThemes, onSave, onCancel }: {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
                     {themes.map(t => <ThemeBadge key={t} label={t} onRemove={() => removeTheme(t)} />)}
                 </div>
+            </div>
+            <div style={{ marginBottom: '12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                    <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>上游供應商（供應給此檔）</label>
+                    <select value="" onChange={e => { const c = e.target.value; if (c && !upCodes.includes(c)) setUpCodes(p => [...p, c]) }} style={inp}>
+                        <option value="">＋加入上游…</option>
+                        {allStocks.filter(s => s.code !== code && !upCodes.includes(s.code)).map(s => (
+                            <option key={s.code} value={s.code}>{s.code}　{s.name}</option>
+                        ))}
+                    </select>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                        {upCodes.map(c => (
+                            <span key={c} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '20px', padding: '2px 6px 2px 10px', fontSize: '12px', color: 'var(--c-text)' }}>
+                                {c}
+                                <X size={11} style={{ cursor: 'pointer', color: 'var(--c-danger)' }} onClick={() => setUpCodes(p => p.filter(x => x !== c))} />
+                            </span>
+                        ))}
+                    </div>
+                </div>
+                <div>
+                    <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>下游客戶（此檔供應給）</label>
+                    <select value="" onChange={e => { const c = e.target.value; if (c && !downCodes.includes(c)) setDownCodes(p => [...p, c]) }} style={inp}>
+                        <option value="">＋加入下游…</option>
+                        {allStocks.filter(s => s.code !== code && !downCodes.includes(s.code)).map(s => (
+                            <option key={s.code} value={s.code}>{s.code}　{s.name}</option>
+                        ))}
+                    </select>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                        {downCodes.map(c => (
+                            <span key={c} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '20px', padding: '2px 6px 2px 10px', fontSize: '12px', color: 'var(--c-text)' }}>
+                                {c}
+                                <X size={11} style={{ cursor: 'pointer', color: 'var(--c-danger)' }} onClick={() => setDownCodes(p => p.filter(x => x !== c))} />
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '12px', marginTop: '-4px' }}>
+                在此加入的上下游會直接寫入脈絡圖；詳細的供應內容、或既有關係的刪除，請到「脈絡圖」分頁管理。
             </div>
             <div style={{ marginBottom: '16px' }}>
                 <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>備註</label>
@@ -451,7 +494,7 @@ function RelationView({ entries }: { entries: StockEntry[] }) {
 }
 
 // ── 主元件 ────────────────────────────────────────────────────────
-type ViewMode = 'stock' | 'theme' | 'graph'
+type ViewMode = 'stock' | 'theme' | 'graph' | 'chain'
 
 export default function IndustryMap() {
     const [entries, setEntries] = useState<StockEntry[]>([])
@@ -494,10 +537,16 @@ export default function IndustryMap() {
         )
     }, [entries, searchQ, selectedTheme])
 
-    const handleSave = async (entry: StockEntry) => {
+    const handleSave = async (entry: StockEntry, rels: { up: string[]; down: string[] }) => {
         await setDoc(userDoc(investDB, 'industryMap', entry.code), {
             name: entry.name, themes: entry.themes, ...(entry.note ? { note: entry.note } : {}),
         })
+        // 上下游關係：用確定性 id（from__to）避免重複；merge 不覆蓋既有的 label/type
+        const relId = (from: string, to: string) => `${from}__${to}`.replace(/\//g, '_')
+        await Promise.all([
+            ...rels.up.map(c => setDoc(userDoc(investDB, 'industryRelations', relId(c, entry.code)), { from: c, to: entry.code }, { merge: true })),
+            ...rels.down.map(c => setDoc(userDoc(investDB, 'industryRelations', relId(entry.code, c)), { from: entry.code, to: c }, { merge: true })),
+        ])
         setShowForm(false); setEditEntry(null); load()
     }
 
@@ -531,13 +580,13 @@ export default function IndustryMap() {
                     </span>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {(['theme', 'stock', 'graph'] as ViewMode[]).map(v => (
+                    {(['theme', 'stock', 'graph', 'chain'] as ViewMode[]).map(v => (
                         <button key={v} onClick={() => setViewMode(v)} style={{
                             ...btn(viewMode === v ? 'var(--c-accent)' : 'var(--c-card)'),
                             color: viewMode === v ? '#fff' : 'var(--c-text)',
                             border: '1px solid var(--c-border)', fontSize: '12px', padding: '6px 12px',
                         }}>
-                            {v === 'theme' ? '題材視圖' : v === 'stock' ? '股票視圖' : '關聯查詢'}
+                            {v === 'theme' ? '題材視圖' : v === 'stock' ? '股票視圖' : v === 'graph' ? '關聯查詢' : '脈絡圖'}
                         </button>
                     ))}
                     <button onClick={() => { setShowForm(true); setEditEntry(null) }} style={btn('var(--c-accent)')}>
@@ -547,8 +596,8 @@ export default function IndustryMap() {
             </div>
 
             {/* 表單 */}
-            {showForm && <StockForm allThemes={allThemes} onSave={handleSave} onCancel={() => setShowForm(false)} />}
-            {editEntry && <StockForm initial={editEntry} allThemes={allThemes} onSave={handleSave} onCancel={() => setEditEntry(null)} />}
+            {showForm && <StockForm allThemes={allThemes} allStocks={entries} onSave={handleSave} onCancel={() => setShowForm(false)} />}
+            {editEntry && <StockForm initial={editEntry} allThemes={allThemes} allStocks={entries} onSave={handleSave} onCancel={() => setEditEntry(null)} />}
 
             {/* ── 題材視圖 ── */}
             {viewMode === 'theme' && (
@@ -619,6 +668,9 @@ export default function IndustryMap() {
 
             {/* ── 關聯查詢 ── */}
             {viewMode === 'graph' && <RelationView entries={entries} />}
+
+            {/* ── 脈絡圖 ── */}
+            {viewMode === 'chain' && <ChainView nodes={entries} />}
         </div>
     )
 }

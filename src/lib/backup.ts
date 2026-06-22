@@ -53,7 +53,7 @@ export interface FullBackup {
 export const INVEST_COLLECTIONS = [
     'trades', 'cashflow', 'dividends',
     'stockDict', 'stockDictFull', 'assetSnapshots',
-    'sentiments', 'watchlist', 'industryMap',
+    'sentiments', 'watchlist', 'industryMap', 'industryRelations',
     'calendarEvents', 'calendarWatchList',
     'tasks', 'taskProjects',
     'settings',
@@ -71,6 +71,7 @@ const COLLECTION_LABELS: Record<string, string> = {
     sentiments: '情緒追蹤',
     watchlist: '選股追蹤',
     industryMap: '產業地圖',
+    industryRelations: '產業脈絡關係',
     calendarEvents: '行事曆事件',
     calendarWatchList: '行事曆關注',
     tasks: '任務',
