@@ -5,10 +5,16 @@ import { userCol, userDoc } from '../../lib/userDB'
 import { Trash2, X, Search, ArrowUpRight, ArrowDownLeft, Link2, Network, List } from 'lucide-react'
 
 // ── 型別 ──────────────────────────────────────────────────────────
-/** 脈絡圖節點：只需要代號與名稱，可直接傳入 IndustryMap 的 StockEntry[]（結構相容） */
+type Market = 'TW' | 'US' | 'JP'
+function marketLabel(m?: Market): string {
+    return m === 'US' ? '.US' : m === 'JP' ? '.JP' : '.TW'
+}
+
+/** 脈絡圖節點：代號、名稱、市場，可直接傳入 IndustryMap 的 StockEntry[]（結構相容） */
 export interface ChainNode {
     code: string
     name: string
+    market?: Market
 }
 
 /**
@@ -76,6 +82,12 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
         const m = new Map<string, string>()
         nodes.forEach(n => m.set(n.code, n.name))
         return (code: string) => m.get(code) ?? code
+    }, [nodes])
+
+    const marketOf = useMemo(() => {
+        const m = new Map<string, Market | undefined>()
+        nodes.forEach(n => m.set(n.code, n.market))
+        return (code: string) => m.get(code)
     }, [nodes])
 
     const sortedNodes = useMemo(
@@ -240,7 +252,7 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
                 <select value={addTarget} onChange={e => setAddTarget(e.target.value)} style={inp}>
                     <option value="">{dir === 'up' ? '選擇上游（供應給此檔的公司）' : '選擇下游（此檔供應的對象）'}</option>
                     {targetOptions.map(n => (
-                        <option key={n.code} value={n.code}>{n.code}　{n.name}</option>
+                        <option key={n.code} value={n.code}>{n.code}　{n.name}〔{marketLabel(n.market)}〕</option>
                     ))}
                 </select>
                 <input style={inp} placeholder="供應內容 / 關係描述（選填，例：HBM3E 記憶體）" value={addLabel} onChange={e => setAddLabel(e.target.value)} />
@@ -265,6 +277,7 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
             <div style={{ minWidth: 0 }}>
                 <div onClick={() => selectFocus(counterpart)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
                     <span style={{ fontWeight: 700, fontSize: '14px', color: 'var(--c-accent)' }}>{counterpart}</span>
+                    <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--c-muted)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '0 5px' }}>{marketLabel(marketOf(counterpart))}</span>
                     <span style={{ fontSize: '13px', color: 'var(--c-text)' }}>{nameOf(counterpart)}</span>
                 </div>
                 {(link.label || link.type) && (
@@ -321,7 +334,7 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
                                 border: '1px solid var(--c-border)', borderRadius: '8px',
                                 padding: '6px 12px', fontSize: '13px', cursor: 'pointer',
                             }}>
-                                <strong>{n.code}</strong> {n.name}
+                                <strong>{n.code}</strong> {n.name} <span style={{ fontSize: '11px', opacity: 0.7 }}>{marketLabel(n.market)}</span>
                             </button>
                         ))}
                     </div>
@@ -343,7 +356,7 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
                         </div>
                         <div>
                             <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-accent)' }}>{focusCode}</div>
-                            <div style={{ fontSize: '13px', color: 'var(--c-text)' }}>{nameOf(focusCode)}</div>
+                            <div style={{ fontSize: '13px', color: 'var(--c-text)' }}>{nameOf(focusCode)} <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>{marketLabel(marketOf(focusCode))}</span></div>
                         </div>
                         <div style={{ fontSize: '12px', color: 'var(--c-muted)' }}>上游 {upstream.length} · 下游 {downstream.length}</div>
 
@@ -431,6 +444,7 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
                                                     strokeWidth={isFocus ? 2.5 : 1}
                                                 />
                                                 <text x={p.x + 14} y={p.y + 23} style={{ fill: 'var(--c-accent)', pointerEvents: 'none' }} fontSize={14} fontWeight={700}>{code}</text>
+                                                <text x={p.x + BOX_W - 12} y={p.y + 20} textAnchor="end" style={{ fill: 'var(--c-muted)', pointerEvents: 'none' }} fontSize={9}>{marketLabel(marketOf(code))}</text>
                                                 <text x={p.x + 14} y={p.y + 42} style={{ fill: 'var(--c-text)', pointerEvents: 'none' }} fontSize={12}>{short(nameOf(code), 8)}</text>
                                             </g>
                                         )

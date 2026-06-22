@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { addDoc, getDocs, updateDoc, orderBy, query, where, writeBatch } from 'firebase/firestore'
+import { addDoc, getDoc, getDocs, updateDoc, orderBy, query, where, writeBatch } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { kmsDB, kmsStorage, investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 // ✅ 1-2：共用 CSV 解析模組
 import { parseCSVLine } from '../../lib/csv'
 import { generateHashtags, findRelatedNotes } from '../../lib/gemini'
@@ -40,6 +40,9 @@ const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, b
 const TYPE_ICONS: Record<string, any> = { note: FileText, url: Link, image: Image, file: FileText }
 const TYPE_LABELS: Record<string, string> = { note: '文字筆記', url: '網址收藏', image: '圖片', file: '文件' }
 const TYPE_COLORS: Record<string, string> = { note: 'var(--c-accent)', url: 'var(--c-positive)', image: 'var(--c-warning)', file: '#a78bfa' }
+
+// 「標籤管理」頁儲存父標籤排序的 Firestore document（settings/tagOrder）
+const TAG_ORDER_DOC = 'tagOrder'
 
 // ── 筆記模板定義 ──────────────────────────────────────────
 interface NoteTemplate {
@@ -106,6 +109,8 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     // ───────────────────────────────────────────────────────────────────
     const [uploading, setUploading] = useState(false)
     const [allTags, setAllTags] = useState<string[]>([])
+    // 父標籤排序（沿用「標籤管理」頁存的 settings/tagOrder.parentOrder）
+    const [parentOrder, setParentOrder] = useState<string[]>([])
     const [sortBy, setSortBy] = useState<'createdAt' | 'updatedAt' | 'title'>('createdAt')
     const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
     const [showLinkPicker, setShowLinkPicker] = useState(false)
@@ -124,12 +129,22 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
 
     const load = async () => {
         const q = query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc'))
-        const snap = await getDocs(q)
+        const [snap, orderSnap] = await Promise.all([
+            getDocs(q),
+            getDoc(userDocNested(kmsDB, 'settings', TAG_ORDER_DOC)).catch(() => null),
+        ])
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Note))
         setNotes(data)
         const tags = new Set<string>()
         data.forEach(n => n.hashtags?.forEach(t => tags.add(t)))
         setAllTags(Array.from(tags).sort())
+        // 讀取「標籤管理」頁儲存的父標籤排序；讀不到就留空陣列（fallback 依筆記數）
+        if (orderSnap && orderSnap.exists()) {
+            const po = orderSnap.data().parentOrder
+            setParentOrder(Array.isArray(po) ? po as string[] : [])
+        } else {
+            setParentOrder([])
+        }
     }
 
     useEffect(() => { load() }, [])
@@ -537,6 +552,35 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         (linkSearch === '' || n.title.toLowerCase().includes(linkSearch.toLowerCase()))
     )
 
+    // ── 第一層：標籤入口分組 ───────────────────────────────────────────────
+    // 只取每個 hashtag 的最上層（以 / 分隔的第一段），子標籤折疊在內。
+    // 例如 生活、生活/物慾、生活/酒 都會歸到「生活」這個入口。
+    // 點某個入口 → setSelectedTag(該標籤) → 沿用既有 filtered 過濾邏輯
+    //（filtered 的 matchTag 已支援 startsWith(selectedTag + '/')，會帶出子標籤）。
+    const tagGroups = (() => {
+        const counts = new Map<string, number>()
+        notes.forEach(n => {
+            const tags = n.hashtags ?? []
+            const tops = tags.length > 0
+                ? Array.from(new Set(tags.map(t => t.split('/')[0])))
+                : []
+            tops.forEach(top => counts.set(top, (counts.get(top) ?? 0) + 1))
+        })
+        return Array.from(counts.entries())
+            .map(([name, count]) => ({ name, count }))
+            .sort((a, b) => {
+                // 依「標籤管理」頁存的父標籤順序排序
+                const ia = parentOrder.indexOf(a.name)
+                const ib = parentOrder.indexOf(b.name)
+                if (ia !== -1 && ib !== -1) return ia - ib   // 兩者都有排序 → 照索引
+                if (ia !== -1) return -1                      // 只有 a 有 → a 排前
+                if (ib !== -1) return 1                       // 只有 b 有 → b 排前
+                // 都不在排序清單裡 → 依名稱（與標籤管理頁的 fallback 一致）
+                return a.name.localeCompare(b.name, 'zh-TW')
+            })
+    })()
+    // ─────────────────────────────────────────────────────────────────────
+
     return (
         <>
             <style>{`
@@ -552,6 +596,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         .link-item:hover { background: color-mix(in srgb, var(--c-accent) 8%, transparent); }
         .tag-suggestion-item:hover { background: color-mix(in srgb, var(--c-accent) 12%, transparent) !important; color: var(--c-accent) !important; }
         .template-menu-item:hover { background: color-mix(in srgb, var(--c-accent) 10%, transparent); }
+        .tag-entry-card:hover { border-color: var(--c-accent) !important; }
       `}</style>
 
             <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1400px', margin: '0 auto' }}>
@@ -559,10 +604,22 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                 {/* 標題列 */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
                     <div>
+                        {/* 返回鍵：只在選了標籤時出現，點擊清空 selectedTag 回到標籤入口 */}
+                        {selectedTag && (
+                            <button
+                                onClick={() => setSelectedTag('')}
+                                style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', color: 'var(--c-muted)', fontSize: '13px', padding: '4px 12px', marginBottom: '8px' }}>
+                                ← 全部標籤
+                            </button>
+                        )}
                         <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>
                             {selectedTag ? `#${selectedTag}` : '知識庫'}
                         </h1>
-                        <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>共 {filtered.length} 則筆記</p>
+                        <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
+                            {!selectedTag && !search
+                                ? `${tagGroups.length} 個標籤・${notes.length} 則筆記`
+                                : `共 ${filtered.length} 則筆記`}
+                        </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
                         <button style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)' }} onClick={() => { setShowImport(true); setImportMsg('') }}>
@@ -918,8 +975,31 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                     </div>
                 </div>
 
-                {/* 筆記卡片 */}
-                {filtered.length === 0 ? (
+                {/* ── 內容區 ──────────────────────────────────────────────────
+                    第一層（沒選標籤、沒搜尋）：顯示標籤入口卡片
+                    其餘情況：沿用原本的筆記卡片列表
+                */}
+                {!selectedTag && !search ? (
+                    notes.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '64px', color: 'var(--c-muted)' }}>
+                            <p style={{ fontSize: '15px' }}>還沒有筆記，點上方「新增」開始記錄</p>
+                        </div>
+                    ) : (
+                        <div className="kms-grid">
+                            {tagGroups.map(g => (
+                                <div key={g.name}
+                                    className="tag-entry-card"
+                                    onClick={() => setSelectedTag(g.name)}
+                                    style={{ ...card, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', transition: 'border-color 0.15s' }}>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                                        <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
+                                    </span>
+                                    <span style={{ fontSize: '13px', color: 'var(--c-muted)', flexShrink: 0 }}>{g.count} 則</span>
+                                </div>
+                            ))}
+                        </div>
+                    )
+                ) : filtered.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '64px', color: 'var(--c-muted)' }}>
                         <p style={{ fontSize: '15px' }}>{search || selectedTag ? '找不到相關筆記' : '還沒有筆記，點上方「新增筆記」開始記錄'}</p>
                     </div>

@@ -6,9 +6,22 @@ import { Plus, X, Search, Pencil, Trash2, ChevronDown, ChevronRight, Map, Tag, L
 import { ChainView } from './IndustryChainView'
 
 // ── 型別 ──────────────────────────────────────────────────────────
+type Market = 'TW' | 'US' | 'JP'
+
+const MARKETS: { key: Market; label: string }[] = [
+    { key: 'TW', label: '台股' },
+    { key: 'US', label: '美股' },
+    { key: 'JP', label: '日股' },
+]
+function marketLabel(m?: Market): string {
+    const found = MARKETS.find(x => x.key === m)
+    return found ? found.label : '.TW'
+}
+
 interface StockEntry {
     code: string
     name: string
+    market?: Market
     themes: string[]
     note?: string
 }
@@ -93,7 +106,8 @@ function StockCard({ entry, onEdit, onDelete, onThemeClick, highlighted }: {
     return (
         <div style={{ ...card, padding: '14px 16px', outline: highlighted ? '2px solid var(--c-accent)' : 'none', transition: 'outline 0.2s' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                <div>
+                <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--c-muted)', background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '1px 5px', marginRight: '6px' }}>{marketLabel(entry.market)}</span>
                     <span style={{ fontWeight: 700, fontSize: '15px', color: 'var(--c-accent)' }}>{entry.code}</span>
                     <span style={{ marginLeft: '8px', fontSize: '13px', color: 'var(--c-text)' }}>{entry.name}</span>
                 </div>
@@ -115,12 +129,13 @@ function StockCard({ entry, onEdit, onDelete, onThemeClick, highlighted }: {
 function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
     initial?: Partial<StockEntry>
     allThemes: string[]
-    allStocks: { code: string; name: string }[]
+    allStocks: { code: string; name: string; market?: Market }[]
     onSave: (entry: StockEntry, rels: { up: string[]; down: string[] }) => Promise<void>
     onCancel: () => void
 }) {
     const [code, setCode] = useState(initial?.code || '')
     const [name, setName] = useState(initial?.name || '')
+    const [market, setMarket] = useState<Market>(initial?.market || 'TW')
     const [themes, setThemes] = useState<string[]>(initial?.themes || [])
     const [note, setNote] = useState(initial?.note || '')
     const [themeInput, setThemeInput] = useState('')
@@ -136,6 +151,7 @@ function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
         const upper = val.toUpperCase()
         setCode(upper)
         if (nameTouched) return
+        if (market !== 'TW') return // 美股／日股不走台股代號字典自動帶名，由使用者自行輸入
         if (debounceRef.current) clearTimeout(debounceRef.current)
         if (upper.length < 2) return
         debounceRef.current = setTimeout(async () => {
@@ -156,7 +172,7 @@ function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
     const handleSave = async () => {
         if (!canSave) return
         setSaving(true)
-        await onSave({ code: code.trim(), name: name.trim(), themes, note: note.trim() || undefined }, { up: upCodes, down: downCodes })
+        await onSave({ code: code.trim(), name: name.trim(), market, themes, note: note.trim() || undefined }, { up: upCodes, down: downCodes })
         setSaving(false)
     }
 
@@ -164,6 +180,19 @@ function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
         <div style={{ ...card, marginBottom: '20px' }}>
             <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--c-accent)', marginBottom: '16px' }}>
                 {isEditing ? `編輯：${initial.code}` : '新增股票'}
+            </div>
+            <div style={{ marginBottom: '12px' }}>
+                <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>市場</label>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                    {MARKETS.map(m => (
+                        <button key={m.key} type="button" onClick={() => setMarket(m.key)} style={{
+                            background: market === m.key ? 'var(--c-accent)' : 'var(--c-card)',
+                            color: market === m.key ? '#fff' : 'var(--c-text)',
+                            border: '1px solid var(--c-border)', borderRadius: '8px',
+                            padding: '6px 16px', fontSize: '13px', cursor: 'pointer',
+                        }}>{m.label}</button>
+                    ))}
+                </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                 <div>
@@ -206,7 +235,7 @@ function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
                     <select value="" onChange={e => { const c = e.target.value; if (c && !upCodes.includes(c)) setUpCodes(p => [...p, c]) }} style={inp}>
                         <option value="">＋加入上游…</option>
                         {allStocks.filter(s => s.code !== code && !upCodes.includes(s.code)).map(s => (
-                            <option key={s.code} value={s.code}>{s.code}　{s.name}</option>
+                            <option key={s.code} value={s.code}>{s.code}　{s.name}〔{marketLabel(s.market)}〕</option>
                         ))}
                     </select>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
@@ -223,7 +252,7 @@ function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
                     <select value="" onChange={e => { const c = e.target.value; if (c && !downCodes.includes(c)) setDownCodes(p => [...p, c]) }} style={inp}>
                         <option value="">＋加入下游…</option>
                         {allStocks.filter(s => s.code !== code && !downCodes.includes(s.code)).map(s => (
-                            <option key={s.code} value={s.code}>{s.code}　{s.name}</option>
+                            <option key={s.code} value={s.code}>{s.code}　{s.name}〔{marketLabel(s.market)}〕</option>
                         ))}
                     </select>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
@@ -495,6 +524,7 @@ function RelationView({ entries }: { entries: StockEntry[] }) {
 
 // ── 主元件 ────────────────────────────────────────────────────────
 type ViewMode = 'stock' | 'theme' | 'graph' | 'chain'
+type SortKey = 'code' | 'name' | 'themes'
 
 export default function IndustryMap() {
     const [entries, setEntries] = useState<StockEntry[]>([])
@@ -503,8 +533,11 @@ export default function IndustryMap() {
     const [showForm, setShowForm] = useState(false)
     const [editEntry, setEditEntry] = useState<StockEntry | null>(null)
     const [searchQ, setSearchQ] = useState('')
+    const [sortBy, setSortBy] = useState<SortKey>('code')
+    const [marketFilter, setMarketFilter] = useState<Market | 'ALL'>('ALL')
     const [selectedTheme, setSelectedTheme] = useState<string | null>(null)
-    const [collapsedThemes, setCollapsedThemes] = useState<Set<string>>(new Set())
+    const [expandedThemes, setExpandedThemes] = useState<Set<string>>(new Set())
+    const [themeQ, setThemeQ] = useState('')
 
     const load = async () => {
         setLoading(true)
@@ -529,17 +562,34 @@ export default function IndustryMap() {
         return map
     }, [entries])
 
-    const filtered = useMemo(() => {
-        const q = searchQ.toLowerCase()
-        return entries.filter(e =>
-            (!q || e.code.includes(q) || e.name.includes(q) || e.themes.some(t => t.toLowerCase().includes(q))) &&
-            (!selectedTheme || e.themes.includes(selectedTheme))
+    // 題材視圖：依搜尋字串過濾題材（比對題材名稱、股票代號與名稱）
+    const visibleThemes = useMemo(() => {
+        const q = themeQ.trim().toLowerCase()
+        if (!q) return allThemes
+        return allThemes.filter(theme =>
+            theme.toLowerCase().includes(q) ||
+            (byTheme[theme] || []).some(s => s.code.toLowerCase().includes(q) || s.name.toLowerCase().includes(q))
         )
-    }, [entries, searchQ, selectedTheme])
+    }, [allThemes, byTheme, themeQ])
+
+    const filtered = useMemo(() => {
+        const q = searchQ.trim().toLowerCase()
+        const list = entries.filter(e =>
+            (!q || e.code.toLowerCase().includes(q) || e.name.toLowerCase().includes(q) || e.themes.some(t => t.toLowerCase().includes(q))) &&
+            (!selectedTheme || e.themes.includes(selectedTheme)) &&
+            (marketFilter === 'ALL' || (e.market || 'TW') === marketFilter)
+        )
+        // list 為 filter 產生的新陣列，就地排序不會影響 entries
+        return list.sort((a, b) => {
+            if (sortBy === 'name') return a.name.localeCompare(b.name, 'zh-TW') || a.code.localeCompare(b.code)
+            if (sortBy === 'themes') return b.themes.length - a.themes.length || a.code.localeCompare(b.code)
+            return a.code.localeCompare(b.code)
+        })
+    }, [entries, searchQ, selectedTheme, sortBy, marketFilter])
 
     const handleSave = async (entry: StockEntry, rels: { up: string[]; down: string[] }) => {
         await setDoc(userDoc(investDB, 'industryMap', entry.code), {
-            name: entry.name, themes: entry.themes, ...(entry.note ? { note: entry.note } : {}),
+            name: entry.name, market: entry.market || 'TW', themes: entry.themes, ...(entry.note ? { note: entry.note } : {}),
         })
         // 上下游關係：用確定性 id（from__to）避免重複；merge 不覆蓋既有的 label/type
         const relId = (from: string, to: string) => `${from}__${to}`.replace(/\//g, '_')
@@ -563,8 +613,11 @@ export default function IndustryMap() {
     }
 
     const toggleTheme = (t: string) => {
-        setCollapsedThemes(prev => { const next = new Set(prev); next.has(t) ? next.delete(t) : next.add(t); return next })
+        setExpandedThemes(prev => { const next = new Set(prev); next.has(t) ? next.delete(t) : next.add(t); return next })
     }
+    // 全部展開／全部收合（以目前可見的題材為準）
+    const anyCollapsed = visibleThemes.some(t => !expandedThemes.has(t))
+    const toggleAll = () => setExpandedThemes(anyCollapsed ? new Set(visibleThemes) : new Set<string>())
 
     return (
         <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
@@ -589,8 +642,8 @@ export default function IndustryMap() {
                             {v === 'theme' ? '題材視圖' : v === 'stock' ? '股票視圖' : v === 'graph' ? '關聯查詢' : '脈絡圖'}
                         </button>
                     ))}
-                    <button onClick={() => { setShowForm(true); setEditEntry(null) }} style={btn('var(--c-accent)')}>
-                        <Plus size={14} />新增
+                    <button onClick={() => { setShowForm(v => !v); setEditEntry(null) }} style={btn(showForm ? 'var(--c-muted)' : 'var(--c-accent)')}>
+                        {showForm ? <X size={14} /> : <Plus size={14} />}{showForm ? '收起' : '新增'}
                     </button>
                 </div>
             </div>
@@ -605,37 +658,54 @@ export default function IndustryMap() {
                     : allThemes.length === 0 ? (
                         <div style={{ ...card, textAlign: 'center', padding: '40px', color: 'var(--c-muted)' }}>尚未建立任何題材，請先新增股票並標記題材</div>
                     ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            {allThemes.map(theme => {
-                                const stocks = byTheme[theme] || []
-                                const collapsed = collapsedThemes.has(theme)
-                                const color = themeColor(theme)
-                                return (
-                                    <div key={theme} style={{ ...card, padding: 0, overflow: 'hidden' }}>
-                                        <div onClick={() => toggleTheme(theme)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', cursor: 'pointer', borderLeft: `4px solid ${color}`, backgroundColor: color + '10' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                {collapsed ? <ChevronRight size={16} color='var(--c-muted)' /> : <ChevronDown size={16} color='var(--c-muted)' />}
-                                                <span style={{ fontWeight: 700, fontSize: '15px', color }}>{theme}</span>
-                                                <span style={{ background: color + '22', border: `1px solid ${color}44`, color, borderRadius: '12px', padding: '1px 8px', fontSize: '12px', fontWeight: 600 }}>{stocks.length} 支</span>
-                                            </div>
-                                        </div>
-                                        {!collapsed && (
-                                            <div style={{ padding: '12px 18px 16px', display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                                                {stocks.map(s => (
-                                                    <div key={s.code} style={{ background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '10px', padding: '10px 14px', minWidth: '130px' }}>
-                                                        <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--c-accent)', marginBottom: '4px' }}>{s.code}</div>
-                                                        <div style={{ fontSize: '12px', color: 'var(--c-text)', marginBottom: '6px' }}>{s.name}</div>
-                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                                                            {s.themes.filter(t => t !== theme).map(t => <ThemeBadge key={t} label={t} size='sm' onClick={() => handleThemeClick(t)} />)}
-                                                        </div>
-                                                        {s.note && <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginTop: '6px' }}>{s.note}</div>}
+                        <div>
+                            {/* 題材搜尋 + 全部展開/收合 */}
+                            <div style={{ display: 'flex', gap: '10px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                                <div style={{ position: 'relative', flex: '1 1 220px' }}>
+                                    <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--c-muted)' }} />
+                                    <input style={{ ...inp, paddingLeft: '32px' }} value={themeQ} onChange={e => setThemeQ(e.target.value)} placeholder="搜尋題材、代號或名稱…" />
+                                </div>
+                                <button onClick={toggleAll} style={{ ...btn('var(--c-card)'), color: 'var(--c-text)', border: '1px solid var(--c-border)', fontSize: '12px', padding: '6px 14px', whiteSpace: 'nowrap' }}>
+                                    {anyCollapsed ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                    {anyCollapsed ? '全部展開' : '全部收合'}
+                                </button>
+                            </div>
+
+                            {visibleThemes.length === 0 ? (
+                                <div style={{ ...card, textAlign: 'center', padding: '32px', color: 'var(--c-muted)' }}>找不到符合的題材</div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    {visibleThemes.map(theme => {
+                                        const stocks = byTheme[theme] || []
+                                        const collapsed = !expandedThemes.has(theme)
+                                        const color = themeColor(theme)
+                                        return (
+                                            <div key={theme} style={{ ...card, padding: 0, overflow: 'hidden' }}>
+                                                <div onClick={() => toggleTheme(theme)} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 16px', cursor: 'pointer', borderLeft: `4px solid ${color}` }}>
+                                                    {collapsed ? <ChevronRight size={15} color='var(--c-muted)' /> : <ChevronDown size={15} color='var(--c-muted)' />}
+                                                    <span style={{ fontWeight: 700, fontSize: '14px', color }}>{theme}</span>
+                                                    <span style={{ background: color + '22', color, borderRadius: '10px', padding: '1px 7px', fontSize: '11px', fontWeight: 600 }}>{stocks.length}</span>
+                                                    {collapsed && (
+                                                        <span style={{ flex: 1, minWidth: 0, fontSize: '12px', color: 'var(--c-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                            {stocks.map(s => s.code).join('、')}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {!collapsed && (
+                                                    <div style={{ padding: '4px 14px 12px', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                                        {stocks.map(s => (
+                                                            <span key={s.code} onClick={() => handleThemeClick(theme)} title={s.note || ''} style={{ display: 'inline-flex', alignItems: 'baseline', gap: '6px', background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer' }}>
+                                                                <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--c-accent)' }}>{s.code}</span>
+                                                                <span style={{ fontSize: '12px', color: 'var(--c-text)' }}>{s.name}</span>
+                                                            </span>
+                                                        ))}
                                                     </div>
-                                                ))}
+                                                )}
                                             </div>
-                                        )}
-                                    </div>
-                                )
-                            })}
+                                        )
+                                    })}
+                                </div>
+                            )}
                         </div>
                     )
             )}
@@ -643,10 +713,38 @@ export default function IndustryMap() {
             {/* ── 股票視圖 ── */}
             {viewMode === 'stock' && (
                 <div>
-                    <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
                         <div style={{ position: 'relative', flex: '1 1 200px' }}>
                             <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--c-muted)' }} />
                             <input style={{ ...inp, paddingLeft: '32px' }} value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="搜尋代號、名稱或題材…" />
+                        </div>
+                        {/* 排序控制 */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '12px', color: 'var(--c-muted)', whiteSpace: 'nowrap' }}>排序</span>
+                            {(['code', 'name', 'themes'] as SortKey[]).map(k => (
+                                <button key={k} onClick={() => setSortBy(k)} style={{
+                                    background: sortBy === k ? 'var(--c-accent)' : 'var(--c-card)',
+                                    color: sortBy === k ? '#fff' : 'var(--c-text)',
+                                    border: '1px solid var(--c-border)', borderRadius: '8px',
+                                    padding: '6px 12px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap',
+                                }}>
+                                    {k === 'code' ? '代號' : k === 'name' ? '名稱' : '題材數'}
+                                </button>
+                            ))}
+                        </div>
+                        {/* 市場篩選 */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '12px', color: 'var(--c-muted)', whiteSpace: 'nowrap' }}>市場</span>
+                            {(['ALL', 'TW', 'US', 'JP'] as (Market | 'ALL')[]).map(k => (
+                                <button key={k} onClick={() => setMarketFilter(k)} style={{
+                                    background: marketFilter === k ? 'var(--c-accent)' : 'var(--c-card)',
+                                    color: marketFilter === k ? '#fff' : 'var(--c-text)',
+                                    border: '1px solid var(--c-border)', borderRadius: '8px',
+                                    padding: '6px 12px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap',
+                                }}>
+                                    {k === 'ALL' ? '全部' : marketLabel(k)}
+                                </button>
+                            ))}
                         </div>
                         {selectedTheme && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '8px', fontSize: '13px', color: 'var(--c-text)' }}>
@@ -658,9 +756,12 @@ export default function IndustryMap() {
                     {loading ? (
                         <div style={{ textAlign: 'center', padding: '40px', color: 'var(--c-muted)' }}>載入中…</div>
                     ) : (
-                        <div style={{ display: 'grid', gap: '10px', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-                            {filtered.map(e => <StockCard key={e.code} entry={e} onEdit={openEdit} onDelete={handleDelete} onThemeClick={handleThemeClick} />)}
-                            {filtered.length === 0 && <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '40px', color: 'var(--c-muted)' }}>找不到符合條件的股票</div>}
+                        <div>
+                            <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '10px' }}>共 {filtered.length} 支</div>
+                            <div style={{ display: 'grid', gap: '10px', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+                                {filtered.map(e => <StockCard key={e.code} entry={e} onEdit={openEdit} onDelete={handleDelete} onThemeClick={handleThemeClick} />)}
+                                {filtered.length === 0 && <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '40px', color: 'var(--c-muted)' }}>找不到符合條件的股票</div>}
+                            </div>
                         </div>
                     )}
                 </div>

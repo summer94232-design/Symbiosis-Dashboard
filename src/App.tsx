@@ -36,9 +36,9 @@ const investNav = [
     { to: '/invest', icon: LayoutDashboard, label: '儀表板' },
     { to: '/invest/trades', icon: ArrowLeftRight, label: '買賣紀錄' },
     { to: '/invest/holdings', icon: TrendingUp, label: '股票持倉' },
-    { to: '/invest/watchlist', icon: TrendingUp, label: '選股追蹤' },
     { to: '/invest/trend', icon: BarChart2, label: '資產趨勢' },
-    { to: '/invest/brief', icon: Newspaper, label: '每日重點' },
+    { to: '/invest/industry', icon: Map, label: '產業地圖' },
+    { to: '/invest/watchlist', icon: TrendingUp, label: '選股追蹤' },
 ]
 
 const investManageNav = [
@@ -52,7 +52,7 @@ const investManageNav = [
 const investToolsNav = [
     { to: '/invest/margin', icon: CreditCard, label: '融資管理' },
     { to: '/invest/sentiment', icon: Target, label: '觀點追蹤' },
-    { to: '/invest/industry', icon: Map, label: '產業地圖' },
+    { to: '/invest/brief', icon: Newspaper, label: '每日重點' },
     { to: '/invest/sold-tracker', icon: TrendingDown, label: '賣出追蹤' },
 ]
 
@@ -454,7 +454,7 @@ const Sidebar = memo(({
 
                 {/* ── 版本代號 ── */}
                 <div style={{ textAlign: 'center' }}>
-                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>v26.6.16</span>
+                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>v26.6.22</span>
                 </div>
             </div>
         </aside>
