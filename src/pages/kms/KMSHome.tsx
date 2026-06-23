@@ -44,6 +44,9 @@ const TYPE_COLORS: Record<string, string> = { note: 'var(--c-accent)', url: 'var
 // 「標籤管理」頁儲存父標籤排序的 Firestore document（settings/tagOrder）
 const TAG_ORDER_DOC = 'tagOrder'
 
+// 無標籤筆記的入口哨兵值（正常標籤不可能等於此字串，避免撞名）
+const UNTAGGED_KEY = '__untagged__'
+
 // ── 筆記模板定義 ──────────────────────────────────────────
 interface NoteTemplate {
     id: string
@@ -538,7 +541,10 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                 n.content.toLowerCase().includes(q) ||
                 n.hashtags?.some(t => t.toLowerCase().includes(q)) ||
                 (n.url?.toLowerCase().includes(q) ?? false)
-            const matchTag = !selectedTag || n.hashtags?.some(t => t === selectedTag || t.startsWith(selectedTag + '/'))
+            const matchTag = !selectedTag
+                || (selectedTag === UNTAGGED_KEY
+                    ? (n.hashtags?.length ?? 0) === 0
+                    : n.hashtags?.some(t => t === selectedTag || t.startsWith(selectedTag + '/')))
             return matchSearch && matchTag
         })
         .sort((a, b) => {
@@ -559,14 +565,14 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     //（filtered 的 matchTag 已支援 startsWith(selectedTag + '/')，會帶出子標籤）。
     const tagGroups = (() => {
         const counts = new Map<string, number>()
+        let untagged = 0
         notes.forEach(n => {
             const tags = n.hashtags ?? []
-            const tops = tags.length > 0
-                ? Array.from(new Set(tags.map(t => t.split('/')[0])))
-                : []
+            if (tags.length === 0) { untagged++; return }
+            const tops = Array.from(new Set(tags.map(t => t.split('/')[0])))
             tops.forEach(top => counts.set(top, (counts.get(top) ?? 0) + 1))
         })
-        return Array.from(counts.entries())
+        const sorted = Array.from(counts.entries())
             .map(([name, count]) => ({ name, count }))
             .sort((a, b) => {
                 // 依「標籤管理」頁存的父標籤順序排序
@@ -578,6 +584,9 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                 // 都不在排序清單裡 → 依名稱（與標籤管理頁的 fallback 一致）
                 return a.name.localeCompare(b.name, 'zh-TW')
             })
+        // 未分類（無任何標籤）排在所有標籤卡之後
+        if (untagged > 0) sorted.push({ name: UNTAGGED_KEY, count: untagged })
+        return sorted
     })()
     // ─────────────────────────────────────────────────────────────────────
 
@@ -613,11 +622,11 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                             </button>
                         )}
                         <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>
-                            {selectedTag ? `#${selectedTag}` : '知識庫'}
+                            {selectedTag ? (selectedTag === UNTAGGED_KEY ? '未分類' : `#${selectedTag}`) : '知識庫'}
                         </h1>
                         <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
                             {!selectedTag && !search
-                                ? `${tagGroups.length} 個標籤・${notes.length} 則筆記`
+                                ? `${tagGroups.filter(g => g.name !== UNTAGGED_KEY).length} 個標籤・${notes.length} 則筆記`
                                 : `共 ${filtered.length} 則筆記`}
                         </p>
                     </div>
@@ -992,7 +1001,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                                     onClick={() => setSelectedTag(g.name)}
                                     style={{ ...card, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', transition: 'border-color 0.15s' }}>
                                     <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-                                        <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
+                                        <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name === UNTAGGED_KEY ? '未分類' : g.name}</span>
                                     </span>
                                     <span style={{ fontSize: '13px', color: 'var(--c-muted)', flexShrink: 0 }}>{g.count} 則</span>
                                 </div>
