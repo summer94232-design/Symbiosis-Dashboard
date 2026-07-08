@@ -14,9 +14,9 @@
  *   3. stockDictFull（Firestore 完整台股字典）→ 命中後回寫 stockDict，下次直接命中
  */
 
-import { getDoc, setDoc } from 'firebase/firestore'
+import { getDoc, setDoc, getDocs, query, orderBy, startAt, endAt, documentId, limit } from 'firebase/firestore'
 import { investDB } from './firebase'
-import { userDoc } from './userDB'
+import { userDoc, userCol } from './userDB'
 
 // 全系統共用的 session 快取
 const dictCache: Record<string, string> = {}
@@ -63,4 +63,57 @@ export async function saveStockName(code: string, name: string): Promise<void> {
     if (!code || !name) return
     dictCache[code] = name
     await setDoc(userDoc(investDB, 'stockDict', code), { name })
+}
+
+export interface StockCandidate {
+    code: string
+    name: string
+}
+
+/**
+ * 前綴模糊搜尋（新增功能：新增交易輸入代號時列出相關代號，例如輸入 00631
+ * 列出 00631、00631L 等）。
+ *
+ * 用 Firestore 文件 ID 範圍查詢：orderBy(documentId()) + startAt(prefix) + endAt(prefix+'\uf8ff')，
+ * 對 __name__（文件 ID）做前綴比對，不需要額外建立 composite index。
+ *
+ * 同時查 stockDictFull（完整字典，涵蓋範圍廣）與 stockDict（常用字典，可能有使用者自訂名稱），
+ * 合併去重，stockDict 的名稱優先（使用者手動存過的名稱較準）。
+ */
+export async function searchStockByCodePrefix(prefix: string, max = 8): Promise<StockCandidate[]> {
+    if (!prefix) return []
+    const upper = prefix.toUpperCase()
+
+    const runPrefixQuery = async (collectionName: string): Promise<StockCandidate[]> => {
+        const collRef = userCol(investDB, collectionName)
+        const q = query(
+            collRef,
+            orderBy(documentId()),
+            startAt(upper),
+            endAt(upper + '\uf8ff'),
+            limit(max)
+        )
+        const snap = await getDocs(q)
+        return snap.docs.map(d => ({ code: d.id, name: (d.data().name as string) || '' }))
+    }
+
+    const [fullResults, shortResults] = await Promise.all([
+        runPrefixQuery('stockDictFull'),
+        runPrefixQuery('stockDict'),
+    ])
+
+    // 合併去重：stockDict（常用字典）優先，stockDictFull 補漏
+    const merged = new Map<string, string>()
+    for (const r of fullResults) merged.set(r.code, r.name)
+    for (const r of shortResults) merged.set(r.code, r.name)
+
+    // 一併寫入 session 快取，避免使用者點選候選後 debounce 又打一次 Firestore
+    for (const [code, name] of merged) {
+        if (name) dictCache[code] = name
+    }
+
+    return Array.from(merged.entries())
+        .map(([code, name]) => ({ code, name }))
+        .sort((a, b) => a.code.localeCompare(b.code))
+        .slice(0, max)
 }

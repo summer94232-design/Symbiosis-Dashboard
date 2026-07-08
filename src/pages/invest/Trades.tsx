@@ -6,7 +6,7 @@ import { calcFee, calcTax, isETF, calcMarginDebt, calcTradeTotal, calcPositions,
 import { fetchTrades, fetchDividends, invalidateTrades, invalidateCashflow } from '../../lib/investData'
 // ✅ 1-2：共用模組（CSV 解析 / 股票字典 / UI 樣式）
 import { parseCSVLine, toNum, toInt } from '../../lib/csv'
-import { lookupStockName, cacheStockName, saveStockName } from '../../lib/stockDict'
+import { lookupStockName, cacheStockName, saveStockName, searchStockByCodePrefix, type StockCandidate } from '../../lib/stockDict'
 import { card, inp, lbl, btn } from '../../ui/styles'
 import { Pencil, Trash2, X, Check, Upload, Search, ChevronDown, ChevronUp } from 'lucide-react'
 
@@ -44,6 +44,8 @@ export default function Trades() {
     const [form, setForm] = useState<Trade>(emptyTrade)
     const [loading, setLoading] = useState(false)
     const [lookingUp, setLookingUp] = useState(false)
+    const [codeSuggestions, setCodeSuggestions] = useState<StockCandidate[]>([])
+    const [showSuggestions, setShowSuggestions] = useState(false)
     const [importing, setImporting] = useState(false)
     const [importResult, setImportResult] = useState<{ success: number; failed: number; skipped: number; duplicated: number } | null>(null)
     const [search, setSearch] = useState('')
@@ -94,16 +96,40 @@ export default function Trades() {
         })
 
         if (lookupTimer.current) clearTimeout(lookupTimer.current)
-        if (upper.length < 3) return
+        if (upper.length < 3) {
+            setCodeSuggestions([])
+            setShowSuggestions(false)
+            return
+        }
 
         lookupTimer.current = setTimeout(async () => {
             setLookingUp(true)
-            const name = await lookupStockName(upper)
+            const [name, candidates] = await Promise.all([
+                lookupStockName(upper),
+                searchStockByCodePrefix(upper),
+            ])
             if (name) {
                 setForm(f => ({ ...f, name }))
             }
+            // 顯示前綴相關代號候選（例如輸入 00631 → 列出 00631、00631L）
+            setCodeSuggestions(candidates)
+            setShowSuggestions(candidates.length > 0)
             setLookingUp(false)
         }, 500)
+    }
+
+    // 點選下拉候選：直接帶入該代號的 code + name，並重算手續費/交易稅/總額
+    const handleSelectSuggestion = (c: StockCandidate) => {
+        setForm(f => {
+            const fee = f.price && f.shares ? calcFee(f.price, f.shares) : f.fee
+            const tax = f.type === 'sell' && f.price && f.shares ? calcTax(f.price, f.shares, c.code) : 0
+            const u = { ...f, code: c.code, name: c.name, fee, tax }
+            u.total = calcTradeTotal(u)
+            return u
+        })
+        cacheStockName(c.code, c.name)
+        setShowSuggestions(false)
+        setCodeSuggestions([])
     }
 
     const calcTotal = (f: Trade) => calcTradeTotal(f)
@@ -169,6 +195,7 @@ export default function Trades() {
         }
         invalidateTrades()   // ✅ 1-1：寫入後清快取，其他頁面才會拿到最新資料
         setEditingId(null); setForm(emptyTrade); setLoading(false); setShowForm(false); setEditModal(false)
+        setCodeSuggestions([]); setShowSuggestions(false)
         load()
     }
 
@@ -176,8 +203,12 @@ export default function Trades() {
         if (t.code && t.name) cacheStockName(t.code, t.name)
         // 已在 load() 正規化，直接使用
         setForm(t); setEditingId(t.id!); setEditModal(true)
+        setCodeSuggestions([]); setShowSuggestions(false)
     }
-    const handleCancel = () => { setForm(emptyTrade); setEditingId(null); setShowForm(false); setEditModal(false) }
+    const handleCancel = () => {
+        setForm(emptyTrade); setEditingId(null); setShowForm(false); setEditModal(false)
+        setCodeSuggestions([]); setShowSuggestions(false)
+    }
     const handleDelete = async (id: string) => {
         if (!confirm('確定要刪除？')) return
         await deleteDoc(userDoc(investDB, 'trades', id))
@@ -310,6 +341,35 @@ export default function Trades() {
     const feeHint = () => isOddLot(form.shares) ? '（零股 6折，最低 1 元）' : '（6折自動計算）'
     const feeHintColor = isOddLot(form.shares) ? 'var(--c-warning)' : 'var(--c-accent)'
 
+    // 代號候選下拉清單（新增/編輯表單共用）
+    const renderCodeSuggestions = () => (
+        showSuggestions && codeSuggestions.length > 0 && (
+            <div style={{
+                position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10,
+                backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)',
+                borderRadius: '8px', marginTop: '4px', maxHeight: '200px', overflowY: 'auto',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
+            }}>
+                {codeSuggestions.map(c => (
+                    <div
+                        key={c.code}
+                        onMouseDown={() => handleSelectSuggestion(c)}
+                        style={{
+                            padding: '8px 12px', cursor: 'pointer', fontSize: '13px',
+                            display: 'flex', justifyContent: 'space-between', gap: '10px',
+                            borderBottom: '1px solid var(--c-border)'
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--c-sidebar)')}
+                        onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    >
+                        <span style={{ color: 'var(--c-accent)', fontWeight: 700, flexShrink: 0 }}>{c.code}</span>
+                        <span style={{ color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name || '（無名稱）'}</span>
+                    </div>
+                ))}
+            </div>
+        )
+    )
+
     return (
         <>
             {/* 編輯 Modal */}
@@ -334,9 +394,17 @@ export default function Trades() {
                                     <option value="sell">賣出</option>
                                 </select>
                             </div>
-                            <div>
+                            <div style={{ position: 'relative' }}>
                                 <label style={lbl}>股票代號</label>
-                                <input style={inp} placeholder="例：2330" value={form.code} onChange={e => handleCodeChange(e.target.value)} />
+                                <input
+                                    style={inp}
+                                    placeholder="例：2330"
+                                    value={form.code}
+                                    onChange={e => handleCodeChange(e.target.value)}
+                                    onFocus={() => { if (codeSuggestions.length > 0) setShowSuggestions(true) }}
+                                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                                />
+                                {renderCodeSuggestions()}
                             </div>
                             <div>
                                 <label style={lbl}>股票名稱 {lookingUp && <span style={{ color: 'var(--c-muted)', fontSize: '10px' }}>查詢中...</span>}</label>
@@ -481,9 +549,17 @@ export default function Trades() {
                                     <option value="sell">賣出</option>
                                 </select>
                             </div>
-                            <div>
+                            <div style={{ position: 'relative' }}>
                                 <label style={lbl}>股票代號</label>
-                                <input style={inp} placeholder="例：2330" value={form.code} onChange={e => handleCodeChange(e.target.value)} />
+                                <input
+                                    style={inp}
+                                    placeholder="例：2330"
+                                    value={form.code}
+                                    onChange={e => handleCodeChange(e.target.value)}
+                                    onFocus={() => { if (codeSuggestions.length > 0) setShowSuggestions(true) }}
+                                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                                />
+                                {renderCodeSuggestions()}
                             </div>
                             <div>
                                 <label style={lbl}>股票名稱 {lookingUp && <span style={{ color: 'var(--c-muted)', fontSize: '10px' }}>查詢中...</span>}</label>
