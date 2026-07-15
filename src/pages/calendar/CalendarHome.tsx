@@ -6,7 +6,7 @@ import { calcPositions, type TradeRecord } from '../../lib/calc'
 import { fetchTrades, fetchDividends, invalidateDividends } from '../../lib/investData'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS, type CalendarEvent } from '../../lib/calendarData'
 import { Plus, X, ChevronLeft, ChevronRight, ExternalLink, Upload, Pencil, RefreshCw, UploadCloud } from 'lucide-react'
-import { getGoogleCalendarAuth, gatherUpcomingCalendarEvents, syncEventsToGoogleCalendar } from '../../lib/googleCalendar'
+import { getGoogleCalendarAuth, performGoogleCalendarSync, type SyncSummary } from '../../lib/googleCalendar'
 import * as XLSX from 'xlsx'
 
 const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
@@ -49,7 +49,7 @@ export default function CalendarHome() {
     const [form, setForm] = useState({ title: '', date: '', description: '', url: '', type: 'personal' as CalendarEvent['type'] })
     const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null)
     const [gcalSyncing, setGcalSyncing] = useState(false)
-    const [gcalProgress, setGcalProgress] = useState<{ done: number; total: number } | null>(null)
+    const [gcalStage, setGcalStage] = useState<string | null>(null)
 
     const loadPersonal = async () => {
         const snap = await getDocs(query(userCol(investDB, 'calendarEvents'), orderBy('date', 'asc')))
@@ -299,7 +299,7 @@ export default function CalendarHome() {
         reader.readAsArrayBuffer(file)
     }
 
-    // ── 同步「未來半年」的行事曆事件到 Google 行事曆（手動觸發）──────────
+    // ── 雙向同步「未來半年」的行事曆事件（手動觸發）────────────────────
     const handleSyncGoogleCalendar = async () => {
         setInvestorError(null)
         setInvestorInfo(null)
@@ -311,17 +311,21 @@ export default function CalendarHome() {
         }
 
         setGcalSyncing(true)
-        setGcalProgress(null)
+        setGcalStage('準備中')
         try {
-            const evts = await gatherUpcomingCalendarEvents(auth.syncTypes)
-            setGcalProgress({ done: 0, total: evts.length })
+            const summary: SyncSummary = await performGoogleCalendarSync(auth, stage => setGcalStage(stage))
 
-            const summary = await syncEventsToGoogleCalendar(auth.refreshToken, evts, (done, total) =>
-                setGcalProgress({ done, total })
-            )
+            const parts: string[] = []
+            if (summary.pushedCreated > 0) parts.push(`推送新增 ${summary.pushedCreated} 筆`)
+            if (summary.pushedUpdated > 0) parts.push(`推送更新 ${summary.pushedUpdated} 筆`)
+            if (summary.pushedDeleted > 0) parts.push(`推送刪除 ${summary.pushedDeleted} 筆`)
+            if (summary.pulledCreated > 0) parts.push(`從 Google 新增 ${summary.pulledCreated} 筆`)
+            if (summary.pulledUpdated > 0) parts.push(`從 Google 更新 ${summary.pulledUpdated} 筆`)
+            if (summary.pulledDeleted > 0) parts.push(`從 Google 刪除 ${summary.pulledDeleted} 筆`)
+            if (summary.failed > 0) parts.push(`失敗 ${summary.failed} 筆`)
+            const message = parts.length > 0 ? parts.join('、') : '沒有需要異動的事件'
 
-            const failedPart = summary.failed > 0 ? `、失敗 ${summary.failed} 筆` : ''
-            setInvestorInfo(`✅ Google 行事曆同步完成：新增 ${summary.created} 筆、已存在略過 ${summary.skipped} 筆${failedPart}`)
+            setInvestorInfo(`✅ Google 行事曆同步完成：${message}`)
             if (summary.errors.length > 0) {
                 console.error('[Google Calendar 同步錯誤]', summary.errors)
             }
@@ -330,7 +334,7 @@ export default function CalendarHome() {
             setInvestorError(`Google 行事曆同步失敗：${err instanceof Error ? err.message : '未知錯誤'}`)
         }
         setGcalSyncing(false)
-        setGcalProgress(null)
+        setGcalStage(null)
     }
 
     // ✅ 修正 Bug 1：mount 時只載入一次靜態資料，不再重複呼叫 loadInvestorFromFirestore
@@ -403,6 +407,7 @@ export default function CalendarHome() {
                 description: form.description,
                 url: form.url,
                 type,
+                updatedAt: new Date().toISOString(),
             })
             loadPersonal()
         }
@@ -430,6 +435,7 @@ export default function CalendarHome() {
             description: form.description,
             url: form.url,
             type: form.type,
+            updatedAt: new Date().toISOString(),
         })
         setEditingEvent(null)
         setForm({ title: '', date: '', description: '', url: '', type: 'personal' })
@@ -503,9 +509,7 @@ export default function CalendarHome() {
                             style={{ ...btn('#4285f4'), opacity: gcalSyncing ? 0.6 : 1 }}
                             title="把未來半年的行事曆事件同步到 Google 行事曆">
                             <UploadCloud size={14} style={gcalSyncing ? { animation: 'spin 1s linear infinite' } : undefined} />
-                            {gcalSyncing
-                                ? (gcalProgress && gcalProgress.total > 0 ? `同步中… ${gcalProgress.done}/${gcalProgress.total}` : '同步中…')
-                                : '同步到 Google'}
+                            {gcalSyncing ? (gcalStage || '同步中…') : '同步到 Google'}
                         </button>
                         <button onClick={() => setShowForm(true)} style={btn('var(--c-accent)')}>
                             <Plus size={14} />新增行程

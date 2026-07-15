@@ -1,17 +1,25 @@
 /**
- * googleCalendar.ts — Google 行事曆串接共用邏輯
+ * googleCalendar.ts — Google 行事曆串接共用邏輯（含雙向同步）
  *
- * 涵蓋範圍：
- * - Google OAuth2 授權（導頁、解析導回的 fragment）
- * - 連結狀態讀寫（存在 users/{uid}/settings/googleCalendarAuth）
- * - 組出「未來半年」要同步的 CalendarEvent[]（依已勾選的標籤篩選；
- *   法說會只取「持倉 + calendarWatchList 關注清單」的股票）
- * - 分批呼叫 netlify/functions/google-calendar-sync.js 寫入事件
+ * 整體流程：
+ * 1. OAuth2 授權（導頁、解析導回的 fragment）→ 取得 refresh_token
+ * 2. 確保「Symbiosis 財經行事曆」這個專屬行事曆存在（ensure）
+ * 3. 讀出該行事曆目前所有事件（pull）
+ * 4. 跟 Firestore `calendarEvents`（手動建立的個人行程／除權息／股東會等，
+ *    以下稱 A 類）比對，算出：
+ *      - Google 端有異動（改期／刪除）→ 寫回 Firestore
+ *      - Google 端新增的全新事件（無 sourceId）→ 在 Firestore 建立新文件
+ *      - Firestore 端有異動（新增／編輯）→ 準備推去 Google
+ *      - Firestore 文件已被刪除但 Google 上還在 → 準備從 Google 刪除
+ * 5. 法說會／除權息／FOMC／期貨結算日（以下稱 B 類，資料是算出來的，不是
+ *    使用者手動維護的文件）維持單向：只會「新增缺少的」，不做更新／刪除。
+ * 6. 把 4、5 算出的異動送去 push function，並把結果（googleEventId 對應、
+ *    Firestore 端該做的異動）套用回 Firestore。
  *
  * 放置位置：src/lib/googleCalendar.ts
  */
 
-import { getDoc, setDoc, deleteDoc, getDocs, query, where, collection } from 'firebase/firestore'
+import { getDoc, setDoc, deleteDoc, updateDoc, addDoc, getDocs, query, where, collection } from 'firebase/firestore'
 import { investDB } from './firebase'
 import { userDoc, userCol } from './userDB'
 import { calcPositions, type TradeRecord } from './calc'
@@ -24,16 +32,48 @@ export interface GoogleCalendarAuth {
     refreshToken: string
     connectedAt: string
     syncTypes: SyncEventType[]
+    calendarId?: string
+}
+
+/** Firestore 的 calendarEvents 文件，多帶雙向同步需要的兩個欄位 */
+interface StoredCalendarEvent extends CalendarEvent {
+    googleEventId?: string
+    updatedAt?: string
+}
+
+interface PullEvent {
+    googleEventId: string
+    sourceId: string | null
+    title: string
+    date: string
+    description: string
+    updated: string
+    cancelled: boolean
+}
+
+interface PushEventInput {
+    id: string
+    date: string
+    title: string
+    type?: string
+    description?: string
+    url?: string
+    googleEventId?: string
 }
 
 const AUTH_COLLECTION = 'settings'
 const AUTH_DOC_ID = 'googleCalendarAuth'
+const CALENDAR_EVENTS_COLLECTION = 'calendarEvents'
 export const DEFAULT_SYNC_TYPES: SyncEventType[] = ['investor', 'personal']
-const SYNC_FUNCTION_URL = '/.netlify/functions/google-calendar-sync'
+const A_TYPE_MANUAL_TYPES: SyncEventType[] = ['personal', 'tech', 'fomc', 'shareholder', 'dividend']
+const ENSURE_URL = '/.netlify/functions/google-calendar-ensure'
+const PULL_URL = '/.netlify/functions/google-calendar-pull'
+const SYNC_URL = '/.netlify/functions/google-calendar-sync'
 const SYNC_MONTHS_AHEAD = 6
-const BATCH_SIZE = 30
+const BATCH_SIZE = 25
 
 // ── 1. Google OAuth 授權 URL ──────────────────────────────────────────────
+// ⚠️ scope 用完整的 calendar（不是 calendar.events），因為要能建立專屬行事曆
 
 export function getGoogleCalendarAuthUrl(): string {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string
@@ -42,14 +82,14 @@ export function getGoogleCalendarAuthUrl(): string {
         client_id: clientId,
         redirect_uri: redirectUri,
         response_type: 'code',
-        scope: 'https://www.googleapis.com/auth/calendar.events',
+        scope: 'https://www.googleapis.com/auth/calendar',
         access_type: 'offline',
         prompt: 'consent',
     })
     return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
 }
 
-// ── 2. 解析 Google 導回的 URL fragment（在 /calendar 頁面掛載時呼叫）──────
+// ── 2. 解析 Google 導回的 URL fragment（在 CalendarSettings 掛載時呼叫）────
 
 export interface GoogleAuthRedirectResult {
     refreshToken?: string
@@ -66,7 +106,6 @@ export function parseGoogleAuthRedirect(): GoogleAuthRedirectResult | null {
     const refreshToken = params.get('gcal_refresh_token') ?? undefined
     const error = params.get('gcal_error') ?? undefined
 
-    // 處理完立刻清掉網址上的 fragment：避免重整頁面時重複處理，也避免 token 留在網址列
     window.history.replaceState(null, '', window.location.pathname + window.location.search)
 
     if (!refreshToken && !error) return null
@@ -98,7 +137,23 @@ export async function setGoogleCalendarSyncTypes(types: SyncEventType[]): Promis
     await setDoc(userDoc(investDB, AUTH_COLLECTION, AUTH_DOC_ID), { syncTypes: types }, { merge: true })
 }
 
-// ── 4. 組出「未來半年」要同步的事件 ────────────────────────────────────
+/** 確保專屬行事曆存在，回傳 calendarId（沒有就建立，並存回 Firestore） */
+export async function ensureGoogleCalendarId(auth: GoogleCalendarAuth): Promise<string> {
+    const res = await fetch(ENSURE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: auth.refreshToken, calendarId: auth.calendarId }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || '建立／確認專屬行事曆失敗')
+
+    if (data.calendarId !== auth.calendarId) {
+        await setDoc(userDoc(investDB, AUTH_COLLECTION, AUTH_DOC_ID), { calendarId: data.calendarId }, { merge: true })
+    }
+    return data.calendarId as string
+}
+
+// ── 4. 共用日期工具 ────────────────────────────────────────────────────
 
 function addMonths(base: Date, months: number): Date {
     return new Date(base.getFullYear(), base.getMonth() + months, base.getDate())
@@ -115,15 +170,15 @@ function inRange(dateStr: string, startISO: string, endISO: string): boolean {
     return dateStr >= startISO && dateStr <= endISO
 }
 
-export async function gatherUpcomingCalendarEvents(syncTypes: SyncEventType[]): Promise<CalendarEvent[]> {
+// ── 5. B 類（法說會／除權息／FOMC／期貨）：單向，只新增缺少的 ────────────
+
+async function gatherUpcomingBTypeEvents(syncTypes: SyncEventType[]): Promise<CalendarEvent[]> {
     const today = new Date()
     const startISO = toISODate(today)
     const endISO = toISODate(addMonths(today, SYNC_MONTHS_AHEAD))
     const typeSet = new Set(syncTypes)
-
     const results: CalendarEvent[] = []
 
-    // 4a. 靜態資料：FOMC、科技活動
     if (typeSet.has('fomc')) {
         results.push(...FOMC_DATES.filter(e => inRange(e.date, startISO, endISO)))
     }
@@ -131,7 +186,6 @@ export async function gatherUpcomingCalendarEvents(syncTypes: SyncEventType[]): 
         results.push(...TECH_EVENTS.filter(e => inRange(e.date, startISO, endISO)))
     }
 
-    // 4b. 期貨結算日：逐月計算涵蓋範圍內的每個月
     if (typeSet.has('futures')) {
         let cursor = new Date(today.getFullYear(), today.getMonth(), 1)
         const end = addMonths(today, SYNC_MONTHS_AHEAD)
@@ -145,19 +199,6 @@ export async function gatherUpcomingCalendarEvents(syncTypes: SyncEventType[]): 
         }
     }
 
-    // 4c. 手動建立的行程（personal / tech / fomc / dividend / shareholder 皆可能存在這個 collection）
-    const manualTypes: SyncEventType[] = ['personal', 'dividend', 'shareholder', 'tech', 'fomc']
-    if (manualTypes.some(t => typeSet.has(t))) {
-        const snap = await getDocs(query(userCol(investDB, 'calendarEvents'), where('date', '>=', startISO)))
-        snap.docs.forEach(d => {
-            const data = { id: d.id, ...d.data() } as CalendarEvent
-            if (typeSet.has(data.type) && inRange(data.date, startISO, endISO)) {
-                results.push(data)
-            }
-        })
-    }
-
-    // 4d. 除權息（來自 trades/dividends 共用快取層）
     if (typeSet.has('dividend')) {
         const divs = await fetchDividends<{ code: string; name?: string; date: string; cashDividend?: number }>('asc')
         divs
@@ -174,7 +215,6 @@ export async function gatherUpcomingCalendarEvents(syncTypes: SyncEventType[]): 
             })
     }
 
-    // 4e. 法說會：只取「持倉 + calendarWatchList 關注清單」股票，範圍限縮在未來半年涵蓋的 yearMonth
     if (typeSet.has('investor')) {
         const [watchSnap, trades] = await Promise.all([
             getDocs(userCol(investDB, 'calendarWatchList')),
@@ -222,44 +262,276 @@ export async function gatherUpcomingCalendarEvents(syncTypes: SyncEventType[]): 
     return results
 }
 
-// ── 5. 分批呼叫 Netlify Function 寫入 Google Calendar ──────────────────
+// ── 6. A 類（calendarEvents collection）：雙向比對 ────────────────────
+
+interface ReconcileResult {
+    firestoreUpdates: { id: string; data: Partial<StoredCalendarEvent> }[]
+    firestoreDeletes: string[]
+    firestoreCreates: Omit<StoredCalendarEvent, 'id'>[]
+    pushList: PushEventInput[]
+    deleteGoogleEventIds: string[]
+}
+
+async function reconcileATypeEvents(syncTypes: SyncEventType[], pullEvents: PullEvent[]): Promise<ReconcileResult> {
+    const today = new Date()
+    const startISO = toISODate(today)
+    const endISO = toISODate(addMonths(today, SYNC_MONTHS_AHEAD))
+    const relevantTypes = A_TYPE_MANUAL_TYPES.filter(t => syncTypes.includes(t))
+
+    const result: ReconcileResult = {
+        firestoreUpdates: [],
+        firestoreDeletes: [],
+        firestoreCreates: [],
+        pushList: [],
+        deleteGoogleEventIds: [],
+    }
+    if (relevantTypes.length === 0) return result
+
+    const snap = await getDocs(query(userCol(investDB, CALENDAR_EVENTS_COLLECTION), where('date', '>=', startISO)))
+    const firestoreDocs = new Map<string, StoredCalendarEvent>()
+    snap.docs.forEach(d => {
+        const data = { id: d.id, ...d.data() } as StoredCalendarEvent
+        if (relevantTypes.includes(data.type) && inRange(data.date, startISO, endISO)) {
+            firestoreDocs.set(d.id, data)
+        }
+    })
+
+    const googleBySourceId = new Map<string, PullEvent>()
+    const googleNative: PullEvent[] = []
+    pullEvents.forEach(ev => {
+        if (ev.sourceId) googleBySourceId.set(ev.sourceId, ev)
+        else if (!ev.cancelled) googleNative.push(ev)
+    })
+
+    // 6a. 有 sourceId 的 Google 事件：跟 Firestore 比對
+    for (const [sourceId, gEvt] of googleBySourceId) {
+        const localDoc = firestoreDocs.get(sourceId)
+
+        if (!localDoc) {
+            // Firestore 找不到這筆 → App 端已刪除，Google 端要跟著刪（除非本來就已經是 cancelled）
+            if (!gEvt.cancelled) result.deleteGoogleEventIds.push(gEvt.googleEventId)
+            continue
+        }
+
+        if (gEvt.cancelled) {
+            // Google 端被刪除 → Firestore 也刪掉
+            result.firestoreDeletes.push(sourceId)
+            continue
+        }
+
+        const localUpdatedAt = localDoc.updatedAt || ''
+        if (gEvt.updated > localUpdatedAt) {
+            // Google 端比較新 → 覆蓋回 Firestore
+            result.firestoreUpdates.push({
+                id: sourceId,
+                data: {
+                    title: gEvt.title,
+                    date: gEvt.date,
+                    description: gEvt.description,
+                    updatedAt: gEvt.updated,
+                    googleEventId: gEvt.googleEventId,
+                },
+            })
+        } else if (localUpdatedAt > gEvt.updated || !localDoc.googleEventId) {
+            // Firestore 端比較新，或還沒連結過 → 推去 Google
+            result.pushList.push({
+                id: sourceId,
+                date: localDoc.date,
+                title: localDoc.title,
+                type: localDoc.type,
+                description: localDoc.description,
+                url: localDoc.url,
+                googleEventId: gEvt.googleEventId,
+            })
+        }
+    }
+
+    // 6b. Google 端全新建立的事件（沒有 sourceId）→ 在 Firestore 建立新文件
+    for (const gEvt of googleNative) {
+        result.firestoreCreates.push({
+            date: gEvt.date,
+            title: gEvt.title || '（未命名行程）',
+            description: gEvt.description,
+            type: 'personal',
+            updatedAt: gEvt.updated,
+            googleEventId: gEvt.googleEventId,
+        })
+    }
+
+    // 6c. Firestore 有、但完全沒被 Google 端提到（從未同步過）→ 推去 Google 新增
+    for (const [id, localDoc] of firestoreDocs) {
+        if (googleBySourceId.has(id)) continue // 已經在 6a 處理過
+        result.pushList.push({
+            id,
+            date: localDoc.date,
+            title: localDoc.title,
+            type: localDoc.type,
+            description: localDoc.description,
+            url: localDoc.url,
+        })
+    }
+
+    return result
+}
+
+// ── 7. 分批呼叫推送 function ──────────────────────────────────────────
 
 export interface SyncSummary {
-    created: number
-    skipped: number
+    pushedCreated: number
+    pushedUpdated: number
+    pushedSkipped: number
+    pushedDeleted: number
+    pulledUpdated: number
+    pulledCreated: number
+    pulledDeleted: number
     failed: number
     errors: string[]
 }
 
-export async function syncEventsToGoogleCalendar(
-    refreshToken: string,
-    events: CalendarEvent[],
-    onProgress?: (done: number, total: number) => void
+/**
+ * 執行一次完整的雙向同步：ensure 行事曆 → pull → 比對 → push →
+ * 把結果套用回 Firestore。
+ */
+export async function performGoogleCalendarSync(
+    auth: GoogleCalendarAuth,
+    onProgress?: (stage: string) => void
 ): Promise<SyncSummary> {
-    const summary: SyncSummary = { created: 0, skipped: 0, failed: 0, errors: [] }
+    const summary: SyncSummary = {
+        pushedCreated: 0,
+        pushedUpdated: 0,
+        pushedSkipped: 0,
+        pushedDeleted: 0,
+        pulledUpdated: 0,
+        pulledCreated: 0,
+        pulledDeleted: 0,
+        failed: 0,
+        errors: [],
+    }
 
-    for (let i = 0; i < events.length; i += BATCH_SIZE) {
-        const batch = events.slice(i, i + BATCH_SIZE)
-        const res = await fetch(SYNC_FUNCTION_URL, {
+    onProgress?.('確認專屬行事曆')
+    const calendarId = await ensureGoogleCalendarId(auth)
+
+    onProgress?.('讀取 Google 行事曆現有事件')
+    const pullRes = await fetch(PULL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: auth.refreshToken, calendarId }),
+    })
+    const pullData = await pullRes.json()
+    if (!pullRes.ok) throw new Error(pullData.error || '讀取 Google 行事曆事件失敗')
+    const pullEvents: PullEvent[] = pullData.events || []
+
+    onProgress?.('比對異動')
+    const reconciled = await reconcileATypeEvents(auth.syncTypes, pullEvents)
+    const bTypeEvents = await gatherUpcomingBTypeEvents(auth.syncTypes)
+    const bTypePushList: PushEventInput[] = bTypeEvents.map(e => ({
+        id: e.id,
+        date: e.date,
+        title: e.title,
+        type: e.type,
+        description: e.description,
+        url: e.url,
+    }))
+
+    const fullPushList = [...reconciled.pushList, ...bTypePushList]
+
+    // ── 套用 pull 端算出的 Firestore 異動 ──────────────────────────────
+    onProgress?.('寫回 Firestore（Google 端異動）')
+    for (const del of reconciled.firestoreDeletes) {
+        try {
+            await deleteDoc(userDoc(investDB, CALENDAR_EVENTS_COLLECTION, del))
+            summary.pulledDeleted++
+        } catch (err) {
+            summary.failed++
+            summary.errors.push(`刪除 Firestore 文件 ${del} 失敗：${err instanceof Error ? err.message : '未知錯誤'}`)
+        }
+    }
+    for (const upd of reconciled.firestoreUpdates) {
+        try {
+            await updateDoc(userDoc(investDB, CALENDAR_EVENTS_COLLECTION, upd.id), upd.data)
+            summary.pulledUpdated++
+        } catch (err) {
+            summary.failed++
+            summary.errors.push(`更新 Firestore 文件 ${upd.id} 失敗：${err instanceof Error ? err.message : '未知錯誤'}`)
+        }
+    }
+    const createdLinkTargets: { docId: string; googleEventId: string }[] = []
+    for (const create of reconciled.firestoreCreates) {
+        try {
+            const ref = await addDoc(userCol(investDB, CALENDAR_EVENTS_COLLECTION), create)
+            summary.pulledCreated++
+            if (create.googleEventId) {
+                createdLinkTargets.push({ docId: ref.id, googleEventId: create.googleEventId })
+            }
+        } catch (err) {
+            summary.failed++
+            summary.errors.push(`建立 Firestore 文件失敗：${err instanceof Error ? err.message : '未知錯誤'}`)
+        }
+    }
+    // Google 端新建的事件，回填 sourceId（用新產生的 Firestore 文件 id）
+    createdLinkTargets.forEach(t => {
+        fullPushList.push({ id: t.docId, date: '', title: '', googleEventId: t.googleEventId })
+    })
+    // 上面這筆 link-only 的 push 不需要真的改標題/日期，補回原始內容避免被清空
+    for (const t of createdLinkTargets) {
+        const src = reconciled.firestoreCreates.find(c => c.googleEventId === t.googleEventId)
+        const item = fullPushList.find(p => p.id === t.docId && p.googleEventId === t.googleEventId)
+        if (src && item) {
+            item.date = src.date
+            item.title = src.title
+            item.description = src.description
+            item.type = src.type
+        }
+    }
+
+    // ── 推送到 Google（新增／更新／刪除）────────────────────────────────
+    onProgress?.('推送到 Google 行事曆')
+    const linkResults: { id: string; googleEventId: string }[] = []
+
+    for (let i = 0; i < fullPushList.length; i += BATCH_SIZE) {
+        const batch = fullPushList.slice(i, i + BATCH_SIZE)
+        const deleteBatch = i === 0 ? reconciled.deleteGoogleEventIds : []
+        const res = await fetch(SYNC_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refreshToken, events: batch }),
+            body: JSON.stringify({
+                refreshToken: auth.refreshToken,
+                calendarId,
+                events: batch,
+                deleteGoogleEventIds: deleteBatch,
+            }),
         })
         const data = await res.json()
-
         if (!res.ok) {
             summary.failed += batch.length
             summary.errors.push(data.error || `批次 ${Math.floor(i / BATCH_SIZE) + 1} 失敗（HTTP ${res.status}）`)
-            if (res.status === 401) break // 憑證失效，後面的批次不用再打了
+            if (res.status === 401) break
             continue
         }
-
-        summary.created += data.created ?? 0
-        summary.skipped += data.skipped ?? 0
+        summary.pushedCreated += data.created ?? 0
+        summary.pushedUpdated += data.updated ?? 0
+        summary.pushedSkipped += data.skipped ?? 0
+        summary.pushedDeleted += data.deleted ?? 0
         summary.failed += data.failed ?? 0
         summary.errors.push(...(data.errors ?? []))
+        linkResults.push(...(data.links ?? []))
+    }
 
-        onProgress?.(Math.min(i + BATCH_SIZE, events.length), events.length)
+    // ── 把 push 結果的 googleEventId／updatedAt 寫回 Firestore（僅 A 類）──
+    onProgress?.('更新連結狀態')
+    const aTypeIds = new Set(reconciled.pushList.map(p => p.id))
+    createdLinkTargets.forEach(t => aTypeIds.add(t.docId))
+    const now = new Date().toISOString()
+    for (const link of linkResults) {
+        if (!aTypeIds.has(link.id)) continue
+        try {
+            await updateDoc(userDoc(investDB, CALENDAR_EVENTS_COLLECTION, link.id), {
+                googleEventId: link.googleEventId,
+                updatedAt: now,
+            })
+        } catch {
+            // 寫回連結狀態失敗不影響本次同步結果，下次同步會再嘗試
+        }
     }
 
     return summary
