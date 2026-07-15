@@ -5,7 +5,8 @@ import { userCol, userDoc } from '../../lib/userDB'
 import { calcPositions, type TradeRecord } from '../../lib/calc'
 import { fetchTrades, fetchDividends, invalidateDividends } from '../../lib/investData'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS, type CalendarEvent } from '../../lib/calendarData'
-import { Plus, X, ChevronLeft, ChevronRight, ExternalLink, Upload, Pencil, RefreshCw } from 'lucide-react'
+import { Plus, X, ChevronLeft, ChevronRight, ExternalLink, Upload, Pencil, RefreshCw, UploadCloud } from 'lucide-react'
+import { getGoogleCalendarAuth, gatherUpcomingCalendarEvents, syncEventsToGoogleCalendar } from '../../lib/googleCalendar'
 import * as XLSX from 'xlsx'
 
 const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
@@ -47,6 +48,8 @@ export default function CalendarHome() {
     const [myStockCodes, setMyStockCodes] = useState<Set<string>>(new Set())
     const [form, setForm] = useState({ title: '', date: '', description: '', url: '', type: 'personal' as CalendarEvent['type'] })
     const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null)
+    const [gcalSyncing, setGcalSyncing] = useState(false)
+    const [gcalProgress, setGcalProgress] = useState<{ done: number; total: number } | null>(null)
 
     const loadPersonal = async () => {
         const snap = await getDocs(query(userCol(investDB, 'calendarEvents'), orderBy('date', 'asc')))
@@ -296,6 +299,40 @@ export default function CalendarHome() {
         reader.readAsArrayBuffer(file)
     }
 
+    // ── 同步「未來半年」的行事曆事件到 Google 行事曆（手動觸發）──────────
+    const handleSyncGoogleCalendar = async () => {
+        setInvestorError(null)
+        setInvestorInfo(null)
+
+        const auth = await getGoogleCalendarAuth()
+        if (!auth) {
+            setInvestorError('尚未連結 Google 帳號，請先到「行事曆設定」頁面連結')
+            return
+        }
+
+        setGcalSyncing(true)
+        setGcalProgress(null)
+        try {
+            const evts = await gatherUpcomingCalendarEvents(auth.syncTypes)
+            setGcalProgress({ done: 0, total: evts.length })
+
+            const summary = await syncEventsToGoogleCalendar(auth.refreshToken, evts, (done, total) =>
+                setGcalProgress({ done, total })
+            )
+
+            const failedPart = summary.failed > 0 ? `、失敗 ${summary.failed} 筆` : ''
+            setInvestorInfo(`✅ Google 行事曆同步完成：新增 ${summary.created} 筆、已存在略過 ${summary.skipped} 筆${failedPart}`)
+            if (summary.errors.length > 0) {
+                console.error('[Google Calendar 同步錯誤]', summary.errors)
+            }
+        } catch (err) {
+            console.error('handleSyncGoogleCalendar 失敗：', err)
+            setInvestorError(`Google 行事曆同步失敗：${err instanceof Error ? err.message : '未知錯誤'}`)
+        }
+        setGcalSyncing(false)
+        setGcalProgress(null)
+    }
+
     // ✅ 修正 Bug 1：mount 時只載入一次靜態資料，不再重複呼叫 loadInvestorFromFirestore
     useEffect(() => {
         loadPersonal()
@@ -461,6 +498,14 @@ export default function CalendarHome() {
                         </button>
                         <button onClick={() => setShowXlsxImport(true)} style={btn('var(--c-border)')} title="從 xlsx 手動匯入法說會日期">
                             <Upload size={14} />匯入法說會
+                        </button>
+                        <button onClick={handleSyncGoogleCalendar} disabled={gcalSyncing}
+                            style={{ ...btn('#4285f4'), opacity: gcalSyncing ? 0.6 : 1 }}
+                            title="把未來半年的行事曆事件同步到 Google 行事曆">
+                            <UploadCloud size={14} style={gcalSyncing ? { animation: 'spin 1s linear infinite' } : undefined} />
+                            {gcalSyncing
+                                ? (gcalProgress && gcalProgress.total > 0 ? `同步中… ${gcalProgress.done}/${gcalProgress.total}` : '同步中…')
+                                : '同步到 Google'}
                         </button>
                         <button onClick={() => setShowForm(true)} style={btn('var(--c-accent)')}>
                             <Plus size={14} />新增行程

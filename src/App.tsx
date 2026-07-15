@@ -7,6 +7,7 @@ import { userCol, userDocNested } from './lib/userDB'
 import { signOutAll, switchAccount, investAuth } from './lib/auth'
 import { loadAccounts, removeAccount, type SavedAccount } from './lib/accountStore'
 import { PriceProvider } from './PriceContext'
+import { MarketCapProvider } from './MarketCapContext'
 
 const Dashboard = lazy(() => import('./pages/invest/Dashboard'))
 const Trades = lazy(() => import('./pages/invest/Trades'))
@@ -542,53 +543,55 @@ export default function App() {
 
     return (
         <PriceProvider>
-            <div style={{ display: 'flex', height: '100vh', backgroundColor: 'var(--c-bg)', overflow: 'hidden' }}>
-                {!isMobile && <Sidebar {...sidebarProps} />}
-                {isMobile && sidebarOpen && (
-                    <>
-                        <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 99 }} />
-                        <Sidebar {...sidebarProps} />
-                    </>
-                )}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                    {isMobile && (
-                        <header style={{ backgroundColor: 'var(--c-sidebar)', borderBottom: '1px solid var(--c-border)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-                            <button onClick={() => setSidebarOpen(true)} style={{ background: 'none', border: 'none', color: 'var(--c-text)', cursor: 'pointer', display: 'flex' }}><Menu size={22} /></button>
-                            <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)' }}>共生</span>
-                        </header>
+            <MarketCapProvider>
+                <div style={{ display: 'flex', height: '100vh', backgroundColor: 'var(--c-bg)', overflow: 'hidden' }}>
+                    {!isMobile && <Sidebar {...sidebarProps} />}
+                    {isMobile && sidebarOpen && (
+                        <>
+                            <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 99 }} />
+                            <Sidebar {...sidebarProps} />
+                        </>
                     )}
-                    <main style={{ flex: 1, overflowY: 'auto', color: 'var(--c-text)' }}>
-                        <Suspense fallback={<PageLoader />}>
-                            <Routes>
-                                <Route path="/" element={<Navigate to="/invest" replace />} />
-                                <Route path="/invest" element={<Dashboard />} />
-                                <Route path="/invest/trades" element={<Trades />} />
-                                <Route path="/invest/holdings" element={<Holdings />} />
-                                <Route path="/invest/watchlist" element={<Watchlist />} />
-                                <Route path="/invest/history" element={<HistoryPnL />} />
-                                <Route path="/invest/cashflow" element={<CashFlow />} />
-                                <Route path="/invest/dividend" element={<Dividend />} />
-                                <Route path="/invest/trend" element={<AssetTrend />} />
-                                <Route path="/invest/review" element={<YearReview />} />
-                                <Route path="/invest/brief" element={<DailyBrief />} />
-                                <Route path="/invest/margin" element={<MarginManager />} />
-                                <Route path="/invest/sentiment" element={<SentimentTracker />} />
-                                <Route path="/invest/industry" element={<IndustryMap />} />
-                                <Route path="/invest/sold-tracker" element={<SoldTracker />} />
-                                <Route path="/invest/settings" element={<InvestSettings />} />
-                                <Route path="/kms" element={<KMSHome selectedTag={selectedTag} setSelectedTag={setSelectedTag} />} />
-                                <Route path="/kms/tags" element={<KMSTags />} />
-                                <Route path="/kms/export" element={<KMSExport />} />
-                                <Route path="/kms/graph" element={<KMSGraph />} />
-                                <Route path="/kms/trash" element={<KMSTrash />} />
-                                <Route path="/calendar" element={<CalendarHome />} />
-                                <Route path="/calendar/tasks" element={<TaskManager />} />
-                                <Route path="/calendar/settings" element={<CalendarSettings />} />
-                            </Routes>
-                        </Suspense>
-                    </main>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                        {isMobile && (
+                            <header style={{ backgroundColor: 'var(--c-sidebar)', borderBottom: '1px solid var(--c-border)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+                                <button onClick={() => setSidebarOpen(true)} style={{ background: 'none', border: 'none', color: 'var(--c-text)', cursor: 'pointer', display: 'flex' }}><Menu size={22} /></button>
+                                <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)' }}>共生</span>
+                            </header>
+                        )}
+                        <main style={{ flex: 1, overflowY: 'auto', color: 'var(--c-text)' }}>
+                            <Suspense fallback={<PageLoader />}>
+                                <Routes>
+                                    <Route path="/" element={<Navigate to="/invest" replace />} />
+                                    <Route path="/invest" element={<Dashboard />} />
+                                    <Route path="/invest/trades" element={<Trades />} />
+                                    <Route path="/invest/holdings" element={<Holdings />} />
+                                    <Route path="/invest/watchlist" element={<Watchlist />} />
+                                    <Route path="/invest/history" element={<HistoryPnL />} />
+                                    <Route path="/invest/cashflow" element={<CashFlow />} />
+                                    <Route path="/invest/dividend" element={<Dividend />} />
+                                    <Route path="/invest/trend" element={<AssetTrend />} />
+                                    <Route path="/invest/review" element={<YearReview />} />
+                                    <Route path="/invest/brief" element={<DailyBrief />} />
+                                    <Route path="/invest/margin" element={<MarginManager />} />
+                                    <Route path="/invest/sentiment" element={<SentimentTracker />} />
+                                    <Route path="/invest/industry" element={<IndustryMap />} />
+                                    <Route path="/invest/sold-tracker" element={<SoldTracker />} />
+                                    <Route path="/invest/settings" element={<InvestSettings />} />
+                                    <Route path="/kms" element={<KMSHome selectedTag={selectedTag} setSelectedTag={setSelectedTag} />} />
+                                    <Route path="/kms/tags" element={<KMSTags />} />
+                                    <Route path="/kms/export" element={<KMSExport />} />
+                                    <Route path="/kms/graph" element={<KMSGraph />} />
+                                    <Route path="/kms/trash" element={<KMSTrash />} />
+                                    <Route path="/calendar" element={<CalendarHome />} />
+                                    <Route path="/calendar/tasks" element={<TaskManager />} />
+                                    <Route path="/calendar/settings" element={<CalendarSettings />} />
+                                </Routes>
+                            </Suspense>
+                        </main>
+                    </div>
                 </div>
-            </div>
+            </MarketCapProvider>
         </PriceProvider>
     )
 }

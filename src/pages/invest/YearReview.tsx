@@ -182,11 +182,20 @@ export default function YearReview() {
     const [realizedTrades, setRealizedTrades] = useState<RealizedTrade[]>([])
     const [xirrLoading, setXirrLoading] = useState(true)
 
-    // ── XIRR 區間篩選 ──
-    const [xirrRangeStart, setXirrRangeStart] = useState('')
-    const [xirrRangeEnd, setXirrRangeEnd] = useState('')
-    const [xirrRange, setXirrRange] = useState<number | null>(null)
-    const [xirrRangeLoading, setXirrRangeLoading] = useState(false)
+    // ── 自訂區間：套用於本頁所有統計（XIRR / MDD / 勝率 / 平均持有天數），
+    //    可排除帳戶閒置前的久遠舊紀錄，只看真實想檢視的那段期間 ──
+    const [rangeStart, setRangeStart] = useState('')
+    const [rangeEnd, setRangeEnd] = useState('')
+    const [rangeStats, setRangeStats] = useState<{
+        xirr: number | null
+        mdd: number | null
+        winRate: number | null
+        wins: number
+        total: number
+        avgHoldingDays: number | null
+    } | null>(null)
+    const [rangeLoading, setRangeLoading] = useState(false)
+
     // 儲存原始現金流供區間重算（loadPerformance 後設定）
     const rawCashflowsRef = useRef<RawCashflow[]>([])
     // 儲存每一天的持倉快照（日期 → {code: {shares, avgCost}}）供區間估算用
@@ -474,21 +483,35 @@ export default function YearReview() {
         setPerfLoading(false)
     }, [customStart, customEnd, perfConfig])
 
-    // ── 計算 XIRR 區間 ──
-    const calcXirrRange = useCallback(() => {
-        if (!xirrRangeStart || !xirrRangeEnd) return
-        if (xirrRangeStart >= xirrRangeEnd) return
-        setXirrRangeLoading(true)
+    // ── 計算自訂區間統計：只取區間內的資料重算 XIRR / MDD / 勝率 / 平均持有天數，
+    //    確保整頁指標口徑一致，不會有些採全歷史、有些採區間的落差 ──
+    const calcRangeStats = useCallback(() => {
+        if (!rangeStart || !rangeEnd || rangeStart >= rangeEnd) return
+        setRangeLoading(true)
 
+        // ── 勝率／平均持有天數／MDD：只取區間內的已實現交易 ──
+        const tradesInRange = realizedTrades
+            .filter(r => r.date >= rangeStart && r.date <= rangeEnd)
+            .sort((a, b) => a.date.localeCompare(b.date))
+
+        const wins = tradesInRange.filter(r => r.pnl > 0.5).length
+        const total = tradesInRange.length
+        const winRate = total > 0 ? (wins / total) * 100 : null
+        const avgHoldingDays = total > 0 ? tradesInRange.reduce((s, r) => s + r.holdingDays, 0) / total : null
+
+        let running = 0
+        const curve: number[] = []
+        tradesInRange.forEach(r => { running += r.pnl; curve.push(running) })
+        const mdd = curve.length > 0 ? calcMDD(curve) : null
+
+        // ── XIRR：期初／期末持倉市值（用快照估算）＋ 區間內出入金 ──
         const { dates: snapDates, snapshots: posSnaps, savedPrices } = posSnapshotRef.current
         const allCfs = rawCashflowsRef.current
 
-        // 過濾出區間內的現金流
-        const inRange = allCfs.filter(cf => cf.date >= xirrRangeStart && cf.date <= xirrRangeEnd)
+        const inRangeCfs = allCfs.filter(cf => cf.date >= rangeStart && cf.date <= rangeEnd)
 
         // 估算期初持倉市值（作為負現金流，代表「在這個時間點投入」）
-        // 找最接近 xirrRangeStart 且 <= xirrRangeStart 的快照日期
-        const beforeSnap = snapDates.filter(d => d <= xirrRangeStart).sort()
+        const beforeSnap = snapDates.filter(d => d <= rangeStart).sort()
         const startSnapDate = beforeSnap[beforeSnap.length - 1]
         let startPortfolioValue = 0
         if (startSnapDate) {
@@ -496,13 +519,12 @@ export default function YearReview() {
             Object.entries(snap).forEach(([code, { shares, avgCost }]) => {
                 if (shares <= 0) return
                 const cp = savedPrices[code]
-                // 用現價估算，若無現價則用成本
                 startPortfolioValue += typeof cp === 'number' ? cp * shares : avgCost * shares
             })
         }
 
         // 估算期末持倉市值（作為正現金流，代表「在這個時間點回收」）
-        const afterSnap = snapDates.filter(d => d <= xirrRangeEnd).sort()
+        const afterSnap = snapDates.filter(d => d <= rangeEnd).sort()
         const endSnapDate = afterSnap[afterSnap.length - 1]
         let endPortfolioValue = 0
         if (endSnapDate) {
@@ -514,21 +536,21 @@ export default function YearReview() {
             })
         }
 
-        // 組合現金流：期初持倉（負）＋ 區間內現金流 ＋ 期末持倉（正）
         const combined: { date: string; amount: number }[] = []
         if (startPortfolioValue > 0) {
-            combined.push({ date: xirrRangeStart, amount: -startPortfolioValue })
+            combined.push({ date: rangeStart, amount: -startPortfolioValue })
         }
-        inRange.forEach(cf => combined.push({ date: cf.date, amount: cf.amount }))
+        inRangeCfs.forEach(cf => combined.push({ date: cf.date, amount: cf.amount }))
         if (endPortfolioValue > 0) {
-            combined.push({ date: xirrRangeEnd, amount: endPortfolioValue })
+            combined.push({ date: rangeEnd, amount: endPortfolioValue })
         }
 
         const sorted = combined.sort((a, b) => a.date.localeCompare(b.date))
-        const result = sorted.length >= 2 ? calcXIRR(sorted) : null
-        setXirrRange(result)
-        setXirrRangeLoading(false)
-    }, [xirrRangeStart, xirrRangeEnd])
+        const xirr = sorted.length >= 2 ? calcXIRR(sorted) : null
+
+        setRangeStats({ xirr, mdd, winRate, wins, total, avgHoldingDays })
+        setRangeLoading(false)
+    }, [rangeStart, rangeEnd, realizedTrades])
 
     const loadPerformance = useCallback(async () => {
         setXirrLoading(true)
@@ -626,10 +648,12 @@ export default function YearReview() {
                 savedPrices
             }
 
-            // 初始化區間日期（如果還沒設定）
-            if (rawCfs.length > 0) {
-                setXirrRangeStart(prev => prev || rawCfs.map(cf => cf.date).sort()[0])
-                setXirrRangeEnd(prev => prev || new Date().toISOString().split('T')[0])
+            // 初始化自訂區間日期（如果還沒設定）：取現金流與已實現交易中最早的日期到今天
+            const allRangeDates = [...rawCfs.map(cf => cf.date), ...realized.map(r => r.date)]
+            if (allRangeDates.length > 0) {
+                const earliest = allRangeDates.sort()[0]
+                setRangeStart(prev => prev || earliest)
+                setRangeEnd(prev => prev || new Date().toISOString().split('T')[0])
             }
 
             setRealizedTrades([...realized].reverse())
@@ -1047,7 +1071,7 @@ export default function YearReview() {
                                         <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: mdd !== null && mdd > 0.1 ? 'var(--c-danger)' : 'var(--c-text)' }}>
                                             {mdd !== null ? `-${(mdd * 100).toFixed(2)}%` : '—'}
                                         </div>
-                                        <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '6px' }}>依已實現損益曲線計算</div>
+                                        <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '6px' }}>依全歷史已實現損益曲線計算，如有久遠舊紀錄可用下方自訂區間</div>
                                     </div>
                                     <div style={card}>
                                         <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>交易勝率</div>
@@ -1067,49 +1091,32 @@ export default function YearReview() {
                                     </div>
                                 </div>
 
-                                {/* ── 自訂區間 XIRR ── */}
+                                {/* ── 自訂區間統計（套用於整頁：XIRR / MDD / 勝率 / 平均持有天數） ── */}
                                 <div style={{ ...card, marginBottom: '20px' }}>
-                                    <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '4px' }}>自訂區間 XIRR</div>
+                                    <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '4px' }}>自訂區間統計</div>
                                     <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '0 0 16px' }}>
-                                        計算指定時間區間內的年化報酬率。期初／期末持倉以成本或現價估值，區間內出入金與股利均納入計算。
+                                        指定一段時間區間，年化報酬率（XIRR）、最大回撤（MDD）、勝率、平均持有天數都只採計這段區間內的交易，
+                                        可排除帳戶閒置前的久遠舊紀錄，看到真實想檢視那段期間的表現。
                                     </p>
                                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                                         <div>
                                             <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>起始日期</label>
-                                            <input type="date" style={inp} value={xirrRangeStart} onChange={e => { setXirrRangeStart(e.target.value); setXirrRange(null) }} />
+                                            <input type="date" style={inp} value={rangeStart} onChange={e => { setRangeStart(e.target.value); setRangeStats(null) }} />
                                         </div>
                                         <div>
                                             <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>結束日期</label>
-                                            <input type="date" style={inp} value={xirrRangeEnd} onChange={e => { setXirrRangeEnd(e.target.value); setXirrRange(null) }} />
+                                            <input type="date" style={inp} value={rangeEnd} onChange={e => { setRangeEnd(e.target.value); setRangeStats(null) }} />
                                         </div>
                                         <button
-                                            onClick={calcXirrRange}
-                                            disabled={xirrRangeLoading || !xirrRangeStart || !xirrRangeEnd || xirrRangeStart >= xirrRangeEnd}
-                                            style={{ backgroundColor: 'var(--c-accent)', border: 'none', borderRadius: '8px', padding: '8px 20px', color: '#fff', fontSize: '14px', cursor: 'pointer', opacity: (!xirrRangeStart || !xirrRangeEnd || xirrRangeStart >= xirrRangeEnd) ? 0.5 : 1 }}>
-                                            {xirrRangeLoading ? '計算中...' : '計算'}
+                                            onClick={calcRangeStats}
+                                            disabled={rangeLoading || !rangeStart || !rangeEnd || rangeStart >= rangeEnd}
+                                            style={{ backgroundColor: 'var(--c-accent)', border: 'none', borderRadius: '8px', padding: '8px 20px', color: '#fff', fontSize: '14px', cursor: 'pointer', opacity: (!rangeStart || !rangeEnd || rangeStart >= rangeEnd) ? 0.5 : 1 }}>
+                                            {rangeLoading ? '計算中...' : '計算'}
                                         </button>
 
-                                        {xirrRange !== null && (
-                                            <div style={{
-                                                backgroundColor: xirrRange >= 0 ? 'rgba(0,200,150,0.1)' : 'rgba(255,87,87,0.1)',
-                                                border: `1px solid ${xirrRange >= 0 ? 'rgba(0,200,150,0.3)' : 'rgba(255,87,87,0.3)'}`,
-                                                borderRadius: '8px', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: '12px'
-                                            }}>
-                                                <div>
-                                                    <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '2px' }}>區間 XIRR</div>
-                                                    <div style={{ fontSize: '22px', fontWeight: 700, color: pnlColor(xirrRange) }}>
-                                                        {fmtPct(xirrRange * 100)}
-                                                    </div>
-                                                </div>
-                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', lineHeight: 1.6 }}>
-                                                    {xirrRangeStart} ～ {xirrRangeEnd}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {xirrRange === null && !xirrRangeLoading && xirrRangeStart && xirrRangeEnd && xirrRangeStart < xirrRangeEnd && (
+                                        {rangeStats === null && !rangeLoading && rangeStart && rangeEnd && rangeStart < rangeEnd && (
                                             <span style={{ fontSize: '12px', color: 'var(--c-muted)', alignSelf: 'center' }}>
-                                                點「計算」取得區間 XIRR
+                                                點「計算」取得這段區間的統計
                                             </span>
                                         )}
                                     </div>
@@ -1126,7 +1133,7 @@ export default function YearReview() {
                                             const end = new Date().toISOString().split('T')[0]
                                             const start = new Date(Date.now() - y * 365.25 * 86400000).toISOString().split('T')[0]
                                             return (
-                                                <button key={label} onClick={() => { setXirrRangeStart(start); setXirrRangeEnd(end); setXirrRange(null) }}
+                                                <button key={label} onClick={() => { setRangeStart(start); setRangeEnd(end); setRangeStats(null) }}
                                                     style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '4px 12px', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}>
                                                     {label}
                                                 </button>
@@ -1134,15 +1141,51 @@ export default function YearReview() {
                                         })}
                                         {years.map(y => (
                                             <button key={y} onClick={() => {
-                                                setXirrRangeStart(`${y}-01-01`)
-                                                setXirrRangeEnd(`${y}-12-31`)
-                                                setXirrRange(null)
+                                                setRangeStart(`${y}-01-01`)
+                                                setRangeEnd(`${y}-12-31`)
+                                                setRangeStats(null)
                                             }}
                                                 style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '4px 12px', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}>
                                                 {y} 年
                                             </button>
                                         ))}
                                     </div>
+
+                                    {/* 區間統計結果：與上方全歷史卡片相同排版，方便對照 */}
+                                    {rangeStats && (
+                                        <>
+                                            <div className="perf-stats" style={{ marginTop: '20px' }}>
+                                                <div style={{ ...card, backgroundColor: 'var(--c-bg)' }}>
+                                                    <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>區間年化報酬率（XIRR）</div>
+                                                    <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: rangeStats.xirr !== null ? pnlColor(rangeStats.xirr) : 'var(--c-muted)' }}>
+                                                        {rangeStats.xirr !== null ? fmtPct(rangeStats.xirr * 100) : '—'}
+                                                    </div>
+                                                </div>
+                                                <div style={{ ...card, backgroundColor: 'var(--c-bg)' }}>
+                                                    <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>區間最大回撤（MDD）</div>
+                                                    <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: rangeStats.mdd !== null && rangeStats.mdd > 0.1 ? 'var(--c-danger)' : 'var(--c-text)' }}>
+                                                        {rangeStats.mdd !== null ? `-${(rangeStats.mdd * 100).toFixed(2)}%` : '—'}
+                                                    </div>
+                                                </div>
+                                                <div style={{ ...card, backgroundColor: 'var(--c-bg)' }}>
+                                                    <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>區間勝率</div>
+                                                    <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: rangeStats.winRate !== null ? (rangeStats.winRate >= 50 ? 'var(--c-positive)' : 'var(--c-danger)') : 'var(--c-muted)' }}>
+                                                        {rangeStats.winRate !== null ? `${rangeStats.winRate.toFixed(1)}%` : '—'}
+                                                    </div>
+                                                    <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '6px' }}>{rangeStats.wins} 勝 / {rangeStats.total - rangeStats.wins} 敗（共 {rangeStats.total} 筆）</div>
+                                                </div>
+                                                <div style={{ ...card, backgroundColor: 'var(--c-bg)' }}>
+                                                    <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>區間平均持有天數</div>
+                                                    <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: 'var(--c-text)' }}>
+                                                        {rangeStats.avgHoldingDays !== null ? `${Math.round(rangeStats.avgHoldingDays)} 天` : '—'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginTop: '8px' }}>
+                                                統計區間：{rangeStart} ～ {rangeEnd}
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
 
                                 {/* ── 各年度已實現績效 ── */}

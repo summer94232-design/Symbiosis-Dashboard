@@ -2,8 +2,11 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { getDocs, setDoc, deleteDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
-import { Plus, X, Search, Pencil, Trash2, ChevronDown, ChevronRight, Map, Tag, Loader } from 'lucide-react'
+import { Plus, X, Search, Pencil, Trash2, ChevronDown, ChevronRight, Map, Tag, Loader, Landmark } from 'lucide-react'
 import { ChainView } from './IndustryChainView'
+import { usePrices } from '../../PriceContext'
+import { useMarketCap } from '../../MarketCapContext'
+import { calcMarketCap, formatMarketCap } from '../../lib/marketCap'
 
 // ── 型別 ──────────────────────────────────────────────────────────
 type Market = 'TW' | 'US' | 'JP'
@@ -95,9 +98,10 @@ function ThemeBadge({ label, onRemove, onClick, size = 'md' }: {
     )
 }
 
-// ── 股票卡片（題材視圖 & 股票視圖用） ─────────────────────────────
-function StockCard({ entry, onEdit, onDelete, onThemeClick, highlighted }: {
+// ── 股票卡片(題材視圖 & 股票視圖用)─────────────────────────────
+function StockCard({ entry, marketCap, onEdit, onDelete, onThemeClick, highlighted }: {
     entry: StockEntry
+    marketCap?: number | null
     onEdit: (e: StockEntry) => void
     onDelete: (code: string) => void
     onThemeClick: (t: string) => void
@@ -110,6 +114,11 @@ function StockCard({ entry, onEdit, onDelete, onThemeClick, highlighted }: {
                     <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--c-muted)', background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '1px 5px', marginRight: '6px' }}>{marketLabel(entry.market)}</span>
                     <span style={{ fontWeight: 700, fontSize: '15px', color: 'var(--c-accent)' }}>{entry.code}</span>
                     <span style={{ marginLeft: '8px', fontSize: '13px', color: 'var(--c-text)' }}>{entry.name}</span>
+                    {marketCap != null && (
+                        <span style={{ marginLeft: '8px', fontSize: '11px', fontWeight: 600, color: 'var(--c-muted)', background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '1px 6px' }}>
+                            市值 {formatMarketCap(marketCap)}
+                        </span>
+                    )}
                 </div>
                 <div style={{ display: 'flex', gap: '4px' }}>
                     <button onClick={() => onEdit(entry)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer', padding: '2px' }}><Pencil size={13} /></button>
@@ -527,6 +536,8 @@ type ViewMode = 'stock' | 'theme' | 'graph' | 'chain'
 type SortKey = 'code' | 'name' | 'themes'
 
 export default function IndustryMap() {
+    const { prices, updatePrices: ctxUpdatePrices, priceLoading } = usePrices()
+    const { shares: sharesData, sharesLoading, updateShares } = useMarketCap()
     const [entries, setEntries] = useState<StockEntry[]>([])
     const [loading, setLoading] = useState(true)
     const [viewMode, setViewMode] = useState<ViewMode>('theme')
@@ -538,6 +549,8 @@ export default function IndustryMap() {
     const [selectedTheme, setSelectedTheme] = useState<string | null>(null)
     const [expandedThemes, setExpandedThemes] = useState<Set<string>>(new Set())
     const [themeQ, setThemeQ] = useState('')
+
+    // 市值資料（僅台股；股數來自 MOPS 公開資料，透過全站共用 MarketCapContext 取得，與選股追蹤頁連動）
 
     const load = async () => {
         setLoading(true)
@@ -619,6 +632,20 @@ export default function IndustryMap() {
     const anyCollapsed = visibleThemes.some(t => !expandedThemes.has(t))
     const toggleAll = () => setExpandedThemes(anyCollapsed ? new Set(visibleThemes) : new Set<string>())
 
+    // ★ 更新市值（僅台股）：抓現價（全站共用 PriceContext）+ 已發行股數（全站共用 MarketCapContext）
+    const handleUpdateMarketCap = async () => {
+        const twCodes = entries.filter(e => (e.market || 'TW') === 'TW').map(e => e.code)
+        if (twCodes.length === 0) return
+        try {
+            await Promise.all([
+                ctxUpdatePrices(twCodes),
+                updateShares(twCodes),
+            ])
+        } catch (err) {
+            console.error(err)
+        }
+    }
+
     return (
         <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
             <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
@@ -642,6 +669,10 @@ export default function IndustryMap() {
                             {v === 'theme' ? '題材視圖' : v === 'stock' ? '股票視圖' : v === 'graph' ? '關聯查詢' : '脈絡圖'}
                         </button>
                     ))}
+                    <button onClick={handleUpdateMarketCap} disabled={sharesLoading || priceLoading || entries.length === 0} style={{ ...btn('var(--c-card)'), color: 'var(--c-text)', border: '1px solid var(--c-border)', fontSize: '12px', padding: '6px 12px' }}>
+                        <Landmark size={14} style={{ animation: (sharesLoading || priceLoading) ? 'spin 1s linear infinite' : 'none' }} />
+                        {(sharesLoading || priceLoading) ? '載入中…' : '更新市值'}
+                    </button>
                     <button onClick={() => { setShowForm(v => !v); setEditEntry(null) }} style={btn(showForm ? 'var(--c-muted)' : 'var(--c-accent)')}>
                         {showForm ? <X size={14} /> : <Plus size={14} />}{showForm ? '收起' : '新增'}
                     </button>
@@ -759,7 +790,11 @@ export default function IndustryMap() {
                         <div>
                             <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '10px' }}>共 {filtered.length} 支</div>
                             <div style={{ display: 'grid', gap: '10px', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-                                {filtered.map(e => <StockCard key={e.code} entry={e} onEdit={openEdit} onDelete={handleDelete} onThemeClick={handleThemeClick} />)}
+                                {filtered.map(e => {
+                                    const isTW = (e.market || 'TW') === 'TW'
+                                    const cap = isTW ? calcMarketCap(prices[e.code], sharesData[e.code]) : null
+                                    return <StockCard key={e.code} entry={e} marketCap={cap} onEdit={openEdit} onDelete={handleDelete} onThemeClick={handleThemeClick} />
+                                })}
                                 {filtered.length === 0 && <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '40px', color: 'var(--c-muted)' }}>找不到符合條件的股票</div>}
                             </div>
                         </div>

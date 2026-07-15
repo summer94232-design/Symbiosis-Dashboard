@@ -4,9 +4,11 @@ import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { getHistoricalCandles } from '../../lib/fugle'
 import { getForeignQuotes } from '../../lib/foreignQuote'
+import { calcMarketCap, formatMarketCap } from '../../lib/marketCap'
+import { useMarketCap } from '../../MarketCapContext'
 import {
     Plus, Trash2, RefreshCw, TrendingUp, Pencil, Check, X,
-    FileText, LayoutGrid, Table2, Tag, ChevronDown, ChevronRight, Activity, BarChart2
+    FileText, LayoutGrid, Table2, Tag, ChevronDown, ChevronRight, Activity, BarChart2, Landmark
 } from 'lucide-react'
 import { usePrices } from '../../PriceContext'
 
@@ -289,8 +291,8 @@ function MABadge({ label, value, currentPrice }: { label: string; value: number 
     )
 }
 
-function TableRow({ item, ma, onEdit, onDelete }: {
-    item: WatchItem; ma: MAData | null
+function TableRow({ item, ma, marketCap, onEdit, onDelete }: {
+    item: WatchItem; ma: MAData | null; marketCap: number | null
     onEdit: (item: WatchItem) => void; onDelete: (code: string) => void
 }) {
     const { code, name, currentPrice, targetHigh, targetLow, group, market } = item
@@ -315,6 +317,9 @@ function TableRow({ item, ma, onEdit, onDelete }: {
                 {currentPrice
                     ? (market === 'jp' ? <span>{Math.round(currentPrice).toLocaleString()} <span style={{ fontSize: '10px', color: 'var(--c-dim)' }}>円</span></span> : currentPrice.toFixed(2))
                     : <span style={{ color: 'var(--c-dim)' }}>—</span>}
+            </td>
+            <td style={{ padding: '6px 10px', textAlign: 'right', fontSize: '12px', color: 'var(--c-muted)', whiteSpace: 'nowrap' }}>
+                {!isTW ? <span style={{ fontSize: '10px', color: 'var(--c-dim)' }}>不支援</span> : formatMarketCap(marketCap)}
             </td>
             <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
                 {!isTW ? <span style={{ fontSize: '10px', color: 'var(--c-dim)' }}>不支援</span>
@@ -343,6 +348,7 @@ function TableRow({ item, ma, onEdit, onDelete }: {
 // ── 主元件 ────────────────────────────────────────────────────────
 export default function Watchlist() {
     const { prices, lastUpdated, priceLoading, updatePrices: ctxUpdatePrices } = usePrices()
+    const { shares: sharesData, sharesLoading, updateShares } = useMarketCap()
 
     const [items, setItems] = useState<WatchItem[]>([])
     const [loading, setLoading] = useState(true)
@@ -362,6 +368,9 @@ export default function Watchlist() {
     const [chartData, setChartData] = useState<Record<string, ChartBar[]>>({})
     const [chartLoading, setChartLoading] = useState(false)
     const [chartUpdatedAt, setChartUpdatedAt] = useState('')
+
+    // 市值資料（已發行股數，僅台股支援；來源：MOPS 公開資料）
+    // → 已改用全站共用的 MarketCapContext（見上方 useMarketCap()），與產業地圖頁共用同一份快取
 
     const emptyForm = { code: '', name: '', market: 'tw' as MarketKey, targetHigh: '', targetLow: '', note: '', group: '' }
     const [form, setForm] = useState(emptyForm)
@@ -492,6 +501,17 @@ export default function Watchlist() {
         setChartLoading(false)
     }
 
+    // ★ 更新市值（僅台股，透過 MOPS 公開資料取得已發行股數；經由全站共用 Context，與產業地圖頁連動）
+    const handleUpdateMarketCap = async () => {
+        const twCodes = items.filter(i => i.market === 'tw').map(i => i.code)
+        if (twCodes.length === 0) return
+        try {
+            await updateShares(twCodes)
+        } catch (err) {
+            console.error(err)
+        }
+    }
+
     const handleAdd = async () => {
         if (!form.code.trim()) return
         const code = form.code.trim().toUpperCase()
@@ -595,6 +615,10 @@ export default function Watchlist() {
                         <button onClick={handleUpdatePrices} disabled={priceLoading || items.length === 0} style={btn('var(--c-card)')}>
                             <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {priceLoading ? '更新中...' : '更新現價'}
+                        </button>
+                        <button onClick={handleUpdateMarketCap} disabled={sharesLoading || items.length === 0} style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)' }}>
+                            <Landmark size={14} style={{ animation: sharesLoading ? 'spin 1s linear infinite' : 'none' }} />
+                            {sharesLoading ? '載入中...' : '更新市值'}
                         </button>
                         <button onClick={() => { setShowForm(!showForm); setForm(emptyForm) }} style={btn('var(--c-accent)')}>
                             <Plus size={14} />{showForm ? '取消' : '新增自選股'}
@@ -703,6 +727,7 @@ export default function Watchlist() {
                                     <tr>
                                         <th>代號 / 名稱</th>
                                         <th style={{ textAlign: 'right' }}>現價</th>
+                                        <th style={{ textAlign: 'right' }}>市值（億）</th>
                                         <th style={{ color: 'var(--c-purple)' }}>均線 (5/10/20MA)</th>
                                         <th>下標（買入）</th>
                                         <th>上標（賣出）</th>
@@ -711,7 +736,14 @@ export default function Watchlist() {
                                 </thead>
                                 <tbody>
                                     {filtered.map(item => (
-                                        <TableRow key={item.code} item={item} ma={maData[item.code] || null} onEdit={openEdit} onDelete={handleDelete} />
+                                        <TableRow
+                                            key={item.code}
+                                            item={item}
+                                            ma={maData[item.code] || null}
+                                            marketCap={item.market === 'tw' ? calcMarketCap(item.currentPrice, sharesData[item.code]) : null}
+                                            onEdit={openEdit}
+                                            onDelete={handleDelete}
+                                        />
                                     ))}
                                 </tbody>
                             </table>
@@ -739,6 +771,7 @@ export default function Watchlist() {
                                                 const ma = maData[item.code] || null
                                                 const isTW = item.market === 'tw'
                                                 const chart = chartData[item.code] || null
+                                                const marketCap = isTW ? calcMarketCap(item.currentPrice, sharesData[item.code]) : null
 
                                                 return (
                                                     <div key={item.code} className="watch-card" style={{ backgroundColor: 'var(--c-sidebar)', border: `1px solid ${borderColor}`, borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -771,6 +804,12 @@ export default function Watchlist() {
                                                                 const color = chg >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
                                                                 return <span style={{ fontSize: '11px', color, fontWeight: 600 }}>{chg >= 0 ? '+' : ''}{chg.toFixed(2)}% <span style={{ color: 'var(--c-dim)', fontWeight: 400 }}>10日</span></span>
                                                             })()}
+                                                            {/* 市值（僅台股） */}
+                                                            {isTW && marketCap != null && (
+                                                                <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>
+                                                                    市值 <span style={{ color: 'var(--c-text)', fontWeight: 600 }}>{formatMarketCap(marketCap)}</span>
+                                                                </span>
+                                                            )}
                                                         </div>
 
                                                         {/* 小線圖 */}
