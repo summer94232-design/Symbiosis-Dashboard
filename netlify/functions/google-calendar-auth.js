@@ -18,6 +18,9 @@
 
 const SITE_ORIGIN = 'https://symbiosis-jiawei.netlify.app'
 const REDIRECT_URI = `${SITE_ORIGIN}/.netlify/functions/google-calendar-auth`
+// ⚠️ 這裡一定要對到 App.tsx 裡實際掛載 <CalendarSettings /> 的路由，
+// 因為只有那個頁面會讀取下面的 URL fragment、把 token 存進 Firestore。
+const FRONTEND_RETURN_PATH = '/calendar/settings'
 
 export const handler = async (event) => {
     const code = event.queryStringParameters?.code
@@ -68,7 +71,7 @@ export const handler = async (event) => {
 
         return {
             statusCode: 302,
-            headers: { Location: `${SITE_ORIGIN}/calendar#${params.toString()}` },
+            headers: { Location: `${SITE_ORIGIN}${FRONTEND_RETURN_PATH}#${params.toString()}` },
             body: '',
         }
     } catch (err) {
@@ -81,7 +84,7 @@ function redirectWithError(message) {
     const params = new URLSearchParams({ gcal_error: message })
     return {
         statusCode: 302,
-        headers: { Location: `${SITE_ORIGIN}/calendar#${params.toString()}` },
+        headers: { Location: `${SITE_ORIGIN}${FRONTEND_RETURN_PATH}#${params.toString()}` },
         body: '',
     }
 }
