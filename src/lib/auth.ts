@@ -6,10 +6,36 @@ import { saveAccount, getPassword } from './accountStore'
 export const investAuth = getAuth(investApp)
 export const kmsAuth = getAuth(kmsApp)
 
-// 同時登入兩個 Firebase 專案
-export async function signIn(email: string, password: string) {
-    await signInWithEmailAndPassword(investAuth, email, password)
-    await signInWithEmailAndPassword(kmsAuth, email, password)
+function normalizedEmail(user: User | null): string {
+    return user?.email?.trim().toLowerCase() ?? ''
+}
+
+function isSameAccount(investUser: User | null, kmsUser: User | null): boolean {
+    const investEmail = normalizedEmail(investUser)
+    const kmsEmail = normalizedEmail(kmsUser)
+    return !!investEmail && investEmail === kmsEmail
+}
+
+async function rollbackBothAuth(): Promise<void> {
+    await Promise.allSettled([signOut(investAuth), signOut(kmsAuth)])
+}
+
+// 同時登入兩個 Firebase 專案；任一失敗時回復成兩邊都登出的狀態。
+export async function signIn(email: string, password: string): Promise<void> {
+    const results = await Promise.allSettled([
+        signInWithEmailAndPassword(investAuth, email, password),
+        signInWithEmailAndPassword(kmsAuth, email, password),
+    ])
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failure) {
+        await rollbackBothAuth()
+        throw failure.reason
+    }
+
+    if (!isSameAccount(investAuth.currentUser, kmsAuth.currentUser)) {
+        await rollbackBothAuth()
+        throw new Error('兩個 Firebase 專案登入的帳號不一致')
+    }
 }
 
 // 登入並自動儲存帳號（Login 頁面改用此函式）
@@ -22,15 +48,14 @@ export async function signInAndSave(email: string, password: string): Promise<vo
 export async function switchAccount(email: string): Promise<void> {
     const password = await getPassword(email)
     if (!password) throw new Error('找不到此帳號的儲存密碼，請重新登入')
-    await signOut(investAuth)
-    await signOut(kmsAuth)
     await signIn(email, password)
 }
 
 // 同時登出兩個專案
-export async function signOutAll() {
-    await signOut(investAuth)
-    await signOut(kmsAuth)
+export async function signOutAll(): Promise<void> {
+    const results = await Promise.allSettled([signOut(investAuth), signOut(kmsAuth)])
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failure) throw failure.reason
 }
 
 // 監聽 investAuth 登入狀態
@@ -46,10 +71,29 @@ export function onBothAuthChanged(callback: (user: User | null) => void): () => 
     let investReady = false
     let kmsReady = false
     let investUser: User | null = null
+    let kmsUser: User | null = null
+    let hasEmitted = false
 
     const check = () => {
-        if (investReady && kmsReady) {
+        if (!investReady || !kmsReady) return
+
+        if (isSameAccount(investUser, kmsUser)) {
+            hasEmitted = true
             callback(investUser)
+            return
+        }
+
+        if (!investUser && !kmsUser) {
+            hasEmitted = true
+            callback(null)
+            return
+        }
+
+        // 初次載入若只有一邊保有登入狀態，顯示登入頁。
+        // 帳號切換期間短暫出現兩邊狀態不同時，保留目前畫面，等兩邊完成後再通知。
+        if (!hasEmitted) {
+            hasEmitted = true
+            callback(null)
         }
     }
 
@@ -59,7 +103,8 @@ export function onBothAuthChanged(callback: (user: User | null) => void): () => 
         check()
     })
 
-    const unsubKms = onAuthStateChanged(kmsAuth, () => {
+    const unsubKms = onAuthStateChanged(kmsAuth, user => {
+        kmsUser = user
         kmsReady = true
         check()
     })

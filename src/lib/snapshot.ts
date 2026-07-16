@@ -27,6 +27,7 @@ import { investDB } from './firebase'
 import { userDoc, userDocNested } from './userDB'
 import { calcPositions, calcAvailableCash, aggregateMarginDebt, type TradeRecord, type DividendRecord } from './calc'
 import { fetchTrades, fetchDividends, fetchCashflow } from './investData'
+import { toLocalDateString } from './date'
 
 // ── 共用市值計算（原 AssetTrend 內部函式抽出）──────────────────────────────
 
@@ -93,7 +94,7 @@ export async function buildTodaySnapshot(): Promise<{ snapshot: SnapshotData; mi
     const cash = calcAvailableCash(cashRecords, trades, dividends)
     // ✅ 扣除融資借款，呈現真實淨值
     const marginDebt = aggregateMarginDebt(trades)
-    const today = new Date().toISOString().split('T')[0]
+    const today = toLocalDateString()
 
     return {
         snapshot: {
@@ -178,7 +179,7 @@ function isWithinAutoWindow(now: Date = new Date()): boolean {
  */
 export async function maybeAutoSnapshotToday(options?: { overwrite?: boolean }): Promise<AutoSnapshotStatus> {
     const overwrite = options?.overwrite === true
-    const today = new Date().toISOString().split('T')[0]
+    const today = toLocalDateString()
     const mode = overwrite ? '覆寫模式' : '補寫模式'
     const skip = (status: AutoSnapshotStatus, reason: string): AutoSnapshotStatus => {
         console.info(`[autoSnapshot] ${mode}略過（${status}）：${reason}`)

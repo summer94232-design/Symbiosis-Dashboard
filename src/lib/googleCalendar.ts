@@ -488,9 +488,16 @@ export async function performGoogleCalendarSync(
     onProgress?.('推送到 Google 行事曆')
     const linkResults: { id: string; googleEventId: string }[] = []
 
-    for (let i = 0; i < fullPushList.length; i += BATCH_SIZE) {
+    // 即使沒有新增／更新，只要有待刪除事件，也必須送出一個空 events 批次。
+    const pushBatchCount = Math.max(
+        Math.ceil(fullPushList.length / BATCH_SIZE),
+        reconciled.deleteGoogleEventIds.length > 0 ? 1 : 0,
+    )
+
+    for (let batchIndex = 0; batchIndex < pushBatchCount; batchIndex++) {
+        const i = batchIndex * BATCH_SIZE
         const batch = fullPushList.slice(i, i + BATCH_SIZE)
-        const deleteBatch = i === 0 ? reconciled.deleteGoogleEventIds : []
+        const deleteBatch = batchIndex === 0 ? reconciled.deleteGoogleEventIds : []
         const res = await fetch(SYNC_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -503,8 +510,8 @@ export async function performGoogleCalendarSync(
         })
         const data = await res.json()
         if (!res.ok) {
-            summary.failed += batch.length
-            summary.errors.push(data.error || `批次 ${Math.floor(i / BATCH_SIZE) + 1} 失敗（HTTP ${res.status}）`)
+            summary.failed += Math.max(batch.length, deleteBatch.length)
+            summary.errors.push(data.error || `批次 ${batchIndex + 1} 失敗（HTTP ${res.status}）`)
             if (res.status === 401) break
             continue
         }

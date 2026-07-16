@@ -9,6 +9,7 @@ import { fetchTrades, fetchDividends, fetchCashflow } from '../../lib/investData
 // ✅ 1-2：共用 UI 樣式與格式化（inp 因本頁刻意無 width:100%，保留本地定義）
 import { card } from '../../ui/styles'
 import { pnlColor, fmtMoney, fmtPct } from '../../ui/format'
+import { toLocalDateString } from '../../lib/date'
 
 
 interface MonthlyPnL {
@@ -355,7 +356,7 @@ export default function YearReview() {
                 if (allYears.length > 0) {
                     setYears(allYears)
                     setCustomStart(prev => prev || `${allYears[0]}-01-01`)
-                    setCustomEnd(prev => prev || new Date().toISOString().split('T')[0])
+                    setCustomEnd(prev => prev || toLocalDateString())
                 }
                 calcYearlyPerf(allYears, snapshots, trades, cashflows, dividends)
                 rawDataLoadedRef.current = true
@@ -653,7 +654,7 @@ export default function YearReview() {
             if (allRangeDates.length > 0) {
                 const earliest = allRangeDates.sort()[0]
                 setRangeStart(prev => prev || earliest)
-                setRangeEnd(prev => prev || new Date().toISOString().split('T')[0])
+                setRangeEnd(prev => prev || toLocalDateString())
             }
 
             setRealizedTrades([...realized].reverse())
@@ -683,7 +684,7 @@ export default function YearReview() {
 
             const endCash = calcAvailableCash(cashflows, allTrades, dividends)
 
-            const today = new Date().toISOString().split('T')[0]
+            const today = toLocalDateString()
             const mkXirr = (ev: number) => calcXIRR(
                 [...xirrBase, { date: today, amount: ev }].sort((a, b) => a.date.localeCompare(b.date))
             )
@@ -1130,8 +1131,8 @@ export default function YearReview() {
                                             { label: '近 3 年', years: 3 },
                                             { label: '近 5 年', years: 5 },
                                         ].map(({ label, years: y }) => {
-                                            const end = new Date().toISOString().split('T')[0]
-                                            const start = new Date(Date.now() - y * 365.25 * 86400000).toISOString().split('T')[0]
+                                            const end = toLocalDateString()
+                                            const start = toLocalDateString(new Date(Date.now() - y * 365.25 * 86400000))
                                             return (
                                                 <button key={label} onClick={() => { setRangeStart(start); setRangeEnd(end); setRangeStats(null) }}
                                                     style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '4px 12px', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}>

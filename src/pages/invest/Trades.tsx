@@ -6,6 +6,7 @@ import { calcFee, calcTax, isETF, calcMarginDebt, calcTradeTotal, calcPositions,
 import { fetchTrades, fetchDividends, invalidateTrades, invalidateCashflow } from '../../lib/investData'
 // ✅ 1-2：共用模組（CSV 解析 / 股票字典 / UI 樣式）
 import { parseCSVLine, toNum, toInt } from '../../lib/csv'
+import { toLocalDateString } from '../../lib/date'
 import { lookupStockName, cacheStockName, saveStockName, searchStockByCodePrefix, type StockCandidate } from '../../lib/stockDict'
 import { card, inp, lbl, btn } from '../../ui/styles'
 import { Pencil, Trash2, X, Check, Upload, Search, ChevronDown, ChevronUp } from 'lucide-react'
@@ -29,7 +30,7 @@ interface Trade {
 }
 
 const emptyTrade: Trade = {
-    date: new Date().toISOString().split('T')[0],
+    date: toLocalDateString(),
     type: 'buy', code: '', name: '', price: 0, shares: 0, fee: 0, tax: 0, total: 0, note: '',
     isMargin: false, marginRatio: 0.6, marginAmount: 0, marginRepay: 0
 }

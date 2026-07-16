@@ -4,6 +4,7 @@ import { investDB } from '../../lib/firebase'
 import { userCol } from '../../lib/userDB'
 import { getDailyNews } from '../../lib/gemini'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS } from '../../lib/calendarData'
+import { toLocalDateString } from '../../lib/date'
 import { RefreshCw, Calendar, CheckSquare, Globe, Newspaper, AlertCircle } from 'lucide-react'
 
 interface NewsItem {
@@ -36,7 +37,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 export default function DailyBrief() {
     const today = new Date()
-    const todayStr = today.toISOString().split('T')[0]
+    const todayStr = toLocalDateString(today)
 
     const [news, setNews] = useState<NewsItem[]>([])
     const [newsLoading, setNewsLoading] = useState(false)
@@ -67,7 +68,7 @@ export default function DailyBrief() {
             }))
 
             const futuresThisMonth = getFuturesSettlementDates(today.getFullYear(), today.getMonth() + 1)
-            const next14Str = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]
+            const next14Str = toLocalDateString(new Date(Date.now() + 14 * 86400000))
 
             const allEvents: EventItem[] = [
                 ...FOMC_DATES,
@@ -108,7 +109,7 @@ export default function DailyBrief() {
                 setNewsError(true)
             } else {
                 const time = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
-                const todayDate = new Date().toISOString().split('T')[0]
+                const todayDate = toLocalDateString()
                 setNews(result)
                 setLastNewsTime(time)
                 setSelectedSources(new Set())
@@ -123,7 +124,7 @@ export default function DailyBrief() {
     useEffect(() => {
         loadData()
 
-        const todayDate = new Date().toISOString().split('T')[0]
+        const todayDate = toLocalDateString()
         const cachedDate = sessionStorage.getItem('newsDate')
         const cachedNews = sessionStorage.getItem('newsData')
 

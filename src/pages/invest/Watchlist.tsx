@@ -5,6 +5,7 @@ import { userCol, userDoc } from '../../lib/userDB'
 import { getHistoricalCandles } from '../../lib/fugle'
 import { getForeignQuotes } from '../../lib/foreignQuote'
 import { calcMarketCap, formatMarketCap } from '../../lib/marketCap'
+import { toLocalDateString } from '../../lib/date'
 import { useMarketCap } from '../../MarketCapContext'
 import {
     Plus, Trash2, RefreshCw, TrendingUp, Pencil, Check, X,
@@ -437,8 +438,8 @@ export default function Watchlist() {
         if (twItems.length === 0) return
         setMaLoading(true)
         try {
-            const to = new Date().toISOString().split('T')[0]
-            const from = new Date(Date.now() - 45 * 86400000).toISOString().split('T')[0]
+            const to = toLocalDateString()
+            const from = toLocalDateString(new Date(Date.now() - 45 * 86400000))
             const results: Record<string, MAData> = {}
             await Promise.all(twItems.map(async item => {
                 try {
@@ -460,8 +461,8 @@ export default function Watchlist() {
         setChartLoading(true)
         const results: Record<string, ChartBar[]> = {}
 
-        const to = new Date().toISOString().split('T')[0]
-        const from = new Date(Date.now() - 20 * 86400000).toISOString().split('T')[0] // 多抓幾天保證有10個交易日
+        const to = toLocalDateString()
+        const from = toLocalDateString(new Date(Date.now() - 20 * 86400000)) // 多抓幾天保證有10個交易日
 
         await Promise.all(items.map(async item => {
             try {

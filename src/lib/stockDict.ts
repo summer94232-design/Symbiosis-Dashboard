@@ -16,21 +16,26 @@
 
 import { getDoc, setDoc, getDocs, query, orderBy, startAt, endAt, documentId, limit } from 'firebase/firestore'
 import { investDB } from './firebase'
-import { userDoc, userCol } from './userDB'
+import { userDoc, userCol, getUID } from './userDB'
 
-// 全系統共用的 session 快取
+// 全系統共用的 session 快取；key 內含 uid，避免切換帳號後沿用前一帳號的自訂名稱。
 const dictCache: Record<string, string> = {}
+
+function dictCacheKey(code: string): string {
+    return `${getUID()}:${code}`
+}
 
 /** 單筆查詢：依序查快取 → stockDict → stockDictFull，查無回傳空字串 */
 export async function lookupStockName(code: string): Promise<string> {
-    const cached = dictCache[code]
+    const key = dictCacheKey(code)
+    const cached = dictCache[key]
     if (cached) return cached
 
     // 先查常用字典
     const shortDoc = await getDoc(userDoc(investDB, 'stockDict', code))
     if (shortDoc.exists()) {
         const name = shortDoc.data().name as string
-        dictCache[code] = name
+        dictCache[key] = name
         return name
     }
 
@@ -38,7 +43,7 @@ export async function lookupStockName(code: string): Promise<string> {
     const fullDoc = await getDoc(userDoc(investDB, 'stockDictFull', code))
     if (fullDoc.exists()) {
         const name = fullDoc.data().name as string
-        dictCache[code] = name
+        dictCache[key] = name
         // 找到後順便寫回 stockDict，下次直接命中
         await setDoc(userDoc(investDB, 'stockDict', code), { name })
         return name
@@ -52,7 +57,7 @@ export async function lookupStockName(code: string): Promise<string> {
  * 用於：編輯既有紀錄時把該筆的 code/name 帶入快取，避免 debounce 查詢覆蓋使用者輸入。
  */
 export function cacheStockName(code: string, name: string): void {
-    if (code && name) dictCache[code] = name
+    if (code && name) dictCache[dictCacheKey(code)] = name
 }
 
 /**
@@ -61,7 +66,7 @@ export function cacheStockName(code: string, name: string): void {
  */
 export async function saveStockName(code: string, name: string): Promise<void> {
     if (!code || !name) return
-    dictCache[code] = name
+    dictCache[dictCacheKey(code)] = name
     await setDoc(userDoc(investDB, 'stockDict', code), { name })
 }
 
@@ -109,7 +114,7 @@ export async function searchStockByCodePrefix(prefix: string, max = 8): Promise<
 
     // 一併寫入 session 快取，避免使用者點選候選後 debounce 又打一次 Firestore
     for (const [code, name] of merged) {
-        if (name) dictCache[code] = name
+        if (name) dictCache[dictCacheKey(code)] = name
     }
 
     return Array.from(merged.entries())

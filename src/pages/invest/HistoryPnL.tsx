@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { calcPositions, type TradeRecord, type DividendRecord, type RealizedRecord } from '../../lib/calc'
 import { fetchTrades, fetchDividends } from '../../lib/investData'
+import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
 // ✅ 1-2：共用 UI 樣式與損益顏色
 import { card, inp } from '../../ui/styles'
@@ -35,17 +36,17 @@ interface StockPerfRow {
 
 function getPresetDates(range: RangeOption): { from: string; to: string } {
     const today = new Date()
-    const to = today.toISOString().split('T')[0]
+    const to = toLocalDateString(today)
     if (range === 'month') {
-        const from = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
+        const from = toLocalDateString(new Date(today.getFullYear(), today.getMonth(), 1))
         return { from, to }
     }
     if (range === '3m') {
-        const from = new Date(today.getFullYear(), today.getMonth() - 3, today.getDate()).toISOString().split('T')[0]
+        const from = toLocalDateString(new Date(today.getFullYear(), today.getMonth() - 3, today.getDate()))
         return { from, to }
     }
     if (range === '6m') {
-        const from = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate()).toISOString().split('T')[0]
+        const from = toLocalDateString(new Date(today.getFullYear(), today.getMonth() - 6, today.getDate()))
         return { from, to }
     }
     if (range === 'year') {

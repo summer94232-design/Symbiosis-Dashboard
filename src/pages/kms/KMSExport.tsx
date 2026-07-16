@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { getDocs, orderBy, query } from 'firebase/firestore'
 import { kmsDB } from '../../lib/firebase'
 import { userCol } from '../../lib/userDB'
+import { toLocalDateString } from '../../lib/date'
 import { Download, FileText, Filter, Check } from 'lucide-react'
 
 interface Note {
@@ -91,7 +92,7 @@ export default function KMSExport() {
     const handleExport = async () => {
         setExporting(true)
         const ext = format === 'markdown' ? 'md' : 'txt'
-        const date = new Date().toISOString().split('T')[0]
+        const date = toLocalDateString()
 
         if (format === 'per-tag-txt') {
             // 依標籤分類匯出，每個標籤一個檔案

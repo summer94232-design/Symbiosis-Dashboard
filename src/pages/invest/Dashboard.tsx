@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom'
 import { usePrices } from '../../PriceContext'
 import { fetchTrades, fetchDividends, fetchCashflow } from '../../lib/investData'
 import { maybeAutoSnapshotToday } from '../../lib/snapshot'
+import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
 
 const COLORS = ['var(--c-accent)', 'var(--c-positive)', 'var(--c-warning)', 'var(--c-danger)', 'var(--c-purple)', '#34d399', '#fb923c', '#60a5fa', '#f472b6', '#facc15', '#38bdf8', '#4ade80']
@@ -281,8 +282,8 @@ export default function Dashboard() {
     const loadSideCards = async () => {
         setSideLoading(true)
         try {
-            const todayStr_ = new Date().toISOString().split('T')[0]
-            const future14Str = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]
+            const todayStr_ = toLocalDateString()
+            const future14Str = toLocalDateString(new Date(Date.now() + 14 * 86400000))
             const [eventsSnap, tasksSnap] = await Promise.all([
                 getDocs(userCol(investDB, 'calendarEvents')),
                 getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc'))),
@@ -527,8 +528,8 @@ export default function Dashboard() {
         ? `未實現損益（${holdingsWithPrice.length}/${holdings.length} 檔）`
         : '未實現損益'
 
-    const todayStr = new Date().toISOString().split('T')[0]
-    const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0]
+    const todayStr = toLocalDateString()
+    const tomorrowStr = toLocalDateString(new Date(Date.now() + 86400000))
 
     const formatEventDate = (dateStr: string) => {
         const mmdd = dateStr.slice(5).replace('-', '/')

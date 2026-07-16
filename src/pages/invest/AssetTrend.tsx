@@ -5,6 +5,7 @@ import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { calcPositions, calcAvailableCash, aggregateMarginDebt, type TradeRecord, type DividendRecord } from '../../lib/calc'
 import { fetchTrades, fetchDividends, fetchCashflow } from '../../lib/investData'
 import { calcMarketValue } from '../../lib/snapshot'
+import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts'
 import { Save, Pencil, Trash2, Plus, X, Check, Zap, AlertTriangle, TrendingUp } from 'lucide-react'
@@ -21,7 +22,7 @@ interface SnapshotRecord {
 }
 
 const emptySnap: SnapshotRecord = {
-    date: new Date().toISOString().split('T')[0],
+    date: toLocalDateString(),
     totalAssets: 0, marketValue: 0, cash: 0, marginDebt: 0
 }
 
@@ -144,7 +145,7 @@ export default function AssetTrend() {
         setTaiexLoading(true)
         setTaiexError(null)
         try {
-            const today = new Date().toISOString().split('T')[0]
+            const today = toLocalDateString()
             const apiKey = import.meta.env.VITE_FUGLE_API_KEY
             const url = `https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/IX0001?from=${fromDate}&to=${today}&fields=close&sort=asc`
             const res = await fetch(url, { headers: { 'X-API-KEY': apiKey } })
@@ -172,7 +173,7 @@ export default function AssetTrend() {
     const handleRefreshTAIEX = (currentSnapshots = snapshots) => {
         // 往第一筆快照日期前推 7 天，確保有對應收盤價
         const earliest = currentSnapshots.length > 0
-            ? new Date(new Date(currentSnapshots[0].date).getTime() - 7 * 86400000).toISOString().split('T')[0]
+            ? toLocalDateString(new Date(new Date(currentSnapshots[0].date).getTime() - 7 * 86400000))
             : '2020-01-01'
         fetchTAIEX(earliest)
     }
@@ -272,7 +273,7 @@ export default function AssetTrend() {
             // ✅ 計算融資借款並從總資產扣除，呈現真實淨值
             const marginDebt = aggregateMarginDebt(trades)
             const totalAssets = marketValue + cash - marginDebt
-            const today = new Date().toISOString().split('T')[0]
+            const today = toLocalDateString()
 
             await setDoc(userDoc(investDB, 'assetSnapshots', today), {
                 date: today,
@@ -309,7 +310,7 @@ export default function AssetTrend() {
         if (range === 'ALL') return data
         const now = new Date()
         const months = range === '1M' ? 1 : range === '3M' ? 3 : range === '6M' ? 6 : 12
-        const cutoff = new Date(now.getFullYear(), now.getMonth() - months, now.getDate()).toISOString().split('T')[0]
+        const cutoff = toLocalDateString(new Date(now.getFullYear(), now.getMonth() - months, now.getDate()))
         return data.filter(d => d.date >= cutoff)
     }
 

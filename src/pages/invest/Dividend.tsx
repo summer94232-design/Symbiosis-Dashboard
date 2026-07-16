@@ -5,6 +5,7 @@ import { userCol, userDoc } from '../../lib/userDB'
 import { fetchDividends, invalidateDividends } from '../../lib/investData'
 // ✅ 1-2：共用模組（股票字典 / UI 樣式）
 import { lookupStockName, cacheStockName, saveStockName } from '../../lib/stockDict'
+import { toLocalDateString } from '../../lib/date'
 import { card, inp, lbl, btn } from '../../ui/styles'
 import { Pencil, Trash2, X, Check } from 'lucide-react'
 
@@ -18,7 +19,7 @@ interface DividendRecord {
     note: string
 }
 
-const empty: DividendRecord = { date: new Date().toISOString().split('T')[0], code: '', name: '', cashDividend: 0, stockDividend: 0, note: '' }
+const empty: DividendRecord = { date: toLocalDateString(), code: '', name: '', cashDividend: 0, stockDividend: 0, note: '' }
 export default function Dividend() {
     const [records, setRecords] = useState<DividendRecord[]>([])
     const [editingId, setEditingId] = useState<string | null>(null)

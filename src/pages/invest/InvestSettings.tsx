@@ -7,6 +7,7 @@ import { buildFullBackup, downloadBackup, parseBackup, restoreFullBackup, backup
 import { calcFee, calcTax, calcTradeTotal } from '../../lib/calc'
 // ✅ 1-2：共用 CSV 解析模組
 import { parseCSVLine, toNum, toInt } from '../../lib/csv'
+import { toLocalDateString } from '../../lib/date'
 import { Download, Upload, FileSpreadsheet, Database, FileDown, User, Calendar, FileJson, AlertTriangle } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
@@ -130,9 +131,9 @@ export default function InvestSettings() {
     }
     const setPresetLastYear = () => {
         const d = new Date()
-        const to = d.toISOString().split('T')[0]
+        const to = toLocalDateString(d)
         d.setFullYear(d.getFullYear() - 1)
-        setDateFrom(d.toISOString().split('T')[0])
+        setDateFrom(toLocalDateString(d))
         setDateTo(to)
     }
     const clearRange = () => { setDateFrom(''); setDateTo('') }
@@ -685,7 +686,7 @@ export default function InvestSettings() {
         setRestoreProgress(0)
     }
 
-    const today = () => new Date().toISOString().split('T')[0]
+    const today = () => toLocalDateString()
 
     // 共用小元件：分項匯出列（標籤 + CSV / Excel 兩顆按鈕）
     const ExportRowItem = ({ label, color, onExport }: { label: string; color: string; onExport: (f: ExportFormat) => void }) => (

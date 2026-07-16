@@ -8,6 +8,7 @@ import { userCol, userDoc, userDocNested } from '../../lib/userDB'
 import { parseCSVLine } from '../../lib/csv'
 import { generateHashtags, findRelatedNotes } from '../../lib/gemini'
 import { getQuote, extractPrice } from '../../lib/fugle'
+import { toLocalDateString } from '../../lib/date'
 import { Plus, Search, Pencil, Trash2, X, Check, Link, FileText, Image, Sparkles, ChevronDown, ChevronUp, ArrowUpDown, Link2, Upload, ClipboardList } from 'lucide-react'
 import * as mammoth from 'mammoth'
 
@@ -214,7 +215,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         // 2) 操作計畫：撈當日交易紀錄（trades collection，date 為 YYYY-MM-DD）
         let planLine = '操作計畫：'
         try {
-            const todayISO = new Date().toISOString().split('T')[0]
+            const todayISO = toLocalDateString()
             const snap = await getDocs(
                 query(userCol(investDB, 'trades'), where('date', '==', todayISO))
             )

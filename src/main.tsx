@@ -4,10 +4,11 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App.tsx'
 import Login from './pages/Login.tsx'
 import { onBothAuthChanged } from './lib/auth.ts'
+import type { User } from 'firebase/auth'
 import './index.css'
 
-function Root() {
-    const [user, setUser] = useState<any>(undefined)
+export function Root() {
+    const [user, setUser] = useState<User | null | undefined>(undefined)
 
     useEffect(() => {
         // 同時等待 investAuth 和 kmsAuth 都完成初始化，再決定顯示 App 或 Login
@@ -27,7 +28,8 @@ function Root() {
         )
     }
 
-    return user ? <App /> : <Login />
+    // uid 改變時強制重新掛載整個 App，清除上一個帳號的頁面與 Context state。
+    return user ? <App key={user.uid} /> : <Login />
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

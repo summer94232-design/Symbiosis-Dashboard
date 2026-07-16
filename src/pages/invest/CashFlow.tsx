@@ -3,6 +3,7 @@ import { addDoc, updateDoc, deleteDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { fetchCashflow, invalidateCashflow } from '../../lib/investData'
+import { toLocalDateString } from '../../lib/date'
 import { Pencil, Trash2, X, Check } from 'lucide-react'
 
 interface CashRecord {
@@ -13,7 +14,7 @@ interface CashRecord {
     note: string
 }
 
-const empty: CashRecord = { date: new Date().toISOString().split('T')[0], type: 'in', amount: 0, note: '' }
+const empty: CashRecord = { date: toLocalDateString(), type: 'in', amount: 0, note: '' }
 const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
 const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
 const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }

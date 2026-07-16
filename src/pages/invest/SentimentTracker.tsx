@@ -3,6 +3,7 @@ import { addDoc, getDocs, deleteDoc, updateDoc, orderBy, query } from 'firebase/
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { usePrices } from '../../PriceContext'
+import { toLocalDateString } from '../../lib/date'
 import { Plus, Trash2, RefreshCw, TrendingUp, TrendingDown, Target, Minus, ChevronDown, ChevronRight, Pencil, Check, X } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -220,7 +221,7 @@ export default function SentimentTracker() {
                 direction: form.direction,
                 recordPrice,
                 reason: form.reason,
-                createdAt: now.toISOString().split('T')[0],
+                createdAt: toLocalDateString(now),
                 createdTs: now.getTime(),
             }
             await addDoc(userCol(investDB, 'sentiments'), newRecord)

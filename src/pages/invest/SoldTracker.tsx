@@ -23,6 +23,7 @@ import { investDB } from '../../lib/firebase'
 import { userDocNested } from '../../lib/userDB'
 import { getHistoricalCandles } from '../../lib/fugle'
 import { fetchTrades } from '../../lib/investData'
+import { toLocalDateString } from '../../lib/date'
 import { usePrices } from '../../PriceContext'
 import {
     RefreshCw, TrendingDown, ChevronDown, ChevronRight,
@@ -452,7 +453,7 @@ function SoldCard({ record, verdictThreshold }: { record: SoldRecord; verdictThr
         if (candles !== null) return
         setCandleLoading(true)
         try {
-            const today = new Date().toISOString().split('T')[0]
+            const today = toLocalDateString()
             const raw = await getHistoricalCandles(record.code, record.date, today)
             if (raw?.data && Array.isArray(raw.data)) {
                 setCandles(raw.data.map((d: any) => ({
