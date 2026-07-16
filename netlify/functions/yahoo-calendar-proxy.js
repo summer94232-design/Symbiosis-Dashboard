@@ -84,8 +84,14 @@ function parseEarningsCall(html) {
 
     for (let i = 0; i < anchors.length; i++) {
         const a = anchors[i]
-        const sliceStart = a.end
-        const sliceEnd = i + 1 < anchors.length ? anchors[i + 1].start : Math.min(html.length, a.end + 4000)
+        // a.end 只停在 "/quote/2308.TW" 這段文字結尾，此時 <a ...> 標籤還沒關閉
+        // （後面通常還有 target="_self"> 之類的屬性）。若直接從 a.end 切片，
+        // 殘留的屬性文字（例如 " target="_self">）會因為沒有對應的開頭 "<"
+        // 而躲過下面的 /<[^>]+>/g 標籤清除，直接混進抓到的文字內容。
+        // 因此要先找到這個標籤真正結束的 ">"，從它之後才開始擷取文字。
+        const tagCloseIdx = html.indexOf('>', a.end)
+        const sliceStart = tagCloseIdx === -1 ? a.end : tagCloseIdx + 1
+        const sliceEnd = i + 1 < anchors.length ? anchors[i + 1].start : Math.min(html.length, sliceStart + 4000)
 
         const text = html
             .slice(sliceStart, sliceEnd)
