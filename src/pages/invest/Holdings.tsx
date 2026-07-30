@@ -4,11 +4,12 @@ import { investDB } from '../../lib/firebase'
 import { userDocNested } from '../../lib/userDB'
 import { fetchTrades, fetchDividends } from '../../lib/investData'
 import InfoHint from '../../components/InfoHint'
+import ActionNotice, { type ActionNoticeState } from '../../components/ActionNotice'
 import { calcPositions, calcReturnRate, type TradeRecord, type DividendRecord } from '../../lib/calc'
 // ✅ 1-2：共用 UI 樣式與損益顏色
 import { card } from '../../ui/styles'
 import { pnlColor } from '../../ui/format'
-import { RefreshCw, TrendingUp, TrendingDown, Check, X } from 'lucide-react'
+import { RefreshCw, TrendingUp, TrendingDown, Check, X, ChevronDown, ChevronUp } from 'lucide-react'
 import { usePrices } from '../../PriceContext'
 
 interface DisplayHolding {
@@ -92,8 +93,17 @@ export default function Holdings() {
     const [loading, setLoading] = useState(true)
     const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
     const [groupSaving, setGroupSaving] = useState(false)
+    const [expandedCode, setExpandedCode] = useState<string | null>(null)
+    const [notice, setNotice] = useState<ActionNoticeState | null>(null)
+    const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-    const load = async () => {
+    const showNotice = (next: ActionNoticeState) => {
+        if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
+        setNotice(next)
+        noticeTimerRef.current = setTimeout(() => setNotice(null), 4200)
+    }
+
+    const load = async (showFeedback = false) => {
         setLoading(true)
         try {
             // ✅ 1-1：改走共用快取層（lib/investData）
@@ -133,15 +143,30 @@ export default function Holdings() {
             }).sort((a, b) => b.marketValue - a.marketValue)
 
             setHoldings(list)
-        } catch (err) { console.error(err) }
+            if (showFeedback) showNotice({ type: 'success', message: '持倉資料已重新載入。' })
+        } catch (err) {
+            console.error(err)
+            showNotice({ type: 'error', message: '持倉載入失敗，請確認網路後再試一次。' })
+        }
         setLoading(false)
     }
 
     // ★ 更新現價：委託 Context，用回傳的 quotes 同步更新本頁 holdings
     const handleUpdatePrices = async () => {
         const symbols = holdings.map(h => h.code)
-        if (symbols.length === 0) return
+        if (symbols.length === 0) {
+            showNotice({ type: 'info', message: '目前沒有需要更新現價的持倉。' })
+            return
+        }
         const quotes = await ctxUpdatePrices(symbols)
+        const updatedCount = symbols.filter(code => typeof quotes[code] === 'number' && (quotes[code] as number) > 0).length
+        if (updatedCount === 0) {
+            showNotice({ type: 'error', message: '這次未取得有效現價，請稍後再試。' })
+        } else if (updatedCount < symbols.length) {
+            showNotice({ type: 'info', message: `已更新 ${updatedCount} 檔，另有 ${symbols.length - updatedCount} 檔暫時無報價。` })
+        } else {
+            showNotice({ type: 'success', message: `已更新 ${updatedCount} 檔持倉現價。` })
+        }
 
         setHoldings(prev => prev.map(h => {
             const currentPrice = quotes[h.code] ?? null
@@ -154,17 +179,29 @@ export default function Holdings() {
     }
 
     const handleSaveGroup = async (code: string, group: string) => {
+        const previous = stockGroups
         const updated = { ...stockGroups, [code]: group }
         if (!group) delete updated[code]
         setStockGroups(updated)
         setGroupSaving(true)
         try {
             await setDoc(userDocNested(investDB, 'settings', 'stockGroups'), updated)
-        } catch (err) { console.error(err) }
+            showNotice({ type: 'success', message: `${code} 的族群已儲存。` })
+        } catch (err) {
+            console.error(err)
+            setStockGroups(previous)
+            showNotice({ type: 'error', message: '族群儲存失敗，已保留原本設定。' })
+        }
         setGroupSaving(false)
     }
 
-    useEffect(() => { load() }, [])
+    useEffect(() => {
+        void load()
+        return () => {
+            if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
 
     const totalMarketValue = holdings.reduce((s, h) => s + h.marketValue, 0)
     const totalCost = holdings.reduce((s, h) => s + h.totalCost, 0)
@@ -175,6 +212,7 @@ export default function Holdings() {
 
     return (
         <>
+            {notice && <ActionNotice {...notice} onClose={() => setNotice(null)} />}
             <style>{`
         .holdings-stats { display: grid; gap: 16px; grid-template-columns: repeat(4, 1fr); margin-bottom: 20px; }
         @media (max-width: 900px) { .holdings-stats { grid-template-columns: repeat(2, 1fr); } }
@@ -189,21 +227,21 @@ export default function Holdings() {
       `}</style>
 
             <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '8px' }}>
-                    <div>
-                        <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>股票持倉</h1>
-                        <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
+                <div className="page-header">
+                    <div className="page-heading">
+                        <h1 className="page-title">股票持倉</h1>
+                        <p className="page-subtitle">
                             {lastUpdated ? `更新：${lastUpdated}` : '尚未更新現價，請點「更新現價」'}
                             {groupSaving && <span style={{ marginLeft: '8px', color: 'var(--c-purple)' }}>· 族群儲存中...</span>}
                         </p>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <button onClick={load} disabled={loading} style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 14px', color: 'var(--c-text)', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+                    <div className="page-actions">
+                        <button className="ui-button ui-button-secondary" onClick={() => void load(true)} disabled={loading}>
+                            <RefreshCw size={15} className={loading ? 'is-spinning' : undefined} />
                             {loading ? '載入中...' : '重新載入'}
                         </button>
-                        <button onClick={handleUpdatePrices} disabled={priceLoading || loading} style={{ backgroundColor: 'var(--c-accent)', border: 'none', borderRadius: '8px', padding: '8px 14px', color: '#fff', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
+                        <button className="ui-button ui-button-primary" onClick={() => void handleUpdatePrices()} disabled={priceLoading || loading}>
+                            <RefreshCw size={15} className={priceLoading ? 'is-spinning' : undefined} />
                             {priceLoading ? '更新中...' : '更新現價'}
                         </button>
                     </div>
@@ -217,7 +255,7 @@ export default function Holdings() {
                         { label: '整體報酬率', value: totalReturn, color: pnlColor(totalReturn), fmt: (v: number) => hasPrice ? `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` : '—' },
                     ].map(({ label, value, color, fmt }) => (
                         <div key={label} style={card}>
-                            <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px', display: 'flex', alignItems: 'center' }}>
+                            <div style={{ fontSize: '13px', color: 'var(--c-muted)', marginBottom: '8px', display: 'flex', alignItems: 'center' }}>
                                 {label}
                                 {label === '整體報酬率' && <InfoHint text="未實現損益 ÷ 持倉總成本（含融資借款的全額成本）。下方表格的個股報酬率對融資部位改以自備款為分母，兩者口徑不同。" />}
                             </div>
@@ -238,8 +276,53 @@ export default function Holdings() {
                             <p style={{ fontSize: '13px', marginTop: '8px' }}>請先在買賣紀錄新增買入交易</p>
                         </div>
                     ) : (
-                        <div className="table-wrap">
-                            <table className="holdings-table">
+                        <>
+                            <div className="mobile-holdings-list">
+                                {holdings.map(h => {
+                                    const expanded = expandedCode === h.code
+                                    return (
+                                        <div key={h.code} className="mobile-holding-card">
+                                            <button type="button" className="mobile-holding-summary" onClick={() => setExpandedCode(expanded ? null : h.code)}>
+                                                <span className="mobile-holding-identity">
+                                                    <strong>{h.code}</strong>
+                                                    <span>{h.name}</span>
+                                                    {h.marginAmount > 0 && <em>融資</em>}
+                                                </span>
+                                                <span className="mobile-holding-result">
+                                                    <strong>{h.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</strong>
+                                                    <span style={{ color: h.currentPrice === null ? 'var(--c-muted)' : pnlColor(h.returnRate) }}>
+                                                        {h.currentPrice === null ? '請更新現價' : `${h.returnRate >= 0 ? '+' : ''}${h.returnRate.toFixed(2)}%`}
+                                                    </span>
+                                                </span>
+                                                {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                            </button>
+                                            {expanded && (
+                                                <div className="mobile-holding-details">
+                                                    {[
+                                                        ['股數', h.shares.toLocaleString()],
+                                                        ['均價', h.avgCost.toFixed(2)],
+                                                        ['現價', h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)],
+                                                        ['成本', h.totalCost.toLocaleString('zh-TW', { maximumFractionDigits: 0 })],
+                                                        ['市值', h.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })],
+                                                        ['未實現損益', h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`],
+                                                    ].map(([label, value]) => (
+                                                        <div key={label}>
+                                                            <span>{label}</span>
+                                                            <strong>{value}</strong>
+                                                        </div>
+                                                    ))}
+                                                    <div className="mobile-holding-group">
+                                                        <span>族群</span>
+                                                        <GroupCell code={h.code} group={stockGroups[h.code] || ''} allGroups={allGroups} onSave={handleSaveGroup} />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                            <div className="table-wrap desktop-holdings-table">
+                                <table className="holdings-table">
                                 <thead>
                                     <tr>
                                         {['代號', '名稱', '股數', '均價（含手續費）', '現價', '成本', '市值', '未實現損益', '報酬率', '族群'].map(h => (
@@ -289,8 +372,9 @@ export default function Holdings() {
                                         </tr>
                                     ))}
                                 </tbody>
-                            </table>
-                        </div>
+                                </table>
+                            </div>
+                        </>
                     )}
                 </div>
             </div>

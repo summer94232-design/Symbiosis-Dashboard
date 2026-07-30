@@ -7,6 +7,7 @@
 // Response: { calendarId: string, created: boolean }
 
 const CALENDAR_NAME = 'Symbiosis 財經行事曆'
+const CALENDAR_DESCRIPTION = '由 Symbiosis 個人系統自動同步的財經行事曆'
 
 export const handler = async (event) => {
     const headers = {
@@ -50,18 +51,38 @@ export const handler = async (event) => {
             if (checkRes.ok) {
                 return { statusCode: 200, headers, body: JSON.stringify({ calendarId, created: false }) }
             }
-        } catch {
-            // 驗證失敗就往下重新建立
+            // 只有確定不存在時才尋找替代日曆；暫時性 API 錯誤不可直接建立，否則會產生重複。
+            if (checkRes.status !== 404 && checkRes.status !== 410) {
+                const checkData = await checkRes.json().catch(() => ({}))
+                return {
+                    statusCode: checkRes.status,
+                    headers,
+                    body: JSON.stringify({ error: checkData.error?.message || `驗證既有行事曆失敗（HTTP ${checkRes.status}）` }),
+                }
+            }
+        } catch (err) {
+            return { statusCode: 500, headers, body: JSON.stringify({ error: `驗證既有行事曆失敗：${err.message}` }) }
         }
     }
 
     try {
+        // calendarId 遺失或原日曆不存在時，先從 CalendarList 重用既有同名日曆。
+        // 這也能修復舊版重新授權後遺失 calendarId、反覆建立同名日曆的情況。
+        const existingCalendarId = await findExistingCalendar(apiHeaders)
+        if (existingCalendarId) {
+            return {
+                statusCode: 200,
+                headers,
+                body: JSON.stringify({ calendarId: existingCalendarId, created: false, reused: true }),
+            }
+        }
+
         const createRes = await fetch('https://www.googleapis.com/calendar/v3/calendars', {
             method: 'POST',
             headers: apiHeaders,
             body: JSON.stringify({
                 summary: CALENDAR_NAME,
-                description: '由 Symbiosis 個人系統自動同步的財經行事曆',
+                description: CALENDAR_DESCRIPTION,
             }),
         })
         const createData = await createRes.json()
@@ -76,6 +97,30 @@ export const handler = async (event) => {
     } catch (err) {
         return { statusCode: 500, headers, body: JSON.stringify({ error: err.message }) }
     }
+}
+
+async function findExistingCalendar(apiHeaders) {
+    let pageToken = ''
+    do {
+        const url = new URL('https://www.googleapis.com/calendar/v3/users/me/calendarList')
+        url.searchParams.set('maxResults', '250')
+        url.searchParams.set('minAccessRole', 'writer')
+        if (pageToken) url.searchParams.set('pageToken', pageToken)
+
+        const listRes = await fetch(url.toString(), { headers: apiHeaders })
+        const listData = await listRes.json().catch(() => ({}))
+        if (!listRes.ok) {
+            throw new Error(listData.error?.message || `列出 Google 行事曆失敗（HTTP ${listRes.status}）`)
+        }
+
+        const match = (listData.items || []).find(item =>
+            item.summary === CALENDAR_NAME && item.id
+        )
+        if (match) return match.id
+        pageToken = listData.nextPageToken || ''
+    } while (pageToken)
+
+    return null
 }
 
 async function refreshAccessToken(refreshToken) {

@@ -26,7 +26,7 @@ import { getDoc, setDoc } from 'firebase/firestore'
 import { investDB } from './firebase'
 import { userDoc, userDocNested } from './userDB'
 import { calcPositions, calcAvailableCash, aggregateMarginDebt, type TradeRecord, type DividendRecord } from './calc'
-import { fetchTrades, fetchDividends, fetchCashflow } from './investData'
+import { fetchTrades, fetchDividends, fetchCashflow, invalidateAssetSnapshots } from './investData'
 import { toLocalDateString } from './date'
 
 // ── 共用市值計算（原 AssetTrend 內部函式抽出）──────────────────────────────
@@ -234,6 +234,7 @@ export async function maybeAutoSnapshotToday(options?: { overwrite?: boolean }):
 
             // 5. 寫入（doc id = 日期；覆寫模式會以最新值更新今日快照，口徑與手動完全一致）
             await setDoc(userDoc(investDB, 'assetSnapshots', today), { ...snapshot, auto: true })
+            invalidateAssetSnapshots()
             coveredDate = today
             lastAutoWriteTs = Date.now()
             console.info(`[autoSnapshot] ${mode}已${overwrite ? '更新' : '寫入'}今日快照（${today}）`, snapshot)

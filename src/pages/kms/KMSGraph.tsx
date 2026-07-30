@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { getDocs, orderBy, query, getDoc } from 'firebase/firestore'
 import { useNavigate } from 'react-router-dom'
-import { kmsDB } from '../../lib/firebase'
-import { userCol, userDocNested } from '../../lib/userDB'
+import { fetchKmsNotes, fetchKmsTagOrder } from '../../lib/kmsData'
 import { Search, X, ExternalLink, ChevronRight, ChevronDown, Tag } from 'lucide-react'
 
 interface Note {
@@ -39,8 +37,6 @@ interface CanvasNode {
 interface CanvasEdge {
   s: string; t: string; color: string
 }
-
-const TAG_ORDER_DOC = 'tagOrder'
 
 const TAG_COLORS = [
   '#4f8ef7', '#00c896', '#f7a94f', '#e05c8a',
@@ -80,14 +76,13 @@ export default function KMSGraph() {
   useEffect(() => {
     const load = async () => {
       setLoading(true)
-      const [notesSnap, orderSnap] = await Promise.all([
-        getDocs(query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc'))),
-        getDoc(userDocNested(kmsDB, 'settings', TAG_ORDER_DOC)).catch(() => null),
+      const [data, tagOrder] = await Promise.all([
+        fetchKmsNotes<Note>(),
+        fetchKmsTagOrder(),
       ])
-      const data = notesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Note))
       setNotes(data)
-      const parentOrder: string[] = orderSnap?.data()?.parentOrder ?? []
-      const childOrder: Record<string, string[]> = orderSnap?.data()?.childOrder ?? {}
+      const parentOrder = tagOrder.parentOrder
+      const childOrder = tagOrder.childOrder
       const tree = buildTagTree(data, parentOrder, childOrder)
       setTagTree(tree)
 

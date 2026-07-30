@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
-import { getDocs, updateDoc, query, setDoc, getDoc } from 'firebase/firestore'
+import { updateDoc, setDoc } from 'firebase/firestore'
 import { kmsDB } from '../../lib/firebase'
-import { userCol, userDoc, userDocNested } from '../../lib/userDB'
+import { userDoc, userDocNested } from '../../lib/userDB'
+import { fetchKmsNotes, fetchKmsTagOrder, invalidateKmsNotes, invalidateKmsTagOrder } from '../../lib/kmsData'
 import { Pencil, Check, X, Tag, FolderOpen, ChevronRight, ChevronUp, ChevronDown, GripVertical } from 'lucide-react'
 
 interface TagInfo {
@@ -30,15 +31,14 @@ export default function KMSTags() {
 
     const load = async () => {
         setLoading(true)
-        const [snap, orderSnap] = await Promise.all([
-            getDocs(userCol(kmsDB, 'notes')),
-            getDoc(userDocNested(kmsDB, 'settings', TAG_ORDER_DOC)).catch(() => null),
+        const [notes, tagOrder] = await Promise.all([
+            fetchKmsNotes<{ id: string; hashtags?: string[] }>(),
+            fetchKmsTagOrder(),
         ])
 
         const tagCount: Record<string, number> = {}
-        snap.docs.forEach(d => {
-            const data = d.data()
-            data.hashtags?.forEach((t: string) => {
+        notes.forEach(note => {
+            note.hashtags?.forEach((t: string) => {
                 tagCount[t] = (tagCount[t] || 0) + 1
             })
         })
@@ -59,10 +59,8 @@ export default function KMSTags() {
 
         let savedParentOrder: string[] = []
         let savedChildOrder: Record<string, string[]> = {}
-        if (orderSnap && orderSnap.exists()) {
-            savedParentOrder = orderSnap.data().parentOrder || []
-            savedChildOrder = orderSnap.data().childOrder || {}
-        }
+        savedParentOrder = tagOrder.parentOrder
+        savedChildOrder = tagOrder.childOrder
 
         const allParentNames = Object.keys(parents)
         const mergedParentOrder = [
@@ -111,6 +109,7 @@ export default function KMSTags() {
                 childOrder: newChildOrder,
                 updatedAt: new Date().toISOString(),
             })
+            invalidateKmsTagOrder()
         } catch (e) {
             console.error('儲存標籤排序失敗', e)
         }
@@ -173,18 +172,18 @@ export default function KMSTags() {
             t === oldTag ? newTag
                 : t.startsWith(oldTag + '/') ? newTag + t.slice(oldTag.length)
                     : t
-        const snap = await getDocs(query(userCol(kmsDB, 'notes')))
+        const notes = await fetchKmsNotes<{ id: string; hashtags?: string[] }>()
         let updated = 0
         const batch: Promise<void>[] = []
-        snap.docs.forEach(d => {
-            const data = d.data()
-            if (data.hashtags?.some((t: string) => t === oldTag || t.startsWith(oldTag + '/'))) {
-                const newHashtags = data.hashtags.map((t: string) => renameTag(t))
-                batch.push(updateDoc(userDoc(kmsDB, 'notes', d.id), { hashtags: newHashtags }))
+        notes.forEach(note => {
+            if (note.hashtags?.some((t: string) => t === oldTag || t.startsWith(oldTag + '/'))) {
+                const newHashtags = note.hashtags.map((t: string) => renameTag(t))
+                batch.push(updateDoc(userDoc(kmsDB, 'notes', note.id), { hashtags: newHashtags }))
                 updated++
             }
         })
         await Promise.all(batch)
+        invalidateKmsNotes()
         const newParentOrder = parentOrder.map(n => renameTag(n))
         const newChildOrder: Record<string, string[]> = {}
         Object.entries(childOrder).forEach(([pk, kids]) => {
@@ -209,16 +208,16 @@ export default function KMSTags() {
             t === fromTag ? target
                 : t.startsWith(fromTag + '/') ? target + t.slice(fromTag.length)
                     : t
-        const snap = await getDocs(query(userCol(kmsDB, 'notes')))
+        const notes = await fetchKmsNotes<{ id: string; hashtags?: string[] }>()
         const batch: Promise<void>[] = []
-        snap.docs.forEach(d => {
-            const data = d.data()
-            if (data.hashtags?.some((t: string) => t === fromTag || t.startsWith(fromTag + '/'))) {
-                const newHashtags = [...new Set(data.hashtags.map((t: string) => mergeTag(t)))]
-                batch.push(updateDoc(userDoc(kmsDB, 'notes', d.id), { hashtags: newHashtags }))
+        notes.forEach(note => {
+            if (note.hashtags?.some((t: string) => t === fromTag || t.startsWith(fromTag + '/'))) {
+                const newHashtags = [...new Set(note.hashtags.map((t: string) => mergeTag(t)))]
+                batch.push(updateDoc(userDoc(kmsDB, 'notes', note.id), { hashtags: newHashtags }))
             }
         })
         await Promise.all(batch)
+        invalidateKmsNotes()
         setSaving(false)
         showMsg(`✅ 已將「${fromTag}」合併到「${toTag}」`)
         load()

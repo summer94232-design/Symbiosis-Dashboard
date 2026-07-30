@@ -2,6 +2,7 @@ import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from
 import type { User } from 'firebase/auth'
 import { investApp, kmsApp } from './firebase'
 import { saveAccount, getPassword } from './accountStore'
+import { cache } from './cache'
 
 export const investAuth = getAuth(investApp)
 export const kmsAuth = getAuth(kmsApp)
@@ -22,6 +23,7 @@ async function rollbackBothAuth(): Promise<void> {
 
 // 同時登入兩個 Firebase 專案；任一失敗時回復成兩邊都登出的狀態。
 export async function signIn(email: string, password: string): Promise<void> {
+    cache.clear()
     const results = await Promise.allSettled([
         signInWithEmailAndPassword(investAuth, email, password),
         signInWithEmailAndPassword(kmsAuth, email, password),
@@ -53,6 +55,7 @@ export async function switchAccount(email: string): Promise<void> {
 
 // 同時登出兩個專案
 export async function signOutAll(): Promise<void> {
+    cache.clear()
     const results = await Promise.allSettled([signOut(investAuth), signOut(kmsAuth)])
     const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
     if (failure) throw failure.reason

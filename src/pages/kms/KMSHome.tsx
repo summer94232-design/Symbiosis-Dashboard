@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { addDoc, getDoc, getDocs, updateDoc, orderBy, query, where, writeBatch } from 'firebase/firestore'
+import { addDoc, doc, getDocs, query, where, writeBatch } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { kmsDB, kmsStorage, investDB } from '../../lib/firebase'
-import { userCol, userDoc, userDocNested } from '../../lib/userDB'
+import { userCol, userDoc } from '../../lib/userDB'
+import { fetchKmsNotes, fetchKmsTagOrder, invalidateKmsNotes, invalidateKmsTrash, KMS_UNTAGGED_KEY } from '../../lib/kmsData'
 // ✅ 1-2：共用 CSV 解析模組
 import { parseCSVLine } from '../../lib/csv'
 import { generateHashtags, findRelatedNotes } from '../../lib/gemini'
@@ -30,6 +31,7 @@ interface Note {
 interface Props {
     selectedTag: string
     setSelectedTag: (tag: string) => void
+    onNotesChanged: () => void
 }
 
 const empty: Note = { title: '', content: '', type: 'note', hashtags: [], links: [], createdAt: '', updatedAt: '' }
@@ -43,11 +45,6 @@ const TYPE_LABELS: Record<string, string> = { note: '文字筆記', url: '網址
 const TYPE_COLORS: Record<string, string> = { note: 'var(--c-accent)', url: 'var(--c-positive)', image: 'var(--c-warning)', file: '#a78bfa' }
 
 // 「標籤管理」頁儲存父標籤排序的 Firestore document（settings/tagOrder）
-const TAG_ORDER_DOC = 'tagOrder'
-
-// 無標籤筆記的入口哨兵值（正常標籤不可能等於此字串，避免撞名）
-const UNTAGGED_KEY = '__untagged__'
-
 // ── 筆記模板定義 ──────────────────────────────────────────
 interface NoteTemplate {
     id: string
@@ -94,7 +91,7 @@ const NOTE_TEMPLATES: NoteTemplate[] = [
 ]
 // ────────────────────────────────────────────────────────
 
-export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
+export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }: Props) {
     const [searchParams] = useSearchParams()
     const [notes, setNotes] = useState<Note[]>([])
     const [showForm, setShowForm] = useState(false)
@@ -132,23 +129,16 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     const noteRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
     const load = async () => {
-        const q = query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc'))
-        const [snap, orderSnap] = await Promise.all([
-            getDocs(q),
-            getDoc(userDocNested(kmsDB, 'settings', TAG_ORDER_DOC)).catch(() => null),
+        const [data, tagOrder] = await Promise.all([
+            fetchKmsNotes<Note>(),
+            fetchKmsTagOrder(),
         ])
-        const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Note))
         setNotes(data)
         const tags = new Set<string>()
         data.forEach(n => n.hashtags?.forEach(t => tags.add(t)))
         setAllTags(Array.from(tags).sort())
         // 讀取「標籤管理」頁儲存的父標籤排序；讀不到就留空陣列（fallback 依筆記數）
-        if (orderSnap && orderSnap.exists()) {
-            const po = orderSnap.data().parentOrder
-            setParentOrder(Array.isArray(po) ? po as string[] : [])
-        } else {
-            setParentOrder([])
-        }
+        setParentOrder(tagOrder.parentOrder)
     }
 
     useEffect(() => { load() }, [])
@@ -309,6 +299,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         if (!form.title) return
         setLoading(true)
         const now = new Date().toISOString()
+        let savedId = editingId
 
         // 雙向連結：更新被連結的筆記也加入反向連結
         const oldLinks = editingId ? (notes.find(n => n.id === editingId)?.links || []) : []
@@ -316,65 +307,66 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
         const addedLinks = newLinks.filter(id => !oldLinks.includes(id))
         const removedLinks = oldLinks.filter(id => !newLinks.includes(id))
 
-        if (editingId) {
-            const updatedNote: Note = { ...form, updatedAt: now }
-            await updateDoc(userDoc(kmsDB, 'notes', editingId), { ...updatedNote })
+        const noteRef = editingId
+            ? userDoc(kmsDB, 'notes', editingId)
+            : doc(userCol(kmsDB, 'notes'))
+        savedId = noteRef.id
+        const savedNote: Note = editingId
+            ? { ...form, id: editingId, updatedAt: now }
+            : { ...form, id: noteRef.id, createdAt: now, updatedAt: now }
+        const linkedUpdates: Record<string, string[]> = {}
 
-            // 更新雙向連結
-            for (const linkedId of addedLinks) {
-                const linkedNote = notes.find(n => n.id === linkedId)
-                if (linkedNote) {
-                    const updatedLinks = [...new Set([...(linkedNote.links || []), editingId])]
-                    await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links: updatedLinks })
-                    // 本地同步
-                    setNotes(prev => prev.map(n => n.id === linkedId ? { ...n, links: updatedLinks } : n))
-                }
+        for (const linkedId of addedLinks) {
+            const linkedNote = notes.find(n => n.id === linkedId)
+            if (linkedNote && linkedId !== noteRef.id) {
+                linkedUpdates[linkedId] = [...new Set([...(linkedNote.links || []), noteRef.id])]
             }
-            for (const linkedId of removedLinks) {
-                const linkedNote = notes.find(n => n.id === linkedId)
-                if (linkedNote) {
-                    const updatedLinks = (linkedNote.links || []).filter(id => id !== editingId)
-                    await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links: updatedLinks })
-                    setNotes(prev => prev.map(n => n.id === linkedId ? { ...n, links: updatedLinks } : n))
-                }
-            }
-
-            // 本地 state 更新，不重讀 Firestore
-            setNotes(prev => prev.map(n => n.id === editingId ? { ...n, ...updatedNote } : n))
-        } else {
-            const docRef = await addDoc(userCol(kmsDB, 'notes'), { ...form, createdAt: now, updatedAt: now })
-            const newId = docRef.id
-            const newNote: Note = { ...form, id: newId, createdAt: now, updatedAt: now }
-
-            // 更新被連結的筆記加入反向連結（本地 + Firestore）
-            const updatedLinks: Record<string, string[]> = {}
-            for (const linkedId of newLinks) {
-                const linkedNote = notes.find(n => n.id === linkedId)
-                if (linkedNote) {
-                    const links = [...new Set([...(linkedNote.links || []), newId])]
-                    await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links })
-                    updatedLinks[linkedId] = links
-                }
-            }
-
-            // 本地 state 插入新筆記（前端依 createdAt desc，新筆記放最前）
-            setNotes(prev => {
-                const updated = prev.map(n => updatedLinks[n.id!] ? { ...n, links: updatedLinks[n.id!] } : n)
-                return [newNote, ...updated]
-            })
-
-            // 更新 allTags
-            const newTags = new Set(allTags)
-                ; (form.hashtags || []).forEach(t => newTags.add(t))
-            setAllTags(Array.from(newTags).sort())
         }
+        for (const linkedId of removedLinks) {
+            const linkedNote = notes.find(n => n.id === linkedId)
+            if (linkedNote) {
+                linkedUpdates[linkedId] = (linkedNote.links || []).filter(id => id !== noteRef.id)
+            }
+        }
+
+        if (Object.keys(linkedUpdates).length > 449) {
+            alert('這則筆記的關聯數超過單次安全更新上限（449），請先減少連結後再儲存。')
+            setLoading(false)
+            return
+        }
+
+        // 筆記本體與所有反向連結在同一批次提交：全部成功或全部失敗。
+        const batch = writeBatch(kmsDB)
+        if (editingId) batch.update(noteRef, { ...savedNote })
+        else batch.set(noteRef, { ...savedNote })
+        Object.entries(linkedUpdates).forEach(([linkedId, links]) => {
+            batch.update(userDoc(kmsDB, 'notes', linkedId), { links, updatedAt: now })
+        })
+        await batch.commit()
+
+        setNotes(prev => {
+            const withLinks = prev.map(note => linkedUpdates[note.id!] ? { ...note, links: linkedUpdates[note.id!] } : note)
+            return editingId
+                ? withLinks.map(note => note.id === editingId ? savedNote : note)
+                : [savedNote, ...withLinks]
+        })
 
         // 更新 allTags（編輯情境）
         const newTagsSet = new Set(allTags)
             ; (form.hashtags || []).forEach(t => newTagsSet.add(t))
         setAllTags(Array.from(newTagsSet).sort())
 
+        invalidateKmsNotes()
+        onNotesChanged()
+        setSearch('')
+        setSelectedTag((form.hashtags?.length ?? 0) === 0 ? KMS_UNTAGGED_KEY : form.hashtags[0])
+        setExpandedId(savedId)
         setShowForm(false); setEditingId(null); setForm(empty); setLoading(false)
+        if (savedId) {
+            setTimeout(() => {
+                noteRefs.current[savedId!]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            }, 100)
+        }
     }
 
     const handleEdit = (note: Note) => {
@@ -386,23 +378,32 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
     const handleDelete = async (id: string) => {
         if (!confirm('確定要刪除？筆記將移至垃圾桶，30 天後永久刪除。')) return
         const note = notes.find(n => n.id === id); if (!note) return
-        // 移除其他筆記中對此筆記的連結（本地 + Firestore）
+        const linkedUpdates: Record<string, string[]> = {}
         for (const linkedId of (note.links || [])) {
             const linkedNote = notes.find(n => n.id === linkedId)
             if (linkedNote) {
-                const updatedLinks = (linkedNote.links || []).filter(l => l !== id)
-                await updateDoc(userDoc(kmsDB, 'notes', linkedId), { links: updatedLinks })
-                setNotes(prev => prev.map(n => n.id === linkedId ? { ...n, links: updatedLinks } : n))
+                linkedUpdates[linkedId] = (linkedNote.links || []).filter(l => l !== id)
             }
         }
-        // ✅ Bug 修正：用 writeBatch 讓「寫入垃圾桶 + 刪除原筆記」成為原子操作，
-        //   避免中途失敗導致筆記同時存在於 trash 與 notes（重複）或遺失。
+        if (Object.keys(linkedUpdates).length > 448) {
+            alert('這則筆記的關聯數超過單次安全刪除上限（448），請先減少連結後再刪除。')
+            return
+        }
+        // 反向連結、寫入垃圾桶與刪除原筆記全部放在同一批次。
         const batch = writeBatch(kmsDB)
+        Object.entries(linkedUpdates).forEach(([linkedId, links]) => {
+            batch.update(userDoc(kmsDB, 'notes', linkedId), { links, updatedAt: new Date().toISOString() })
+        })
         batch.set(userDoc(kmsDB, 'trash', id), { ...note, deletedAt: new Date().toISOString() })
         batch.delete(userDoc(kmsDB, 'notes', id))
         await batch.commit()
+        invalidateKmsNotes()
+        invalidateKmsTrash()
+        onNotesChanged()
         // 本地移除，不重讀 Firestore
-        setNotes(prev => prev.filter(n => n.id !== id))
+        setNotes(prev => prev
+            .filter(n => n.id !== id)
+            .map(n => linkedUpdates[n.id!] ? { ...n, links: linkedUpdates[n.id!] } : n))
     }
 
     // ── Autocomplete helpers ────────────────────────────────────────────
@@ -514,6 +515,8 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
 
             setImportMsg(`✅ 匯入完成：成功 ${success} 筆，略過 ${skipped} 筆`)
             // 重讀一次（批次匯入資料量大，local state 更新複雜度高，直接重讀即可）
+            invalidateKmsNotes()
+            onNotesChanged()
             load()
         } catch (err) {
             setImportMsg('❌ 解析失敗，請確認格式為 JSON 陣列或 CSV（title,content,type,url,hashtags）')
@@ -543,7 +546,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                 n.hashtags?.some(t => t.toLowerCase().includes(q)) ||
                 (n.url?.toLowerCase().includes(q) ?? false)
             const matchTag = !selectedTag
-                || (selectedTag === UNTAGGED_KEY
+                || (selectedTag === KMS_UNTAGGED_KEY
                     ? (n.hashtags?.length ?? 0) === 0
                     : n.hashtags?.some(t => t === selectedTag || t.startsWith(selectedTag + '/')))
             return matchSearch && matchTag
@@ -586,7 +589,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                 return a.name.localeCompare(b.name, 'zh-TW')
             })
         // 未分類（無任何標籤）排在所有標籤卡之後
-        if (untagged > 0) sorted.push({ name: UNTAGGED_KEY, count: untagged })
+        if (untagged > 0) sorted.push({ name: KMS_UNTAGGED_KEY, count: untagged })
         return sorted
     })()
     // ─────────────────────────────────────────────────────────────────────
@@ -623,15 +626,15 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                             </button>
                         )}
                         <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>
-                            {selectedTag ? (selectedTag === UNTAGGED_KEY ? '未分類' : `#${selectedTag}`) : '知識庫'}
+                            {selectedTag ? (selectedTag === KMS_UNTAGGED_KEY ? '未分類' : `#${selectedTag}`) : '知識庫'}
                         </h1>
                         <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
                             {!selectedTag && !search
-                                ? `${tagGroups.filter(g => g.name !== UNTAGGED_KEY).length} 個標籤・${notes.length} 則筆記`
+                                ? `${tagGroups.filter(g => g.name !== KMS_UNTAGGED_KEY).length} 個標籤・${notes.length} 則筆記`
                                 : `共 ${filtered.length} 則筆記`}
                         </p>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div className="page-actions" style={{ display: 'flex', gap: '8px' }}>
                         <button style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)' }} onClick={() => { setShowImport(true); setImportMsg('') }}>
                             <Upload size={14} />批次匯入
                         </button>
@@ -643,7 +646,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
 
                 {/* 批次匯入 Modal */}
                 {showImport && (
-                    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                    <div className="mobile-modal" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                         <div style={{ ...card, width: '100%', maxWidth: '560px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                                 <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>批次匯入筆記</span>
@@ -689,7 +692,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
 
                 {/* 表單 */}
                 {showForm && (
-                    <div style={{ ...card, marginBottom: '24px' }}>
+                    <div className="mobile-sticky-form" style={{ ...card, marginBottom: '24px' }}>
                         {/* ── 表單 Header ── */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
                             <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)' }}>{editingId ? '✏️ 編輯筆記' : '➕ 新增筆記'}</span>
@@ -954,7 +957,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                             </div>
                         </div>
 
-                        <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
+                        <div className="mobile-sticky-actions" style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
                             <button style={btn('var(--c-border)')} onClick={() => { setShowForm(false); setShowTemplateMenu(false) }}><X size={14} />取消</button>
                             <button style={btn('var(--c-accent)')} onClick={handleSave} disabled={loading}>
                                 <Check size={14} />{loading ? '儲存中...' : editingId ? '確認更新' : '確認新增'}
@@ -1002,7 +1005,7 @@ export default function KMSHome({ selectedTag, setSelectedTag }: Props) {
                                     onClick={() => setSelectedTag(g.name)}
                                     style={{ ...card, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', transition: 'border-color 0.15s' }}>
                                     <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-                                        <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name === UNTAGGED_KEY ? '未分類' : g.name}</span>
+                                        <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name === KMS_UNTAGGED_KEY ? '未分類' : g.name}</span>
                                     </span>
                                     <span style={{ fontSize: '13px', color: 'var(--c-muted)', flexShrink: 0 }}>{g.count} 則</span>
                                 </div>

@@ -1,15 +1,18 @@
 import { useState, useEffect } from 'react'
 import { getDocs, getDoc, setDoc, orderBy, query, addDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { invalidateTrades, invalidateCashflow, invalidateDividends } from '../../lib/investData'
+import { invalidateTrades, invalidateCashflow, invalidateDividends, invalidateAllInvestData } from '../../lib/investData'
+import { invalidateAllKmsData } from '../../lib/kmsData'
 import { userCol, userDoc, userDocNested, getUID } from '../../lib/userDB'
 import { buildFullBackup, downloadBackup, parseBackup, restoreFullBackup, backupSummary, countBackupDocs, type FullBackup } from '../../lib/backup'
-import { calcFee, calcTax, calcTradeTotal } from '../../lib/calc'
+import { calcFee, calcTax, calcTradeTotal, calcSharesBeforeTrade, type TradeRecord, type DividendRecord } from '../../lib/calc'
 // ✅ 1-2：共用 CSV 解析模組
 import { parseCSVLine, toNum, toInt } from '../../lib/csv'
 import { toLocalDateString } from '../../lib/date'
 import { Download, Upload, FileSpreadsheet, Database, FileDown, User, Calendar, FileJson, AlertTriangle } from 'lucide-react'
 import * as XLSX from 'xlsx'
+import DataHealthCenter from '../../components/DataHealthCenter'
+import { cache } from '../../lib/cache'
 
 interface SnapshotRecord {
     date: string
@@ -213,12 +216,17 @@ export default function InvestSettings() {
         setTradeImportResult(null)
 
         // ── 重複偵測：key = 日期|代號|類型|價格|股數 ──
-        const existTradesSnap = await getDocs(userCol(investDB, 'trades'))
+        const [existTradesSnap, dividendsSnap] = await Promise.all([
+            getDocs(userCol(investDB, 'trades')),
+            getDocs(userCol(investDB, 'dividends')),
+        ])
         const tradeKeys = new Set(existTradesSnap.docs.map(d => {
             const t = d.data()
             return `${t.date}|${t.code}|${t.type}|${Number(t.price)}|${Number(t.shares)}`
         }))
         let duplicated = 0
+        const validationTrades: TradeRecord[] = existTradesSnap.docs.map(d => ({ id: d.id, ...d.data() } as TradeRecord))
+        const validationDividends: DividendRecord[] = dividendsSnap.docs.map(d => ({ id: d.id, ...d.data() } as DividendRecord))
 
         const text = await file.text()
         const lines = text
@@ -259,7 +267,6 @@ export default function InvestSettings() {
             const tradeType: 'buy' | 'sell' = (typeStr === '買入' || typeStr === '買進' || typeStr === '現貨買入' || typeStr === '融資買入') ? 'buy' : 'sell'
             const tradeKey = `${date}|${code}|${tradeType}|${Number(price)}|${Number(shares)}`
             if (tradeKeys.has(tradeKey)) { duplicated++; continue }
-            tradeKeys.add(tradeKey)
             const isMargin = typeStr === '融資買入' || typeStr === '融資賣出'
             const marginRatio = isMargin
                 ? (row['融資成數'] !== undefined && row['融資成數'] !== '' ? toNum(row['融資成數']) || 0.6 : 0.6)
@@ -276,11 +283,23 @@ export default function InvestSettings() {
             const total = totalRaw !== null ? totalRaw
                 : calcTradeTotal({ type: tradeType, price, shares, fee, tax, isMargin, marginRatio, marginRepay })
 
+            const createdAt = new Date(Date.now() + i).toISOString()
+            const candidate: TradeRecord = {
+                id: `__settings_csv_${i}`, date, type: tradeType, code, name, price, shares, fee, tax, total, note,
+                isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay, createdAt, sequence: i,
+            }
+            if (tradeType === 'sell' && shares > calcSharesBeforeTrade(candidate, validationTrades, validationDividends)) {
+                failed++
+                continue
+            }
+
             try {
-                await addDoc(userCol(investDB, 'trades'), {
+                const docRef = await addDoc(userCol(investDB, 'trades'), {
                     date, type: tradeType, code, name, price, shares, fee, tax, total, note,
-                    isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay
+                    isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay, createdAt, sequence: i,
                 })
+                validationTrades.push({ ...candidate, id: docRef.id })
+                tradeKeys.add(tradeKey)
                 if (name && code) await setDoc(userDoc(investDB, 'stockDict', code), { name })
                 success++
             } catch { failed++ }
@@ -671,6 +690,9 @@ export default function InvestSettings() {
             const res = await restoreFullBackup(restorePreview, (done, total) => {
                 setRestoreProgress(total > 0 ? Math.round((done / total) * 100) : 100)
             })
+            invalidateAllInvestData()
+            invalidateAllKmsData()
+            cache.clear()
             showMsg(`✅ 還原完成！寫入 ${res.written} 筆${res.skipped > 0 ? `，略過 ${res.skipped} 筆異常資料` : ''}。建議重新整理頁面以載入最新資料。`)
             setRestorePreview(null)
         } catch (err) {
@@ -721,6 +743,27 @@ export default function InvestSettings() {
                     {msg}
                 </div>
             )}
+
+            {/* ── 帳戶管理 ── */}
+            <div style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <User size={15} color="var(--c-muted)" />
+                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--c-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>帳戶管理</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '14px', marginBottom: '24px' }}>
+                <div style={card}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <User size={16} color="var(--c-muted)" />
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>顯示名稱</span>
+                    </div>
+                    <p style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '12px', lineHeight: 1.6 }}>設定後顯示在 Sidebar 的「使用者：」欄位。</p>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <input value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveName() }} maxLength={20} placeholder="輸入名稱…" style={{ flex: 1, backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 10px', color: 'var(--c-text)', fontSize: '13px', outline: 'none', minWidth: 0 }} />
+                        <button onClick={saveName} disabled={nameSaving || !nameInput.trim() || nameInput.trim() === displayName} style={{ ...btn('var(--c-accent)'), padding: '8px 14px', fontSize: '13px', flexShrink: 0, opacity: (nameSaving || !nameInput.trim() || nameInput.trim() === displayName) ? 0.5 : 1 }}>{nameSaving ? '儲存中…' : '儲存'}</button>
+                    </div>
+                    {displayName && <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--c-muted)' }}>目前：<span style={{ color: 'var(--c-accent)', fontWeight: 600 }}>{displayName}</span></div>}
+                </div>
+                <DataHealthCenter />
+            </div>
 
             {/* ── 匯入區（兩欄） ── */}
             <div style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -824,38 +867,6 @@ export default function InvestSettings() {
                     )}
                 </div>
 
-                {/* ⑤ 顯示名稱 */}
-                <div style={card}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                        <User size={16} color="var(--c-muted)" />
-                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>顯示名稱</span>
-                    </div>
-                    <p style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
-                        設定後顯示在 Sidebar 的「使用者：」欄位。
-                    </p>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <input
-                            value={nameInput}
-                            onChange={e => setNameInput(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') saveName() }}
-                            maxLength={20}
-                            placeholder="輸入名稱…"
-                            style={{ flex: 1, backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 10px', color: 'var(--c-text)', fontSize: '13px', outline: 'none', minWidth: 0 }}
-                        />
-                        <button
-                            onClick={saveName}
-                            disabled={nameSaving || !nameInput.trim() || nameInput.trim() === displayName}
-                            style={{ ...btn('var(--c-accent)'), padding: '8px 14px', fontSize: '13px', flexShrink: 0, opacity: (nameSaving || !nameInput.trim() || nameInput.trim() === displayName) ? 0.5 : 1, cursor: (nameSaving || !nameInput.trim() || nameInput.trim() === displayName) ? 'not-allowed' : 'pointer' }}
-                        >
-                            {nameSaving ? '儲存中…' : '儲存'}
-                        </button>
-                    </div>
-                    {displayName && (
-                        <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--c-muted)' }}>
-                            目前：<span style={{ color: 'var(--c-accent)', fontWeight: 600 }}>{displayName}</span>
-                        </div>
-                    )}
-                </div>
             </div>
 
             {/* ── 匯出區 ── */}

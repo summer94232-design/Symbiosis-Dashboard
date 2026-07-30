@@ -1,11 +1,11 @@
 // YearReview.tsx
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { getDocs, orderBy, query, getDoc } from 'firebase/firestore'
+import { getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDocNested } from '../../lib/userDB'
+import { userDocNested } from '../../lib/userDB'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { calcAvailableCash, type TradeRecord } from '../../lib/calc'
-import { fetchTrades, fetchDividends, fetchCashflow } from '../../lib/investData'
+import { fetchTrades, fetchDividends, fetchCashflow, fetchAssetSnapshots } from '../../lib/investData'
 // ✅ 1-2：共用 UI 樣式與格式化（inp 因本頁刻意無 width:100%，保留本地定義）
 import { card } from '../../ui/styles'
 import { pnlColor, fmtMoney, fmtPct } from '../../ui/format'
@@ -313,19 +313,17 @@ export default function YearReview() {
             // ── 只有第一次才讀 Firestore，之後切換年份從快取重算 ──
             if (!rawDataLoadedRef.current) {
                 // ✅ 多讀 cashflow，供 snapshot 分頁排除出入金
-                // ✅ 1-1：trades/dividends/cashflow 改走共用快取層（lib/investData），
-                //    assetSnapshots 非高頻共用資料，維持直接讀取。
-                const [tradesData, dividendsData, snapshotsSnap, cashflowData] = await Promise.all([
+                const [tradesData, dividendsData, snapshotRows, cashflowData] = await Promise.all([
                     fetchTrades<TradeRecord>('asc'),
                     fetchDividends<DividendRecord>('asc'),
-                    getDocs(query(userCol(investDB, 'assetSnapshots'), orderBy('date', 'asc'))),
+                    fetchAssetSnapshots<{ date: string; totalAssets: number }>('asc'),
                     fetchCashflow<{ date: string; type: 'in' | 'out'; amount: number }>('asc')
                 ])
 
                 trades = tradesData
                 dividends = dividendsData
                 snapshots = {}
-                snapshotsSnap.docs.forEach(d => { snapshots[d.data().date as string] = d.data().totalAssets as number })
+                snapshotRows.forEach(row => { snapshots[row.date] = row.totalAssets })
                 setAssetSnapshots(snapshots)
 
                 // ┌─────────────────────────────────────────────────────────────┐

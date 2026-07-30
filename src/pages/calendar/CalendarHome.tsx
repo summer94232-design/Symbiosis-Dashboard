@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { getDocs, addDoc, deleteDoc, orderBy, query, where, setDoc, getDoc, updateDoc, collection, doc, writeBatch } from 'firebase/firestore'
+import { getDocs, addDoc, deleteDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { calcPositions, type TradeRecord } from '../../lib/calc'
@@ -8,6 +8,8 @@ import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT
 import { Plus, X, ChevronLeft, ChevronRight, ExternalLink, Upload, Pencil, RefreshCw, UploadCloud } from 'lucide-react'
 import { getGoogleCalendarAuth, performGoogleCalendarSync, type SyncSummary } from '../../lib/googleCalendar'
 import * as XLSX from 'xlsx'
+import { fetchCalendarEvents, fetchTasks, invalidateCalendarEvents } from '../../lib/plannerData'
+import { addInvestorMeetingDates, fetchInvestorMeetings, removeInvestorMeetingDate } from '../../lib/investorMeetings'
 
 const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
 const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
@@ -52,9 +54,8 @@ export default function CalendarHome() {
     const [gcalStage, setGcalStage] = useState<string | null>(null)
 
     const loadPersonal = async () => {
-        const snap = await getDocs(query(userCol(investDB, 'calendarEvents'), orderBy('date', 'asc')))
         // 讀取所有手動建立的行程（不限 type，支援 personal / tech / fomc / dividend / shareholder 等）
-        setPersonalEvents(snap.docs.map(d => ({ id: d.id, ...d.data() } as CalendarEvent)))
+        setPersonalEvents(await fetchCalendarEvents<CalendarEvent>())
     }
 
     const loadWatchList = async () => {
@@ -97,13 +98,12 @@ export default function CalendarHome() {
     }
 
     const loadTasks = async () => {
-        const snap = await getDocs(userCol(investDB, 'tasks'))
-        const taskEvts: CalendarEvent[] = snap.docs
-            .map(d => d.data())
+        const rows = await fetchTasks<{ createdAt: string; dueDate?: string; done: boolean; title: string; priority: string }>()
+        const taskEvts: CalendarEvent[] = rows
             .filter(t => t.dueDate && !t.done)
             .map(t => ({
                 id: `task-${t.createdAt}`,
-                date: t.dueDate,
+                date: t.dueDate!,
                 title: `📋 ${t.title}`,
                 type: 'personal' as const,
                 description: `優先級：${{ high: '高', medium: '中', low: '低' }[t.priority as string] || '中'}`
@@ -111,21 +111,16 @@ export default function CalendarHome() {
         setTaskEvents(taskEvts)
     }
 
-    // 從 root collection 讀取法說會（GitHub Actions 寫入的位置）
+    // 全域法說會由後端維護；前端讀取時合併目前使用者的新增／隱藏 override。
     const loadInvestorFromFirestore = async (y: number, m: number) => {
         const yearMonth = `${y}-${String(m).padStart(2, '0')}`
 
         try {
-            const q = query(
-                collection(investDB, 'investorMeetings'),
-                where('yearMonth', '==', yearMonth)
-            )
-            const snap = await getDocs(q)
+            const rows = await fetchInvestorMeetings([yearMonth])
             const evtMap = new Map<string, CalendarEvent>()
 
-            snap.docs.forEach(docSnap => {
-                const data = docSnap.data()
-                const dates: string[] = Array.isArray(data.dates) ? data.dates : []
+            rows.forEach(data => {
+                const dates = data.dates
                 dates.forEach((isoDate: string) => {
                     const id = `investor-${data.stockCode}-${isoDate}`
                     if (!evtMap.has(id)) {
@@ -167,53 +162,25 @@ export default function CalendarHome() {
                 return
             }
 
-            // 依 code-yearMonth 分組
+            // Yahoo 手動更新只寫入目前使用者的 override，不再改動全域共享資料。
             const groups = new Map<string, { stockCode: string; stockName: string; yearMonth: string; dates: Set<string> }>()
-            const yearMonths = new Set<string>()
             for (const ev of list) {
                 if (!/^\d{4}-\d{2}-\d{2}$/.test(ev.date)) continue
                 const ym = ev.date.slice(0, 7)          // YYYY-MM
                 const docId = `${ev.code}-${ym}`
-                yearMonths.add(ym)
                 if (!groups.has(docId)) {
                     groups.set(docId, { stockCode: ev.code, stockName: ev.name || ev.code, yearMonth: ym, dates: new Set() })
                 }
                 groups.get(docId)!.dates.add(ev.date)
             }
 
-            // 一次性讀回相關月份的既有資料（每月一次查詢）做差異比對
-            const existingMap = new Map<string, string[]>()
-            await Promise.all([...yearMonths].map(async ym => {
-                const snap = await getDocs(query(collection(investDB, 'investorMeetings'), where('yearMonth', '==', ym)))
-                snap.docs.forEach(d => existingMap.set(d.id, Array.isArray(d.data().dates) ? d.data().dates : []))
-            }))
-
-            // 差異寫入：與既有日期 union（不覆蓋其他來源，例如 mops / xlsx）
-            // ※ 若想完全以 Yahoo 為準，把 mergedDates 改成 [...g.dates].sort() 即可
-            const nowIso = new Date().toISOString()
-            let batch = writeBatch(investDB)
-            let ops = 0
-            let changed = 0
-            for (const [docId, g] of groups) {
-                const old = existingMap.get(docId) || []
-                const mergedDates = [...new Set([...old, ...g.dates])].sort()
-                if (mergedDates.length === old.length && mergedDates.join(',') === [...old].sort().join(',')) continue
-
-                batch.set(doc(collection(investDB, 'investorMeetings'), docId), {
-                    stockCode: g.stockCode,
-                    stockName: g.stockName,
-                    yearMonth: g.yearMonth,
-                    dates: mergedDates,
-                    updatedAt: nowIso,
-                })
-                changed++
-                ops++
-                if (ops >= 450) { await batch.commit(); batch = writeBatch(investDB); ops = 0 }
-            }
-            if (ops > 0) await batch.commit()
+            const changed = await addInvestorMeetingDates([...groups.values()].map(group => ({
+                ...group,
+                dates: [...group.dates],
+            })))
 
             await loadInvestorFromFirestore(year, month)
-            setInvestorInfo(`✅ Yahoo 法說會更新完成：抓到 ${list.length} 筆，${changed} 檔有變動已同步`)
+            setInvestorInfo(`✅ Yahoo 法說會更新完成：抓到 ${list.length} 筆，已寫入 ${changed} 組個人資料；全域資料未被修改`)
         } catch (err) {
             console.error('loadYahooCalendar 失敗：', err)
             setInvestorError(`Yahoo 法說會更新失敗：${err instanceof Error ? err.message : '未知錯誤'}`)
@@ -222,7 +189,7 @@ export default function CalendarHome() {
         setLoadingYahoo(false)
     }
 
-    // ── xlsx 手動匯入法說會（寫入 root collection）──────────────────────
+    // ── xlsx 手動匯入法說會（寫入個人 override）────────────────────────
     const handleXlsxImport = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
         if (!file) return
@@ -267,26 +234,14 @@ export default function CalendarHome() {
                     byDoc[docId].dates.add(isoDate)
                 }
 
-                let written = 0
-                for (const [, info] of Object.entries(byDoc)) {
-                    const docId = `${info.stockCode}-${info.yearMonth}`
-                    // ✅ 寫入 root collection（與 GitHub Actions 一致）
-                    const docRef = doc(collection(investDB, 'investorMeetings'), docId)
-                    const existing = await getDoc(docRef)
-                    const oldDates: string[] = existing.exists() ? (existing.data().dates || []) : []
-                    const mergedDates = [...new Set([...oldDates, ...info.dates])].sort()
+                const written = await addInvestorMeetingDates(Object.values(byDoc).map(info => ({
+                    stockCode: info.stockCode,
+                    stockName: info.stockName,
+                    yearMonth: info.yearMonth,
+                    dates: [...info.dates],
+                })))
 
-                    await setDoc(docRef, {
-                        stockCode: info.stockCode,
-                        stockName: info.stockName,
-                        yearMonth: info.yearMonth,
-                        dates: mergedDates,
-                        updatedAt: new Date().toISOString()
-                    })
-                    written++
-                }
-
-                setInvestorInfo(`✅ xlsx 匯入完成，已寫入 ${written} 筆法說會資料`)
+                setInvestorInfo(`✅ xlsx 匯入完成，已寫入 ${written} 組個人法說會資料`)
                 setShowXlsxImport(false)
                 await loadInvestorFromFirestore(year, month)
             } catch (err) {
@@ -314,6 +269,10 @@ export default function CalendarHome() {
         setGcalStage('準備中')
         try {
             const summary: SyncSummary = await performGoogleCalendarSync(auth, stage => setGcalStage(stage))
+            // 同步可能從 Google 新增、更新或刪除 Firestore 行程；立即重讀，
+            // 避免畫面繼續顯示同步前的 React state，必須重開頁面才更新。
+            invalidateCalendarEvents()
+            await loadPersonal()
 
             const parts: string[] = []
             if (summary.pushedCreated > 0) parts.push(`推送新增 ${summary.pushedCreated} 筆`)
@@ -382,22 +341,15 @@ export default function CalendarHome() {
         const type = form.type
 
         if (type === 'investor') {
-            // 寫入 root collection investorMeetings（與自動抓取同一位置）
             const [y, m] = form.date.split('-')
             const yearMonth = `${y}-${m}`
             const stockCode = form.title.match(/^(\d{4,6})/)?.[1] || form.title
-            const docId = `${stockCode}-${yearMonth}`
-            const docRef = doc(collection(investDB, 'investorMeetings'), docId)
-            const existing = await getDoc(docRef)
-            const oldDates: string[] = existing.exists() ? (existing.data().dates || []) : []
-            const newDates = [...new Set([...oldDates, form.date])].sort()
-            await setDoc(docRef, {
+            await addInvestorMeetingDates([{
                 stockCode,
                 stockName: form.title,
                 yearMonth,
-                dates: newDates,
-                updatedAt: new Date().toISOString()
-            })
+                dates: [form.date],
+            }])
             await loadInvestorFromFirestore(year, month)
         } else {
             // 其餘類型（personal, fomc, tech, dividend, shareholder, futures）全寫入 calendarEvents
@@ -409,6 +361,7 @@ export default function CalendarHome() {
                 type,
                 updatedAt: new Date().toISOString(),
             })
+            invalidateCalendarEvents()
             loadPersonal()
         }
 
@@ -419,6 +372,7 @@ export default function CalendarHome() {
     const handleDeleteEvent = async (id: string) => {
         if (!confirm('確定要刪除此行程？')) return
         await deleteDoc(userDoc(investDB, 'calendarEvents', id))
+        invalidateCalendarEvents()
         loadPersonal()
     }
 
@@ -437,22 +391,18 @@ export default function CalendarHome() {
             type: form.type,
             updatedAt: new Date().toISOString(),
         })
+        invalidateCalendarEvents()
         setEditingEvent(null)
         setForm({ title: '', date: '', description: '', url: '', type: 'personal' })
         loadPersonal()
     }
 
-    // 刪除單筆法說會日期（從 root collection 操作）
+    // 全域資料不刪除；在目前使用者的 override 中隱藏該日期。
     const handleDeleteInvestorDate = async (stockCode: string, isoDate: string) => {
         if (!confirm(`確定要刪除 ${stockCode} 在 ${isoDate} 的法說會？`)) return
-        const yearMonth = `${year}-${String(month).padStart(2, '0')}`
-        const docId = `${stockCode}-${yearMonth}`
-        const docRef = doc(collection(investDB, 'investorMeetings'), docId)
-        const snap = await getDoc(docRef)
-        if (!snap.exists()) return
-        const oldDates: string[] = snap.data().dates || []
-        const newDates = oldDates.filter(d => d !== isoDate)
-        await updateDoc(docRef, { dates: newDates, updatedAt: new Date().toISOString() })
+        const event = investorEvents.find(item => item.stockCode === stockCode && item.date === isoDate)
+        const stockName = event?.title.replace(/\s*法說會$/, '') || stockCode
+        await removeInvestorMeetingDate(stockCode, stockName, isoDate)
         await loadInvestorFromFirestore(year, month)
     }
 
@@ -495,25 +445,39 @@ export default function CalendarHome() {
                 {/* 標題列 */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                     <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>財經行事曆</h1>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        <button onClick={loadYahooCalendar} disabled={loadingYahoo}
+                    <div className="page-actions calendar-actions" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button className="calendar-secondary-action" onClick={loadYahooCalendar} disabled={loadingYahoo}
                             style={{ ...btn('#7c5cff'), opacity: loadingYahoo ? 0.6 : 1 }}
                             title="從 Yahoo 股市台股行事曆抓取全市場法說會並更新">
                             <RefreshCw size={14} style={loadingYahoo ? { animation: 'spin 1s linear infinite' } : undefined} />
                             {loadingYahoo ? '抓取中…' : '抓取法說會'}
                         </button>
-                        <button onClick={() => setShowXlsxImport(true)} style={btn('var(--c-border)')} title="從 xlsx 手動匯入法說會日期">
+                        <button className="calendar-secondary-action" onClick={() => setShowXlsxImport(true)} style={btn('var(--c-border)')} title="從 xlsx 手動匯入法說會日期">
                             <Upload size={14} />匯入法說會
                         </button>
-                        <button onClick={handleSyncGoogleCalendar} disabled={gcalSyncing}
+                        <button className="calendar-secondary-action" onClick={handleSyncGoogleCalendar} disabled={gcalSyncing}
                             style={{ ...btn('#4285f4'), opacity: gcalSyncing ? 0.6 : 1 }}
                             title="把未來半年的行事曆事件同步到 Google 行事曆">
                             <UploadCloud size={14} style={gcalSyncing ? { animation: 'spin 1s linear infinite' } : undefined} />
                             {gcalSyncing ? (gcalStage || '同步中…') : '同步到 Google'}
                         </button>
-                        <button onClick={() => setShowForm(true)} style={btn('var(--c-accent)')}>
+                        <button className="calendar-primary-action" onClick={() => setShowForm(true)} style={btn('var(--c-accent)')}>
                             <Plus size={14} />新增行程
                         </button>
+                        <details className="calendar-mobile-more">
+                            <summary>更多操作</summary>
+                            <div className="calendar-mobile-more-panel">
+                                <button onClick={loadYahooCalendar} disabled={loadingYahoo} style={{ ...btn('#7c5cff'), opacity: loadingYahoo ? 0.6 : 1 }}>
+                                    <RefreshCw size={14} />{loadingYahoo ? '抓取中…' : '抓取法說會'}
+                                </button>
+                                <button onClick={() => setShowXlsxImport(true)} style={btn('var(--c-border)')}>
+                                    <Upload size={14} />匯入法說會
+                                </button>
+                                <button onClick={handleSyncGoogleCalendar} disabled={gcalSyncing} style={{ ...btn('#4285f4'), opacity: gcalSyncing ? 0.6 : 1 }}>
+                                    <UploadCloud size={14} />{gcalSyncing ? (gcalStage || '同步中…') : '同步到 Google'}
+                                </button>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
@@ -556,7 +520,7 @@ export default function CalendarHome() {
                     </div>
                 )}
 
-                <div style={{ display: 'grid', gap: '16px', gridTemplateColumns: selectedDay ? '1fr 300px' : '1fr' }}>
+                <div className="calendar-layout" style={{ display: 'grid', gap: '16px', gridTemplateColumns: selectedDay ? '1fr 300px' : '1fr' }}>
                     {/* 月曆 */}
                     <div style={card}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -586,11 +550,11 @@ export default function CalendarHome() {
                                         <div style={{ fontSize: '13px', fontWeight: isToday ? 700 : 400, color: isToday ? 'var(--c-accent)' : isWeekend ? 'var(--c-danger)' : 'var(--c-text)', marginBottom: '4px' }}>{d}</div>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                                             {dayEvents.slice(0, 3).map(ev => (
-                                                <div key={ev.id} style={{ fontSize: '10px', backgroundColor: `${EVENT_COLORS[ev.type]}22`, color: EVENT_COLORS[ev.type], borderRadius: '3px', padding: '1px 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                <div key={ev.id} className="cal-event-chip" title={ev.title} style={{ fontSize: '10px', backgroundColor: `${EVENT_COLORS[ev.type]}22`, color: EVENT_COLORS[ev.type], borderRadius: '3px', padding: '1px 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                     {ev.title}
                                                 </div>
                                             ))}
-                                            {dayEvents.length > 3 && <div style={{ fontSize: '10px', color: 'var(--c-muted)' }}>+{dayEvents.length - 3} 更多</div>}
+                                            {dayEvents.length > 3 && <div className="cal-more-count" style={{ fontSize: '10px', color: 'var(--c-muted)' }}>+{dayEvents.length - 3} 更多</div>}
                                         </div>
                                     </div>
                                 )
@@ -667,7 +631,7 @@ export default function CalendarHome() {
 
                 {/* 編輯行程 Modal */}
                 {editingEvent && (
-                    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                    <div className="mobile-modal" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                         <div style={{ ...card, width: '100%', maxWidth: '480px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                                 <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>編輯行程</span>
@@ -727,7 +691,7 @@ export default function CalendarHome() {
 
                 {/* xlsx 匯入法說會 Modal */}
                 {showXlsxImport && (
-                    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                    <div className="mobile-modal" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                         <div style={{ ...card, width: '100%', maxWidth: '520px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                                 <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>手動匯入法說會日期</span>
@@ -751,7 +715,7 @@ export default function CalendarHome() {
 
                 {/* 新增行程 Modal */}
                 {showForm && (
-                    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                    <div className="mobile-modal" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                         <div style={{ ...card, width: '100%', maxWidth: '480px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                                 <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>新增行程</span>

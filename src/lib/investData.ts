@@ -29,7 +29,7 @@ import { cache } from './cache'
 /** 快取存活秒數：在此秒數內重複進入各頁面不會重打 Firestore */
 const TTL_SECONDS = 90
 
-type InvestCollection = 'trades' | 'dividends' | 'cashflow'
+type InvestCollection = 'trades' | 'dividends' | 'cashflow' | 'assetSnapshots'
 export type SortOrder = 'asc' | 'desc'
 
 function cacheKey(name: InvestCollection): string {
@@ -40,12 +40,10 @@ function cacheKey(name: InvestCollection): string {
 
 async function fetchCollection<T>(name: InvestCollection, order: SortOrder): Promise<T[]> {
     const key = cacheKey(name)
-    let docs = cache.get<Record<string, unknown>[]>(key)
-    if (!docs) {
+    const docs = await cache.getOrLoad<Record<string, unknown>[]>(key, async () => {
         const snap = await getDocs(query(userCol(investDB, name), orderBy('date', 'asc')))
-        docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-        cache.set(key, docs, TTL_SECONDS)
-    }
+        return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    }, TTL_SECONDS)
     // 永遠回傳副本，避免呼叫端 in-place sort 污染快取順序
     const result = order === 'asc' ? [...docs] : [...docs].reverse()
     return result as unknown as T[]
@@ -66,6 +64,11 @@ export function fetchCashflow<T = Record<string, unknown>>(order: SortOrder = 'a
     return fetchCollection<T>('cashflow', order)
 }
 
+/** Reads asset history through the same cache and request-deduplication path. */
+export function fetchAssetSnapshots<T = Record<string, unknown>>(order: SortOrder = 'asc'): Promise<T[]> {
+    return fetchCollection<T>('assetSnapshots', order)
+}
+
 /** 買賣紀錄有任何寫入（新增/編輯/刪除/匯入）後呼叫 */
 export function invalidateTrades(): void {
     cache.invalidatePrefix('invest:trades:')
@@ -84,4 +87,8 @@ export function invalidateCashflow(): void {
 /** 一次清除三種快取（完整備份還原等大量寫入場景使用） */
 export function invalidateAllInvestData(): void {
     cache.invalidatePrefix('invest:')
+}
+
+export function invalidateAssetSnapshots(): void {
+    cache.invalidatePrefix('invest:assetSnapshots:')
 }

@@ -85,6 +85,7 @@ export function calcReturnRate(unrealizedPnL: number, totalCost: number, marginA
 }
 
 export interface TradeRecord {
+    id?: string
     date: string
     type: 'buy' | 'sell'
     code: string
@@ -99,9 +100,14 @@ export interface TradeRecord {
     marginRatio?: number   // 融資成數（例：0.6）
     marginAmount?: number  // 融資借款金額（買入時）
     marginRepay?: number   // 融資賣出時償還的借款（本金＋利息，依券商對帳單）
+    /** 同日交易排序時間；新資料一律寫入，舊資料沒有時退回 sequence / id */
+    createdAt?: string
+    /** CSV 等批次來源可提供的穩定原始順序 */
+    sequence?: number
 }
 
 export interface DividendRecord {
+    id?: string
     date: string
     code: string
     name: string
@@ -140,6 +146,46 @@ type TimelineEvent =
     | { kind: 'trade'; date: string; trade: TradeRecord }
     | { kind: 'stockdiv'; date: string; div: DividendRecord }
 
+/**
+ * 交易的唯一穩定排序規則。
+ *
+ * Firestore 只 orderBy(date) 時，同一天文件的先後不應拿來決定財務結果；
+ * 新資料以 createdAt / sequence 保存真實輸入順序，舊資料則以文件 ID 固定結果。
+ * 完全相同時回傳 0，交由 ES stable sort 保留原始陣列順序。
+ */
+export function compareTradeRecords(a: TradeRecord, b: TradeRecord): number {
+    const dateOrder = (a.date || '').localeCompare(b.date || '')
+    if (dateOrder !== 0) return dateOrder
+
+    const timeA = a.createdAt || ''
+    const timeB = b.createdAt || ''
+    if (timeA || timeB) {
+        const timeOrder = timeA.localeCompare(timeB)
+        if (timeOrder !== 0) return timeOrder
+    }
+
+    const sequenceA = Number.isFinite(a.sequence) ? a.sequence! : Number.MAX_SAFE_INTEGER
+    const sequenceB = Number.isFinite(b.sequence) ? b.sequence! : Number.MAX_SAFE_INTEGER
+    if (sequenceA !== sequenceB) return sequenceA - sequenceB
+
+    return (a.id || '').localeCompare(b.id || '')
+}
+
+/** 計算某筆賣出「發生當下」可用的持股數，供表單與匯入阻擋超賣。 */
+export function calcSharesBeforeTrade(
+    target: TradeRecord,
+    trades: TradeRecord[],
+    dividends: DividendRecord[] = [],
+): number {
+    const priorTrades = trades.filter(t => {
+        if (target.id && t.id === target.id) return false
+        return compareTradeRecords(t, target) < 0
+    })
+    // 同日規則為所有交易先於配股，所以只有更早日期的股票股利能加入可賣股數。
+    const priorDividends = dividends.filter(d => d.date < target.date)
+    return calcPositions(priorTrades, priorDividends).holdings[target.code]?.shares ?? 0
+}
+
 export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[]): CalcResult {
     // 過濾掉 date 為 undefined/null/空字串的異常資料，避免 localeCompare crash
     const tradeEvents: TimelineEvent[] = trades
@@ -153,11 +199,17 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
         .filter(d => d && d.code && typeof d.date === 'string' && d.stockDividend > 0)
         .map(d => ({ kind: 'stockdiv', date: d.date, div: d }))
 
-    // 同一天時：交易事件先於配股事件（除權息基準日當天的買賣仍以未配股股數計）
+    // 同一天時：交易事件先於配股事件（除權息基準日當天的買賣仍以未配股股數計）。
+    // 同類事件必須回傳對稱且穩定的比較結果，否則同日買賣順序會改變成本與損益。
     const events = [...tradeEvents, ...divEvents].sort((a, b) => {
         const c = a.date.localeCompare(b.date)
         if (c !== 0) return c
-        return a.kind === 'trade' ? -1 : 1
+        if (a.kind !== b.kind) return a.kind === 'trade' ? -1 : 1
+        if (a.kind === 'trade' && b.kind === 'trade') return compareTradeRecords(a.trade, b.trade)
+        if (a.kind === 'stockdiv' && b.kind === 'stockdiv') {
+            return (a.div.id || '').localeCompare(b.div.id || '')
+        }
+        return 0
     })
 
     const holdings: Record<string, HoldingPosition> = {}
@@ -182,7 +234,7 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
         const { code, name, type, price, shares, fee, tax } = t
 
         // 防呆：跳過欄位不完整的紀錄
-        if (!code || !type || price == null || shares == null) continue
+        if (!code || !type || !Number.isFinite(price) || !Number.isFinite(shares) || price <= 0 || shares <= 0) continue
 
         if (!holdings[code]) {
             holdings[code] = { code, name, shares: 0, avgCost: 0, totalCost: 0, marginAmount: 0 }
@@ -206,6 +258,9 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
                 marginShares[code] = (marginShares[code] ?? 0) + shares
             }
         } else if (type === 'sell') {
+            // 超賣不是合法的多頭交易。直接略過，避免舊資料或繞過 UI 的匯入資料
+            // 以不存在的均價產生已實現損益、再被歸零而污染後續所有報表。
+            if (pos.shares <= 0 || shares > pos.shares) continue
             const sellRevenue = price * shares - (fee || 0) - (tax || 0)
             const costBasis = pos.avgCost * shares
             const pnl = sellRevenue - costBasis
@@ -289,7 +344,7 @@ export function aggregateMarginPositions(trades: TradeRecord[]): MarginPositionA
     // 依日期排序，確保賣出歸還比例以「賣出當下」的持股為基準
     const sorted = [...trades]
         .filter(t => t && t.isMargin && t.date)
-        .sort((a, b) => a.date.localeCompare(b.date))
+        .sort(compareTradeRecords)
     for (const t of sorted) {
         if (!map[t.code]) {
             map[t.code] = { code: t.code, name: t.name, shares: 0, marginAmount: 0, marginCost: 0 }

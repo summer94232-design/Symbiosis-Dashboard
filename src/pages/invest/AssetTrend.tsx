@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
-import { getDocs, setDoc, deleteDoc, orderBy, query, getDoc } from 'firebase/firestore'
+import { setDoc, deleteDoc, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc, userDocNested } from '../../lib/userDB'
+import { userDoc, userDocNested } from '../../lib/userDB'
 import { calcPositions, calcAvailableCash, aggregateMarginDebt, type TradeRecord, type DividendRecord } from '../../lib/calc'
-import { fetchTrades, fetchDividends, fetchCashflow } from '../../lib/investData'
+import { fetchTrades, fetchDividends, fetchCashflow, fetchAssetSnapshots, invalidateAssetSnapshots } from '../../lib/investData'
 import { calcMarketValue } from '../../lib/snapshot'
 import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
@@ -102,9 +102,7 @@ export default function AssetTrend() {
 
     const loadSnapshots = async () => {
         setLoading(true)
-        const q = query(userCol(investDB, 'assetSnapshots'), orderBy('date', 'asc'))
-        const snap = await getDocs(q)
-        setSnapshots(snap.docs.map(d => d.data() as SnapshotRecord))
+        setSnapshots(await fetchAssetSnapshots<SnapshotRecord>('asc'))
         setLoading(false)
     }
 
@@ -283,6 +281,7 @@ export default function AssetTrend() {
                 marginDebt: Math.round(marginDebt),
                 dividendAdjusted: true,  // 新口徑快照（cash 已含股利），遷移時略過
             })
+            invalidateAssetSnapshots()
             await loadSnapshots()
         } catch (err) { console.error(err) }
         setSaving(false)
@@ -292,6 +291,7 @@ export default function AssetTrend() {
         if (!form.date) return
         setFormLoading(true)
         await setDoc(userDoc(investDB, 'assetSnapshots', form.date), { ...form })
+        invalidateAssetSnapshots()
         setShowForm(false); setEditingDate(null); setForm(emptySnap)
         setMissingPriceCodes([])
         setFormLoading(false); loadSnapshots()
@@ -300,7 +300,7 @@ export default function AssetTrend() {
     const handleEdit = (s: SnapshotRecord) => { setForm({ ...s }); setEditingDate(s.date); setShowForm(true) }
     const handleDelete = async (date: string) => {
         if (!confirm(`確定要刪除 ${date} 的紀錄？`)) return
-        await deleteDoc(userDoc(investDB, 'assetSnapshots', date)); loadSnapshots()
+        await deleteDoc(userDoc(investDB, 'assetSnapshots', date)); invalidateAssetSnapshots(); loadSnapshots()
     }
     const handleCancel = () => { setShowForm(false); setEditingDate(null); setForm(emptySnap); setMissingPriceCodes([]) }
 

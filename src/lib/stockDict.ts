@@ -17,6 +17,7 @@
 import { getDoc, setDoc, getDocs, query, orderBy, startAt, endAt, documentId, limit } from 'firebase/firestore'
 import { investDB } from './firebase'
 import { userDoc, userCol, getUID } from './userDB'
+import { cache } from './cache'
 
 // 全系統共用的 session 快取；key 內含 uid，避免切換帳號後沿用前一帳號的自訂名稱。
 const dictCache: Record<string, string> = {}
@@ -31,25 +32,17 @@ export async function lookupStockName(code: string): Promise<string> {
     const cached = dictCache[key]
     if (cached) return cached
 
-    // 先查常用字典
-    const shortDoc = await getDoc(userDoc(investDB, 'stockDict', code))
-    if (shortDoc.exists()) {
-        const name = shortDoc.data().name as string
-        dictCache[key] = name
-        return name
-    }
-
-    // 找不到再查完整字典
-    const fullDoc = await getDoc(userDoc(investDB, 'stockDictFull', code))
-    if (fullDoc.exists()) {
-        const name = fullDoc.data().name as string
-        dictCache[key] = name
-        // 找到後順便寫回 stockDict，下次直接命中
-        await setDoc(userDoc(investDB, 'stockDict', code), { name })
-        return name
-    }
-
-    return ''
+    const name = await cache.getOrLoad(`stock:lookup:${key}`, async () => {
+        const shortDoc = await getDoc(userDoc(investDB, 'stockDict', code))
+        if (shortDoc.exists()) return shortDoc.data().name as string
+        const fullDoc = await getDoc(userDoc(investDB, 'stockDictFull', code))
+        if (!fullDoc.exists()) return ''
+        const fullName = fullDoc.data().name as string
+        await setDoc(userDoc(investDB, 'stockDict', code), { name: fullName })
+        return fullName
+    }, 600)
+    if (name) dictCache[key] = name
+    return name
 }
 
 /**
@@ -68,6 +61,7 @@ export async function saveStockName(code: string, name: string): Promise<void> {
     if (!code || !name) return
     dictCache[dictCacheKey(code)] = name
     await setDoc(userDoc(investDB, 'stockDict', code), { name })
+    cache.invalidatePrefix('stock:')
 }
 
 export interface StockCandidate {
@@ -102,10 +96,10 @@ export async function searchStockByCodePrefix(prefix: string, max = 8): Promise<
         return snap.docs.map(d => ({ code: d.id, name: (d.data().name as string) || '' }))
     }
 
-    const [fullResults, shortResults] = await Promise.all([
+    const [fullResults, shortResults] = await cache.getOrLoad(`stock:code:${getUID()}:${upper}:${max}`, () => Promise.all([
         runPrefixQuery('stockDictFull'),
         runPrefixQuery('stockDict'),
-    ])
+    ]), 600)
 
     // 合併去重：stockDict（常用字典）優先，stockDictFull 補漏
     const merged = new Map<string, string>()
@@ -120,5 +114,46 @@ export async function searchStockByCodePrefix(prefix: string, max = 8): Promise<
     return Array.from(merged.entries())
         .map(([code, name]) => ({ code, name }))
         .sort((a, b) => a.code.localeCompare(b.code))
+        .slice(0, max)
+}
+
+/**
+ * 依股票名稱前綴反查代號。
+ *
+ * Firestore 對一般欄位可直接用 orderBy + startAt/endAt 做前綴查詢；同時查常用與
+ * 完整字典，讓使用者輸入「台積」即可選到「2330 台積電」。名稱完全命中或只剩
+ * 一個候選時，表單會直接帶回代號。
+ */
+export async function searchStockByNamePrefix(prefix: string, max = 8): Promise<StockCandidate[]> {
+    const normalized = prefix.trim()
+    if (!normalized) return []
+
+    const runPrefixQuery = async (collectionName: string): Promise<StockCandidate[]> => {
+        const q = query(
+            userCol(investDB, collectionName),
+            orderBy('name'),
+            startAt(normalized),
+            endAt(normalized + '\uf8ff'),
+            limit(max)
+        )
+        const snap = await getDocs(q)
+        return snap.docs.map(d => ({ code: d.id, name: (d.data().name as string) || '' }))
+    }
+
+    const [fullResults, shortResults] = await cache.getOrLoad(`stock:name:${getUID()}:${normalized}:${max}`, () => Promise.all([
+        runPrefixQuery('stockDictFull'),
+        runPrefixQuery('stockDict'),
+    ]), 600)
+
+    const merged = new Map<string, string>()
+    for (const r of fullResults) merged.set(r.code, r.name)
+    for (const r of shortResults) merged.set(r.code, r.name)
+    for (const [code, name] of merged) {
+        if (name) dictCache[dictCacheKey(code)] = name
+    }
+
+    return Array.from(merged.entries())
+        .map(([code, name]) => ({ code, name }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'zh-TW') || a.code.localeCompare(b.code))
         .slice(0, max)
 }

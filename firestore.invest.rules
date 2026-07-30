@@ -1,0 +1,29 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownsPath(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    // Every personal collection, including investorMeetingOverrides, is UID-isolated.
+    match /users/{userId}/{document=**} {
+      allow read, write: if ownsPath(userId);
+    }
+
+    // Shared investor meetings are readable by signed-in users but writable only
+    // through Admin SDK jobs/functions, which bypass Firestore client rules.
+    match /investorMeetings/{meetingId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -2,14 +2,15 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { addDoc, getDocs, updateDoc, deleteDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
-import { calcFee, calcTax, isETF, calcMarginDebt, calcTradeTotal, calcPositions, aggregateMarginPositions, type DividendRecord } from '../../lib/calc'
+import { calcFee, calcTax, isETF, calcMarginDebt, calcTradeTotal, calcSharesBeforeTrade, aggregateMarginPositions, type DividendRecord } from '../../lib/calc'
 import { fetchTrades, fetchDividends, invalidateTrades, invalidateCashflow } from '../../lib/investData'
 // ✅ 1-2：共用模組（CSV 解析 / 股票字典 / UI 樣式）
 import { parseCSVLine, toNum, toInt } from '../../lib/csv'
 import { toLocalDateString } from '../../lib/date'
-import { lookupStockName, cacheStockName, saveStockName, searchStockByCodePrefix, type StockCandidate } from '../../lib/stockDict'
+import { lookupStockName, cacheStockName, saveStockName, searchStockByCodePrefix, searchStockByNamePrefix, type StockCandidate } from '../../lib/stockDict'
 import { card, inp, lbl, btn } from '../../ui/styles'
-import { Pencil, Trash2, X, Check, Upload, Search, ChevronDown, ChevronUp } from 'lucide-react'
+import { Pencil, Trash2, X, Check, Upload, Search, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react'
+import ActionNotice, { type ActionNoticeState } from '../../components/ActionNotice'
 
 interface Trade {
     id?: string
@@ -27,6 +28,8 @@ interface Trade {
     marginRatio?: number   // 融資成數（例：0.6）
     marginAmount?: number  // 融資借款金額
     marginRepay?: number   // 融資賣出償還的借款（本金＋利息）
+    createdAt?: string     // 同日交易穩定排序時間
+    sequence?: number      // 批次匯入的原始順序
 }
 
 const emptyTrade: Trade = {
@@ -45,8 +48,11 @@ export default function Trades() {
     const [form, setForm] = useState<Trade>(emptyTrade)
     const [loading, setLoading] = useState(false)
     const [lookingUp, setLookingUp] = useState(false)
+    const [lookingUpName, setLookingUpName] = useState(false)
     const [codeSuggestions, setCodeSuggestions] = useState<StockCandidate[]>([])
-    const [showSuggestions, setShowSuggestions] = useState(false)
+    const [nameSuggestions, setNameSuggestions] = useState<StockCandidate[]>([])
+    const [showCodeSuggestions, setShowCodeSuggestions] = useState(false)
+    const [showNameSuggestions, setShowNameSuggestions] = useState(false)
     const [importing, setImporting] = useState(false)
     const [importResult, setImportResult] = useState<{ success: number; failed: number; skipped: number; duplicated: number } | null>(null)
     const [search, setSearch] = useState('')
@@ -54,15 +60,31 @@ export default function Trades() {
     const [expandedId, setExpandedId] = useState<string | null>(null)
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
     const [editModal, setEditModal] = useState(false)
+    const [desktopPage, setDesktopPage] = useState(1)
+    const [notice, setNotice] = useState<ActionNoticeState | null>(null)
     const fileRef = useRef<HTMLInputElement>(null)
-    // debounce ref for code lookup
-    const lookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    // debounce refs for code/name lookup
+    const codeLookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const nameLookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     useEffect(() => {
         const handle = () => setIsMobile(window.innerWidth < 768)
         window.addEventListener('resize', handle)
         return () => window.removeEventListener('resize', handle)
     }, [])
+
+    useEffect(() => () => {
+        if (codeLookupTimer.current) clearTimeout(codeLookupTimer.current)
+        if (nameLookupTimer.current) clearTimeout(nameLookupTimer.current)
+        if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
+    }, [])
+
+    const showNotice = (next: ActionNoticeState) => {
+        if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
+        setNotice(next)
+        noticeTimerRef.current = setTimeout(() => setNotice(null), 4200)
+    }
 
     const load = async () => {
         // ✅ 1-1：改走共用快取層（lib/investData）
@@ -96,14 +118,14 @@ export default function Trades() {
             return u
         })
 
-        if (lookupTimer.current) clearTimeout(lookupTimer.current)
+        if (codeLookupTimer.current) clearTimeout(codeLookupTimer.current)
         if (upper.length < 3) {
             setCodeSuggestions([])
-            setShowSuggestions(false)
+            setShowCodeSuggestions(false)
             return
         }
 
-        lookupTimer.current = setTimeout(async () => {
+        codeLookupTimer.current = setTimeout(async () => {
             setLookingUp(true)
             const [name, candidates] = await Promise.all([
                 lookupStockName(upper),
@@ -114,9 +136,38 @@ export default function Trades() {
             }
             // 顯示前綴相關代號候選（例如輸入 00631 → 列出 00631、00631L）
             setCodeSuggestions(candidates)
-            setShowSuggestions(candidates.length > 0)
+            setShowCodeSuggestions(candidates.length > 0)
             setLookingUp(false)
         }, 500)
+    }
+
+    // 輸入股票名稱後反查代號；完全命中或只有一個候選時直接自動帶入。
+    const handleNameChange = (name: string) => {
+        setForm(f => ({ ...f, name }))
+        if (nameLookupTimer.current) clearTimeout(nameLookupTimer.current)
+        const normalized = name.trim()
+        if (!normalized) {
+            setNameSuggestions([])
+            setShowNameSuggestions(false)
+            return
+        }
+
+        nameLookupTimer.current = setTimeout(async () => {
+            setLookingUpName(true)
+            try {
+                const candidates = await searchStockByNamePrefix(normalized)
+                const exact = candidates.find(c => c.name === normalized)
+                const autoMatch = exact ?? (candidates.length === 1 ? candidates[0] : null)
+                if (autoMatch) {
+                    handleSelectSuggestion(autoMatch)
+                } else {
+                    setNameSuggestions(candidates)
+                    setShowNameSuggestions(candidates.length > 0)
+                }
+            } finally {
+                setLookingUpName(false)
+            }
+        }, 400)
     }
 
     // 點選下拉候選：直接帶入該代號的 code + name，並重算手續費/交易稅/總額
@@ -129,8 +180,10 @@ export default function Trades() {
             return u
         })
         cacheStockName(c.code, c.name)
-        setShowSuggestions(false)
+        setShowCodeSuggestions(false)
+        setShowNameSuggestions(false)
         setCodeSuggestions([])
+        setNameSuggestions([])
     }
 
     const calcTotal = (f: Trade) => calcTradeTotal(f)
@@ -163,58 +216,80 @@ export default function Trades() {
 
     // ── 防呆（2-5）：賣出股數 > 目前持股 ──
     // calc.ts 對負持倉雖有歸零防呆，但超賣會讓該筆已實現損益用到錯誤均價，
-    // 後續持倉/損益數字都會失真，故在表單即時警告、儲存前再次確認。
-    // 持股數以 calcPositions（含配股攞薄）計算；編輯既有紀錄時先將該筆
-    // 從計算基準中移除，避免同一筆賣出被重複扣除造成誤報。
+    // 後續持倉/損益數字都會失真，故在表單即時警告並禁止儲存。
+    // 持股數依交易日期與穩定順序計算（含更早日期的配股）；編輯既有紀錄時
+    // 會排除該筆本身，避免同一筆賣出被重複扣除造成誤報。
     const oversellWarning = useMemo(() => {
         if (form.type !== 'sell' || !form.code || !form.shares) return null
-        const baseTrades = editingId ? trades.filter(t => t.id !== editingId) : trades
-        const { holdings } = calcPositions(baseTrades, dividends)
-        const held = holdings[form.code]?.shares ?? 0
+        const target: Trade = {
+            ...form,
+            id: editingId ?? '__new_trade__',
+            // 新增交易視為該日期最後輸入；既有交易沿用保存的 createdAt。
+            createdAt: form.createdAt || (editingId ? undefined : '9999-12-31T23:59:59.999Z'),
+            sequence: form.sequence ?? (editingId ? undefined : Number.MAX_SAFE_INTEGER),
+        }
+        const held = calcSharesBeforeTrade(target, trades, dividends)
         return form.shares > held ? { held } : null
-    }, [trades, dividends, form.type, form.code, form.shares, editingId])
+    }, [trades, dividends, form, editingId])
 
     const handleSave = async () => {
         if (!form.code || !form.price || !form.shares) return
-        // ── 防呆（2-5）：儲存前確認 ──
-        if (oversellWarning) {
-            const ok = confirm(`賣出股數（${form.shares.toLocaleString()}）超過 ${form.code} 目前持股（${oversellWarning.held.toLocaleString()} 股），已實現損益將用到錯誤均價。確定仍要儲存？`)
-            if (!ok) return
-        }
+        // 超賣不是一般多頭交易的合法狀態；若要支援放空，必須使用獨立模型。
+        if (oversellWarning) return
         if (form.type === 'sell' && form.isMargin && !(form.marginRepay && form.marginRepay > 0)) {
             const ok = confirm('融資賣出未填「融資償還金額」，可用現金將被高估（賣出淨入帳少扣了還款）。確定仍要儲存？')
             if (!ok) return
         }
         setLoading(true)
-        if (form.name && form.code) {
-            await saveStockName(form.code, form.name)
+        const wasEditing = Boolean(editingId)
+        try {
+            if (form.name && form.code) {
+                await saveStockName(form.code, form.name)
+            }
+            const now = new Date().toISOString()
+            // 舊資料沒有 createdAt 時，編輯後仍保留以文件 ID 排序，避免一次普通編輯改變歷史順序。
+            const payload = editingId
+                ? { ...form }
+                : { ...form, createdAt: now, sequence: Date.now() }
+            if (editingId) {
+                await updateDoc(userDoc(investDB, 'trades', editingId), payload)
+            } else {
+                await addDoc(userCol(investDB, 'trades'), payload)
+            }
+            invalidateTrades()   // ✅ 1-1：寫入後清快取，其他頁面才會拿到最新資料
+            setEditingId(null); setForm(emptyTrade); setShowForm(false); setEditModal(false)
+            setCodeSuggestions([]); setNameSuggestions([]); setShowCodeSuggestions(false); setShowNameSuggestions(false)
+            await load()
+            showNotice({ type: 'success', message: wasEditing ? '交易紀錄已更新。' : '交易紀錄已新增。' })
+        } catch (err) {
+            console.error(err)
+            showNotice({ type: 'error', message: '交易紀錄儲存失敗，表單內容已保留。' })
+        } finally {
+            setLoading(false)
         }
-        if (editingId) {
-            await updateDoc(userDoc(investDB, 'trades', editingId), { ...form })
-        } else {
-            await addDoc(userCol(investDB, 'trades'), { ...form })
-        }
-        invalidateTrades()   // ✅ 1-1：寫入後清快取，其他頁面才會拿到最新資料
-        setEditingId(null); setForm(emptyTrade); setLoading(false); setShowForm(false); setEditModal(false)
-        setCodeSuggestions([]); setShowSuggestions(false)
-        load()
     }
 
     const handleEdit = (t: Trade) => {
         if (t.code && t.name) cacheStockName(t.code, t.name)
         // 已在 load() 正規化，直接使用
         setForm(t); setEditingId(t.id!); setEditModal(true)
-        setCodeSuggestions([]); setShowSuggestions(false)
+        setCodeSuggestions([]); setNameSuggestions([]); setShowCodeSuggestions(false); setShowNameSuggestions(false)
     }
     const handleCancel = () => {
         setForm(emptyTrade); setEditingId(null); setShowForm(false); setEditModal(false)
-        setCodeSuggestions([]); setShowSuggestions(false)
+        setCodeSuggestions([]); setNameSuggestions([]); setShowCodeSuggestions(false); setShowNameSuggestions(false)
     }
     const handleDelete = async (id: string) => {
         if (!confirm('確定要刪除？')) return
-        await deleteDoc(userDoc(investDB, 'trades', id))
-        invalidateTrades()   // ✅ 1-1：寫入後清快取
-        load()
+        try {
+            await deleteDoc(userDoc(investDB, 'trades', id))
+            invalidateTrades()   // ✅ 1-1：寫入後清快取
+            await load()
+            showNotice({ type: 'success', message: '交易紀錄已刪除。' })
+        } catch (err) {
+            console.error(err)
+            showNotice({ type: 'error', message: '交易紀錄刪除失敗，請稍後再試。' })
+        }
     }
 
     const handleImportCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -252,6 +327,7 @@ export default function Trades() {
             const c = d.data()
             return `${c.date}|${c.type}|${Number(c.amount)}|${c.note || ''}`
         }))
+        const validationTrades: Trade[] = existTradesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Trade))
 
         for (let i = 1; i < lines.length; i++) {
             const cols = parseCSVLine(lines[i])
@@ -294,7 +370,6 @@ export default function Trades() {
 
             const tradeKey = `${date}|${rawCode}|${tradeType}|${Number(price)}|${Number(shares)}`
             if (tradeKeys.has(tradeKey)) { duplicated++; continue }
-            tradeKeys.add(tradeKey)
 
             const isSell = tradeType === 'sell'
             const fee = calcFee(price, shares)
@@ -313,12 +388,26 @@ export default function Trades() {
                 isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV
             })
 
+            const createdAt = new Date(Date.now() + i).toISOString()
+            const candidate: Trade = {
+                id: `__csv_${i}`, date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total,
+                isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV,
+                note: row['備註/筆記'] || row['備註'] || '', createdAt, sequence: i,
+            }
+            if (isSell && shares > calcSharesBeforeTrade(candidate, validationTrades, dividends)) {
+                failed++
+                continue
+            }
+
             try {
-                await addDoc(userCol(investDB, 'trades'), {
+                const docRef = await addDoc(userCol(investDB, 'trades'), {
                     date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total,
                     isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV,
-                    note: row['備註/筆記'] || row['備註'] || ''
+                    note: row['備註/筆記'] || row['備註'] || '',
+                    createdAt, sequence: i,
                 })
+                validationTrades.push({ ...candidate, id: docRef.id })
+                tradeKeys.add(tradeKey)
                 // ★ CSV 匯入時同步寫入 stockDict（只寫有名稱的）
                 if (name && rawCode) {
                     await saveStockName(rawCode, name)
@@ -335,23 +424,35 @@ export default function Trades() {
         load()
     }
 
-    const filtered = trades.filter(t =>
-        !search || t.code.toLowerCase().includes(search.toLowerCase()) || t.name.includes(search)
+    const filtered = useMemo(() => {
+        const keyword = search.trim().toLowerCase()
+        return trades.filter(t =>
+            !keyword || t.code.toLowerCase().includes(keyword) || t.name.toLowerCase().includes(keyword)
+        )
+    }, [trades, search])
+
+    const totalDesktopPages = Math.max(1, Math.ceil(filtered.length / DESKTOP_PAGE_SIZE))
+    const safeDesktopPage = Math.min(desktopPage, totalDesktopPages)
+    const desktopPageRows = filtered.slice(
+        (safeDesktopPage - 1) * DESKTOP_PAGE_SIZE,
+        safeDesktopPage * DESKTOP_PAGE_SIZE
     )
+    const desktopRangeStart = filtered.length === 0 ? 0 : (safeDesktopPage - 1) * DESKTOP_PAGE_SIZE + 1
+    const desktopRangeEnd = Math.min(safeDesktopPage * DESKTOP_PAGE_SIZE, filtered.length)
 
     const feeHint = () => isOddLot(form.shares) ? '（零股 6折，最低 1 元）' : '（6折自動計算）'
     const feeHintColor = isOddLot(form.shares) ? 'var(--c-warning)' : 'var(--c-accent)'
 
     // 代號候選下拉清單（新增/編輯表單共用）
-    const renderCodeSuggestions = () => (
-        showSuggestions && codeSuggestions.length > 0 && (
+    const renderSuggestions = (candidates: StockCandidate[], visible: boolean) => (
+        visible && candidates.length > 0 && (
             <div style={{
                 position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10,
                 backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)',
                 borderRadius: '8px', marginTop: '4px', maxHeight: '200px', overflowY: 'auto',
                 boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
             }}>
-                {codeSuggestions.map(c => (
+                {candidates.map(c => (
                     <div
                         key={c.code}
                         onMouseDown={() => handleSelectSuggestion(c)}
@@ -373,11 +474,12 @@ export default function Trades() {
 
     return (
         <>
+            {notice && <ActionNotice {...notice} onClose={() => setNotice(null)} />}
             {/* 編輯 Modal */}
             {editModal && (
-                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+                <div className="mobile-modal" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
                     onClick={e => { if (e.target === e.currentTarget) handleCancel() }}>
-                    <div style={{ ...card, width: '100%', maxWidth: '720px', maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}>
+                    <div className="mobile-sticky-form" style={{ ...card, width: '100%', maxWidth: '720px', maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                             <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 ✏️ 編輯交易
@@ -402,14 +504,17 @@ export default function Trades() {
                                     placeholder="例：2330"
                                     value={form.code}
                                     onChange={e => handleCodeChange(e.target.value)}
-                                    onFocus={() => { if (codeSuggestions.length > 0) setShowSuggestions(true) }}
-                                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                                    onFocus={() => { if (codeSuggestions.length > 0) setShowCodeSuggestions(true) }}
+                                    onBlur={() => setTimeout(() => setShowCodeSuggestions(false), 150)}
                                 />
-                                {renderCodeSuggestions()}
+                                {renderSuggestions(codeSuggestions, showCodeSuggestions)}
                             </div>
-                            <div>
-                                <label style={lbl}>股票名稱 {lookingUp && <span style={{ color: 'var(--c-muted)', fontSize: '10px' }}>查詢中...</span>}</label>
-                                <input style={inp} placeholder="輸入代號後自動帶入" value={form.name} onChange={e => handleChange('name', e.target.value)} />
+                            <div style={{ position: 'relative' }}>
+                                <label style={lbl}>股票名稱 {(lookingUp || lookingUpName) && <span style={{ color: 'var(--c-muted)', fontSize: '10px' }}>查詢中...</span>}</label>
+                                <input style={inp} placeholder="可輸入名稱反查代號" value={form.name} onChange={e => handleNameChange(e.target.value)}
+                                    onFocus={() => { if (nameSuggestions.length > 0) setShowNameSuggestions(true) }}
+                                    onBlur={() => setTimeout(() => setShowNameSuggestions(false), 150)} />
+                                {renderSuggestions(nameSuggestions, showNameSuggestions)}
                             </div>
                             <div><label style={lbl}>價格</label><input type="number" style={inp} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} /></div>
                             <div><label style={lbl}>股數</label><input type="number" style={inp} placeholder="0" value={form.shares || ''} onChange={e => handleChange('shares', parseInt(e.target.value) || 0)} /></div>
@@ -470,7 +575,7 @@ export default function Trades() {
                             {oversellWarning && (
                                 <div className="span2" style={{ backgroundColor: 'color-mix(in srgb, var(--c-danger) 10%, transparent)', border: '1px solid var(--c-danger)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--c-danger)', lineHeight: 1.6 }}>
                                     ⚠️ 賣出股數（{form.shares.toLocaleString()}）超過 {form.code} 目前持股（{oversellWarning.held.toLocaleString()} 股）。
-                                    超賣會讓已實現損益用到錯誤均價，請確認股數或先補登先前的買入紀錄。
+                                    系統已禁止儲存超賣；請降低股數或先補登該日期以前的買入紀錄。
                                 </div>
                             )}
                             {sellMarginWarning && (
@@ -480,9 +585,9 @@ export default function Trades() {
                                 </div>
                             )}
                         </div>
-                        <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
+                        <div className="mobile-sticky-actions" style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
                             <button style={btn('var(--c-border)')} onClick={handleCancel}><X size={14} />取消</button>
-                            <button style={btn('var(--c-accent)')} onClick={handleSave} disabled={loading}>
+                            <button style={btn('var(--c-accent)')} onClick={handleSave} disabled={loading || !!oversellWarning}>
                                 <Check size={14} />{loading ? '儲存中...' : '確認更新'}
                             </button>
                         </div>
@@ -495,30 +600,57 @@ export default function Trades() {
         @media (max-width: 1100px) { .trades-grid { grid-template-columns: repeat(3, 1fr); } }
         @media (max-width: 700px) { .trades-grid { grid-template-columns: repeat(2, 1fr); } }
         @media (max-width: 480px) { .trades-grid { grid-template-columns: 1fr; } .trades-grid .span2 { grid-column: span 1; } }
+        .trade-sticky-controls { position: sticky; top: 0; z-index: 30; margin: -4px -4px 12px; padding: 4px; background: color-mix(in srgb, var(--c-bg) 94%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+        .trade-search-toolbar { display: block; }
+        .trade-search-box { position: relative; flex: 1; min-width: 0; }
+        .trade-table-wrap { max-height: min(64vh, 620px); overflow: auto; }
         .trade-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .trade-table th { padding: 8px 10px; text-align: left; color: var(--c-muted); font-weight: 500; border-bottom: 1px solid var(--c-border); white-space: nowrap; }
+        .trade-table th { position: sticky; top: 0; z-index: 5; padding: 8px 10px; text-align: left; color: var(--c-muted); background: var(--c-sidebar); font-weight: 500; border-bottom: 1px solid var(--c-border); white-space: nowrap; }
         .trade-table td { padding: 10px; border-bottom: 1px solid var(--c-border); color: var(--c-text); white-space: nowrap; }
         .trade-table tr:hover td { background-color: rgba(79,142,247,0.04); }
+        .trade-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; color: var(--c-muted); font-size: 12px; }
+        .trade-pagination-actions { display: flex; align-items: center; gap: 8px; }
+        .trade-pagination button { display: inline-flex; min-height: 36px; align-items: center; gap: 5px; padding: 6px 10px; border: 1px solid var(--c-border); border-radius: 8px; color: var(--c-text); background: var(--c-card); cursor: pointer; }
+        .trade-pagination button:disabled { opacity: .45; cursor: not-allowed; }
         .trade-card { background: var(--c-bg); border-radius: 10px; padding: 12px 14px; border: 1px solid var(--c-border); margin-bottom: 8px; }
         .trade-card:active { border-color: var(--c-accent); }
+        @media (max-width: 767px) {
+            .trade-sticky-controls { position: static; margin: 0 0 12px; padding: 0; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; }
+            .trade-search-toolbar { display: block; }
+        }
       `}</style>
 
             <div style={{ padding: 'clamp(12px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
 
-                {/* 標題列 */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
-                    <div>
-                        <h1 style={{ fontSize: 'clamp(16px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>買賣紀錄</h1>
-                        <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '2px 0 0' }}>共 {trades.length} 筆交易</p>
+                <div className="trade-sticky-controls">
+                    {/* 標題列 */}
+                    <div className="page-header" style={{ marginBottom: '12px' }}>
+                        <div className="page-heading">
+                            <h1 className="page-title">買賣紀錄</h1>
+                            <p className="page-subtitle">共 {trades.length} 筆交易</p>
+                        </div>
+                        <div className="page-actions">
+                            <label className="ui-button ui-button-secondary">
+                                <Upload size={13} />{isMobile ? 'CSV' : importing ? '匯入中...' : '匯入歷史紀錄 CSV'}
+                                <input ref={fileRef} type="file" accept=".csv" onChange={handleImportCSV} disabled={importing} style={{ display: 'none' }} />
+                            </label>
+                            <button className="ui-button ui-button-primary" onClick={() => { setForm(emptyTrade); setEditingId(null); setShowForm(v => !v) }}>
+                                {showForm ? <X size={13} /> : <Check size={13} />}{showForm ? '收起' : '新增交易'}
+                            </button>
+                        </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <label style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', cursor: 'pointer', fontSize: '12px', padding: '7px 10px' }}>
-                            <Upload size={13} />{isMobile ? 'CSV' : importing ? '匯入中...' : '匯入歷史紀錄 CSV'}
-                            <input ref={fileRef} type="file" accept=".csv" onChange={handleImportCSV} disabled={importing} style={{ display: 'none' }} />
-                        </label>
-                        <button style={{ ...btn('var(--c-accent)'), fontSize: '12px', padding: '7px 12px' }} onClick={() => { setForm(emptyTrade); setEditingId(null); setShowForm(v => !v) }}>
-                            {showForm ? <X size={13} /> : <Check size={13} />}{showForm ? '收起' : '新增交易'}
-                        </button>
+
+                    {/* 搜尋 */}
+                    <div className="trade-search-toolbar">
+                        <div className="trade-search-box">
+                            <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--c-muted)' }} />
+                            <input
+                                style={{ ...inp, paddingLeft: '36px', backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)' }}
+                                placeholder="搜尋代號或名稱..."
+                                value={search}
+                                onChange={e => { setSearch(e.target.value); setDesktopPage(1) }}
+                            />
+                        </div>
                     </div>
                 </div>
 
@@ -533,7 +665,7 @@ export default function Trades() {
 
                 {/* 表單 */}
                 {showForm && (
-                    <div style={{ ...card, marginBottom: '16px' }}>
+                    <div className="mobile-sticky-form" style={{ ...card, marginBottom: '16px' }}>
                         <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>
                             {editingId ? '✏️ 編輯交易' : '➕ 新增交易'}
                             {isOddLot(form.shares) && (
@@ -557,14 +689,17 @@ export default function Trades() {
                                     placeholder="例：2330"
                                     value={form.code}
                                     onChange={e => handleCodeChange(e.target.value)}
-                                    onFocus={() => { if (codeSuggestions.length > 0) setShowSuggestions(true) }}
-                                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                                    onFocus={() => { if (codeSuggestions.length > 0) setShowCodeSuggestions(true) }}
+                                    onBlur={() => setTimeout(() => setShowCodeSuggestions(false), 150)}
                                 />
-                                {renderCodeSuggestions()}
+                                {renderSuggestions(codeSuggestions, showCodeSuggestions)}
                             </div>
-                            <div>
-                                <label style={lbl}>股票名稱 {lookingUp && <span style={{ color: 'var(--c-muted)', fontSize: '10px' }}>查詢中...</span>}</label>
-                                <input style={inp} placeholder="輸入代號後自動帶入" value={form.name} onChange={e => handleChange('name', e.target.value)} />
+                            <div style={{ position: 'relative' }}>
+                                <label style={lbl}>股票名稱 {(lookingUp || lookingUpName) && <span style={{ color: 'var(--c-muted)', fontSize: '10px' }}>查詢中...</span>}</label>
+                                <input style={inp} placeholder="可輸入名稱反查代號" value={form.name} onChange={e => handleNameChange(e.target.value)}
+                                    onFocus={() => { if (nameSuggestions.length > 0) setShowNameSuggestions(true) }}
+                                    onBlur={() => setTimeout(() => setShowNameSuggestions(false), 150)} />
+                                {renderSuggestions(nameSuggestions, showNameSuggestions)}
                             </div>
                             <div><label style={lbl}>價格</label><input type="number" style={inp} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} /></div>
                             <div><label style={lbl}>股數</label><input type="number" style={inp} placeholder="0" value={form.shares || ''} onChange={e => handleChange('shares', parseInt(e.target.value) || 0)} /></div>
@@ -625,7 +760,7 @@ export default function Trades() {
                             {oversellWarning && (
                                 <div className="span2" style={{ backgroundColor: 'color-mix(in srgb, var(--c-danger) 10%, transparent)', border: '1px solid var(--c-danger)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--c-danger)', lineHeight: 1.6 }}>
                                     ⚠️ 賣出股數（{form.shares.toLocaleString()}）超過 {form.code} 目前持股（{oversellWarning.held.toLocaleString()} 股）。
-                                    超賣會讓已實現損益用到錯誤均價，請確認股數或先補登先前的買入紀錄。
+                                    系統已禁止儲存超賣；請降低股數或先補登該日期以前的買入紀錄。
                                 </div>
                             )}
                             {sellMarginWarning && (
@@ -635,21 +770,14 @@ export default function Trades() {
                                 </div>
                             )}
                         </div>
-                        <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
+                        <div className="mobile-sticky-actions" style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
                             {editingId && <button style={btn('var(--c-border)')} onClick={handleCancel}><X size={14} />取消</button>}
-                            <button style={btn('var(--c-accent)')} onClick={handleSave} disabled={loading}>
+                            <button style={btn('var(--c-accent)')} onClick={handleSave} disabled={loading || !!oversellWarning}>
                                 <Check size={14} />{loading ? '儲存中...' : editingId ? '確認更新' : '確認新增'}
                             </button>
                         </div>
                     </div>
                 )}
-
-                {/* 搜尋列 */}
-                <div style={{ marginBottom: '12px', position: 'relative' }}>
-                    <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--c-muted)' }} />
-                    <input style={{ ...inp, paddingLeft: '36px', backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)' }}
-                        placeholder="搜尋代號或名稱..." value={search} onChange={e => setSearch(e.target.value)} />
-                </div>
 
                 {/* 列表 */}
                 <div style={card}>
@@ -714,13 +842,26 @@ export default function Trades() {
                             ))}
                         </div>
                     ) : (
-                        <div style={{ overflowX: 'auto' }}>
+                        <>
+                        <div className="trade-table-wrap">
                             <table className="trade-table">
                                 <thead>
-                                    <tr>{['日期', '類型', '代號', '名稱', '價格', '股數', '手續費', '交易稅', '收付金額', '備註', ''].map(h => <th key={h}>{h}</th>)}</tr>
+                                    <tr>
+                                        <th>日期</th>
+                                        <th>類型</th>
+                                        <th>代號</th>
+                                        <th>名稱</th>
+                                        <th>價格</th>
+                                        <th>股數</th>
+                                        <th>手續費</th>
+                                        <th>交易稅</th>
+                                        <th>收付金額</th>
+                                        <th>備註</th>
+                                        <th aria-label="操作" />
+                                    </tr>
                                 </thead>
                                 <tbody>
-                                    {filtered.map(trade => (
+                                    {desktopPageRows.map(trade => (
                                         <tr key={trade.id} style={{ backgroundColor: editingId === trade.id ? 'rgba(79,142,247,0.06)' : 'transparent' }}>
                                             <td>{trade.date}</td>
                                             <td>
@@ -749,9 +890,24 @@ export default function Trades() {
                                 </tbody>
                             </table>
                         </div>
+                        <div className="trade-pagination">
+                            <span>顯示 {desktopRangeStart}–{desktopRangeEnd} 筆，共 {filtered.length} 筆</span>
+                            <div className="trade-pagination-actions">
+                                <button type="button" onClick={() => setDesktopPage(Math.max(1, safeDesktopPage - 1))} disabled={safeDesktopPage <= 1}>
+                                    <ChevronLeft size={14} />上一頁
+                                </button>
+                                <span>第 {safeDesktopPage}／{totalDesktopPages} 頁</span>
+                                <button type="button" onClick={() => setDesktopPage(Math.min(totalDesktopPages, safeDesktopPage + 1))} disabled={safeDesktopPage >= totalDesktopPages}>
+                                    下一頁<ChevronRight size={14} />
+                                </button>
+                            </div>
+                        </div>
+                        </>
                     )}
                 </div>
             </div>
         </>
     )
 }
+
+const DESKTOP_PAGE_SIZE = 50

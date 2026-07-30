@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react'
-import { addDoc, getDocs, updateDoc, deleteDoc, orderBy, query, where, writeBatch } from 'firebase/firestore'
+import { addDoc, getDocs, updateDoc, deleteDoc, query, where, writeBatch } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import type { DragEndEvent } from '@dnd-kit/core'
-import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
+import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { toLocalDateString } from '../../lib/date'
+import { reorderVisibleItems } from '../../lib/taskOrder'
+import { fetchTasks, fetchTaskProjects, invalidateTasks, invalidateTaskProjects } from '../../lib/plannerData'
 import { Plus, Trash2, X, Check, ChevronDown, ChevronRight, GripVertical, Pencil, Calendar, Tag, FolderOpen } from 'lucide-react'
 
 interface Task {
@@ -108,23 +110,22 @@ export default function TaskManager() {
     const [showTaskForm, setShowTaskForm] = useState(false)
     const [showProjectForm, setShowProjectForm] = useState(false)
     const [editingTask, setEditingTask] = useState<Task | null>(null)
-    const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
     const [taskForm, setTaskForm] = useState({ title: '', priority: 'medium' as Task['priority'], dueDate: '', tag: '', projectId: '', note: '' })
     const [projectForm, setProjectForm] = useState({ title: '', color: PROJECT_COLORS[0] })
 
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
     const loadTasks = async () => {
-        const snap = await getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc')))
-        setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as Task)))
+        setTasks(await fetchTasks<Task>())
     }
 
     const loadProjects = async () => {
-        const snap = await getDocs(query(userCol(investDB, 'taskProjects'), orderBy('order', 'asc')))
-        setProjects(snap.docs.map(d => ({ id: d.id, ...d.data() } as Project)))
+        setProjects(await fetchTaskProjects<Project>())
     }
 
-    useEffect(() => { loadTasks(); loadProjects() }, [])
+    // 初次掛載才讀取；兩個 loader 都在第一個 await 後才更新 state。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    useEffect(() => { void loadTasks(); void loadProjects() }, [])
 
     // 新增/編輯任務
     const handleSaveTask = async () => {
@@ -146,7 +147,7 @@ export default function TaskManager() {
             })
         }
         setTaskForm({ title: '', priority: 'medium', dueDate: '', tag: '', projectId: '', note: '' })
-        setShowTaskForm(false); setEditingTask(null); loadTasks()
+        invalidateTasks(); setShowTaskForm(false); setEditingTask(null); loadTasks()
     }
 
     const handleEditTask = (task: Task) => {
@@ -160,12 +161,12 @@ export default function TaskManager() {
     }
 
     const handleToggleTask = async (id: string, done: boolean) => {
-        await updateDoc(userDoc(investDB, 'tasks', id), { done }); loadTasks()
+        await updateDoc(userDoc(investDB, 'tasks', id), { done }); invalidateTasks(); loadTasks()
     }
 
     const handleDeleteTask = async (id: string) => {
         if (!confirm('確定要刪除此任務？')) return
-        await deleteDoc(userDoc(investDB, 'tasks', id)); loadTasks()
+        await deleteDoc(userDoc(investDB, 'tasks', id)); invalidateTasks(); loadTasks()
     }
 
     // 新增專案
@@ -177,7 +178,7 @@ export default function TaskManager() {
             order: maxOrder, createdAt: new Date().toISOString()
         })
         setProjectForm({ title: '', color: PROJECT_COLORS[0] })
-        setShowProjectForm(false); loadProjects()
+        invalidateTaskProjects(); setShowProjectForm(false); loadProjects()
     }
 
     const handleDeleteProject = async (id: string) => {
@@ -186,21 +187,28 @@ export default function TaskManager() {
         // 直接從 Firestore 查詢屬於此專案的所有任務，不依賴 React state 快照
         const snap = await getDocs(query(userCol(investDB, 'tasks'), where('projectId', '==', id)))
 
-        const batch = writeBatch(investDB)
-
-        // 1. 刪除專案文件
-        batch.delete(userDoc(investDB, 'taskProjects', id))
-
-        // 2. 一併刪除該專案下所有子任務
-        snap.docs.forEach(d => {
-            batch.delete(userDoc(investDB, 'tasks', d.id))
-        })
-
-        await batch.commit()
+        if (snap.size <= 449) {
+            // 小型專案維持單一原子 batch（子任務 + 專案最多 450 次操作）。
+            const batch = writeBatch(investDB)
+            snap.docs.forEach(d => batch.delete(userDoc(investDB, 'tasks', d.id)))
+            batch.delete(userDoc(investDB, 'taskProjects', id))
+            await batch.commit()
+        } else {
+            // 超過 Firestore 500 次上限時分批刪子任務，最後才刪專案；中途失敗可安全重試。
+            for (let start = 0; start < snap.docs.length; start += 450) {
+                const batch = writeBatch(investDB)
+                snap.docs.slice(start, start + 450).forEach(d => {
+                    batch.delete(userDoc(investDB, 'tasks', d.id))
+                })
+                await batch.commit()
+            }
+            await deleteDoc(userDoc(investDB, 'taskProjects', id))
+        }
 
         // 若目前正在檢視此專案，跳回全部任務
         if (selectedProject === id) setSelectedProject(null)
 
+        invalidateTasks(); invalidateTaskProjects()
         loadTasks()
         loadProjects()
     }
@@ -209,24 +217,27 @@ export default function TaskManager() {
     const handleDragEnd = async (event: DragEndEvent) => {
         const { active, over } = event
         if (!over || active.id === over.id) return
-        const oldIndex = filteredTasks.findIndex(t => t.id === active.id)
-        const newIndex = filteredTasks.findIndex(t => t.id === over.id)
-        const newOrder = arrayMove(filteredTasks, oldIndex, newIndex)
-        setTasks(prev => {
-            const others = prev.filter(t => !newOrder.find(n => n.id === t.id))
-            return [...others, ...newOrder.map((t, i) => ({ ...t, order: i }))]
-        })
-        const batch = writeBatch(investDB)
-        newOrder.forEach((t, i) => batch.update(userDoc(investDB, 'tasks', t.id), { order: i }))
-        await batch.commit()
-    }
+        // 把重排後的可見任務放回完整序列原本的「可見插槽」，隱藏的其他專案／標籤／
+        // 已完成任務位置不動；最後替完整序列重編唯一 order，避免篩選排序產生碰撞。
+        // 只有待辦區有 SortableContext；不可用 filteredTasks（showDone=true 時會混入已完成任務）。
+        const reorderedAll = reorderVisibleItems(tasks, todoTasks, String(active.id), String(over.id))
+        if (!reorderedAll) return
 
-    const toggleProject = (id: string) => {
-        setExpandedProjects(prev => {
-            const next = new Set(prev)
-            if (next.has(id)) next.delete(id); else next.add(id)
-            return next
-        })
+        try {
+            // Firestore batch 上限 500，保守每批 450；大型任務清單也能完成排序。
+            for (let start = 0; start < reorderedAll.length; start += 450) {
+                const batch = writeBatch(investDB)
+                reorderedAll.slice(start, start + 450).forEach(task => {
+                    batch.update(userDoc(investDB, 'tasks', task.id), { order: task.order })
+                })
+                await batch.commit()
+            }
+            setTasks(reorderedAll)
+            invalidateTasks()
+        } catch (err) {
+            console.error('任務排序儲存失敗：', err)
+            invalidateTasks(); await loadTasks()
+        }
     }
 
     // 篩選任務
@@ -265,7 +276,7 @@ export default function TaskManager() {
                             {overdueCount > 0 && <span style={{ color: 'var(--c-danger)', marginLeft: '8px' }}>⚠️ {overdueCount} 個已逾期</span>}
                         </p>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div className="page-actions" style={{ display: 'flex', gap: '8px' }}>
                         <button onClick={() => { setShowProjectForm(true) }} style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', fontSize: '13px' }}>
                             <FolderOpen size={14} />新增專案
                         </button>
@@ -275,10 +286,10 @@ export default function TaskManager() {
                     </div>
                 </div>
 
-                <div style={{ display: 'grid', gap: '16px', gridTemplateColumns: '220px 1fr' }}>
+                <div className="task-layout" style={{ display: 'grid', gap: '16px', gridTemplateColumns: '220px 1fr' }}>
 
                     {/* 左側：專案 + 標籤 */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div className="task-filters" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         <div style={card}>
                             <div style={{ fontSize: '12px', color: 'var(--c-muted)', fontWeight: 600, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>專案</div>
                             <div
@@ -378,8 +389,8 @@ export default function TaskManager() {
 
             {/* 任務表單 Modal */}
             {showTaskForm && (
-                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-                    <div style={{ ...card, width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto' }}>
+                <div className="mobile-modal" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                    <div className="mobile-sticky-form" style={{ ...card, width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                             <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>{editingTask ? '編輯任務' : '新增任務'}</span>
                             <button onClick={() => { setShowTaskForm(false); setEditingTask(null) }} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={18} /></button>
@@ -436,7 +447,7 @@ export default function TaskManager() {
                             </div>
                         </div>
 
-                        <div style={{ display: 'flex', gap: '8px', marginTop: '20px', justifyContent: 'flex-end' }}>
+                        <div className="mobile-sticky-actions" style={{ display: 'flex', gap: '8px', marginTop: '20px', justifyContent: 'flex-end' }}>
                             <button style={btn('var(--c-border)')} onClick={() => { setShowTaskForm(false); setEditingTask(null) }}><X size={14} />取消</button>
                             <button style={btn('var(--c-accent)')} onClick={handleSaveTask}>
                                 <Check size={14} />{editingTask ? '更新' : '新增'}
@@ -448,7 +459,7 @@ export default function TaskManager() {
 
             {/* 專案表單 Modal */}
             {showProjectForm && (
-                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                <div className="mobile-modal" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                     <div style={{ ...card, width: '100%', maxWidth: '400px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                             <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>新增專案</span>

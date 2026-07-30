@@ -19,12 +19,13 @@
  * 放置位置：src/lib/googleCalendar.ts
  */
 
-import { getDoc, setDoc, deleteDoc, updateDoc, addDoc, getDocs, query, where, collection } from 'firebase/firestore'
+import { getDoc, setDoc, deleteDoc, updateDoc, addDoc, getDocs, query, where } from 'firebase/firestore'
 import { investDB } from './firebase'
 import { userDoc, userCol } from './userDB'
 import { calcPositions, type TradeRecord } from './calc'
 import { fetchTrades, fetchDividends } from './investData'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, type CalendarEvent } from './calendarData'
+import { fetchInvestorMeetings } from './investorMeetings'
 
 export type SyncEventType = CalendarEvent['type']
 
@@ -126,7 +127,8 @@ export async function saveGoogleCalendarAuth(refreshToken: string): Promise<void
         connectedAt: new Date().toISOString(),
         syncTypes: DEFAULT_SYNC_TYPES,
     }
-    await setDoc(userDoc(investDB, AUTH_COLLECTION, AUTH_DOC_ID), data)
+    // 重新授權時保留既有 calendarId，避免下次同步誤建另一個同名行事曆。
+    await setDoc(userDoc(investDB, AUTH_COLLECTION, AUTH_DOC_ID), data, { merge: true })
 }
 
 export async function disconnectGoogleCalendar(): Promise<void> {
@@ -234,28 +236,24 @@ async function gatherUpcomingBTypeEvents(syncTypes: SyncEventType[]): Promise<Ca
         }
 
         const evtMap = new Map<string, CalendarEvent>()
-        for (const ym of yearMonths) {
-            const snap = await getDocs(query(collection(investDB, 'investorMeetings'), where('yearMonth', '==', ym)))
-            snap.docs.forEach(docSnap => {
-                const data = docSnap.data() as { stockCode: string; stockName?: string; dates?: string[] }
-                if (!myCodes.has(data.stockCode)) return
-                const dates = Array.isArray(data.dates) ? data.dates : []
-                dates.forEach(isoDate => {
-                    if (!inRange(isoDate, startISO, endISO)) return
-                    const id = `investor-${data.stockCode}-${isoDate}`
-                    if (!evtMap.has(id)) {
-                        evtMap.set(id, {
-                            id,
-                            date: isoDate,
-                            title: `${data.stockName || data.stockCode} 法說會`,
-                            type: 'investor',
-                            stockCode: data.stockCode,
-                            description: `${data.stockName || data.stockCode}（${data.stockCode}）法人說明會`,
-                        })
-                    }
-                })
+        const meetings = await fetchInvestorMeetings([...yearMonths])
+        meetings.forEach(data => {
+            if (!myCodes.has(data.stockCode)) return
+            data.dates.forEach(isoDate => {
+                if (!inRange(isoDate, startISO, endISO)) return
+                const id = `investor-${data.stockCode}-${isoDate}`
+                if (!evtMap.has(id)) {
+                    evtMap.set(id, {
+                        id,
+                        date: isoDate,
+                        title: `${data.stockName || data.stockCode} 法說會`,
+                        type: 'investor',
+                        stockCode: data.stockCode,
+                        description: `${data.stockName || data.stockCode}（${data.stockCode}）法人說明會`,
+                    })
+                }
             })
-        }
+        })
         results.push(...evtMap.values())
     }
 
@@ -298,8 +296,15 @@ async function reconcileATypeEvents(syncTypes: SyncEventType[], pullEvents: Pull
 
     const googleBySourceId = new Map<string, PullEvent>()
     const googleNative: PullEvent[] = []
+    const firestoreIdByGoogleEventId = new Map<string, string>()
+    firestoreDocs.forEach((doc, id) => {
+        if (doc.googleEventId) firestoreIdByGoogleEventId.set(doc.googleEventId, id)
+    })
     pullEvents.forEach(ev => {
-        if (ev.sourceId) googleBySourceId.set(ev.sourceId, ev)
+        // Google 的 cancelled event 有時不再帶 extendedProperties；此時用先前保存的
+        // googleEventId 反查 Firestore 文件，仍能正確辨識為 Google 端刪除。
+        const sourceId = ev.sourceId ?? firestoreIdByGoogleEventId.get(ev.googleEventId) ?? null
+        if (sourceId) googleBySourceId.set(sourceId, { ...ev, sourceId })
         else if (!ev.cancelled) googleNative.push(ev)
     })
 

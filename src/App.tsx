@@ -1,9 +1,10 @@
 import { useState, useEffect, lazy, Suspense, memo, useRef } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
 import { LayoutDashboard, ArrowLeftRight, TrendingUp, TrendingDown, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard, Folder, Wrench, Target, Map, Users, Loader } from 'lucide-react'
-import { getDocs, getDoc, orderBy, query } from 'firebase/firestore'
-import { kmsDB, investDB } from './lib/firebase'
-import { userCol, userDocNested } from './lib/userDB'
+import { getDoc } from 'firebase/firestore'
+import { investDB } from './lib/firebase'
+import { userDocNested } from './lib/userDB'
+import { fetchKmsNotes, fetchKmsTagOrder, KMS_UNTAGGED_KEY } from './lib/kmsData'
 import { signOutAll, switchAccount, investAuth } from './lib/auth'
 import { loadAccounts, removeAccount, type SavedAccount } from './lib/accountStore'
 import { PriceProvider } from './PriceContext'
@@ -169,6 +170,7 @@ interface SidebarProps {
     setKmsExpanded: (v: boolean | ((prev: boolean) => boolean)) => void
     selectedTag: string
     setSelectedTag: (tag: string) => void
+    untaggedCount: number
     expandedNodes: Set<string>
     toggleNode: (path: string) => void
     displayName: string
@@ -329,6 +331,7 @@ const Sidebar = memo(({
     setKmsExpanded,
     selectedTag,
     setSelectedTag,
+    untaggedCount,
     expandedNodes,
     toggleNode,
     displayName,
@@ -339,7 +342,7 @@ const Sidebar = memo(({
     const [toolsOpen, setToolsOpen] = useState(() => toolsPaths.some(p => window.location.pathname.startsWith(p)))
 
     return (
-        <aside style={{ width: '224px', minWidth: '224px', backgroundColor: 'var(--c-sidebar)', borderRight: '1px solid var(--c-border)', display: 'flex', flexDirection: 'column', height: '100vh', position: isMobile ? 'fixed' : 'relative', top: 0, left: 0, zIndex: 100 }}>
+        <aside className={`app-sidebar${isMobile ? ' mobile' : ''}`} style={{ width: '224px', minWidth: '224px', backgroundColor: 'var(--c-sidebar)', borderRight: '1px solid var(--c-border)', display: 'flex', flexDirection: 'column', position: isMobile ? 'fixed' : 'relative', top: 0, left: 0, zIndex: 100 }}>
             <div style={{ padding: '20px', borderBottom: '1px solid var(--c-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                     <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>Symbiosis 管理系統</div>
@@ -424,6 +427,19 @@ const Sidebar = memo(({
                                     ))}
                                 </div>
                             )}
+                            {kmsExpanded && untaggedCount > 0 && (
+                                <button
+                                    onClick={() => setSelectedTag(KMS_UNTAGGED_KEY)}
+                                    style={{
+                                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                        width: '100%', padding: '6px 8px', borderRadius: '8px', border: 'none',
+                                        backgroundColor: selectedTag === KMS_UNTAGGED_KEY ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent',
+                                        color: selectedTag === KMS_UNTAGGED_KEY ? 'var(--c-accent)' : 'var(--c-muted)',
+                                        fontSize: '12px', cursor: 'pointer'
+                                    }}>
+                                    <span>未分類</span><span>{untaggedCount}</span>
+                                </button>
+                            )}
                         </div>
                         <NavLink to="/kms/tags" style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', marginBottom: '2px', textDecoration: 'none', fontSize: '14px', backgroundColor: isActive ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: isActive ? 'var(--c-accent)' : 'var(--c-muted)', fontWeight: isActive ? 600 : 400 })}>
                             <Tag size={16} /><span>標籤管理</span>
@@ -455,7 +471,7 @@ const Sidebar = memo(({
 
                 {/* ── 版本代號 ── */}
                 <div style={{ textAlign: 'center' }}>
-                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>v26.7.8</span>
+                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>v26.7.31</span>
                 </div>
             </div>
         </aside>
@@ -465,6 +481,49 @@ const Sidebar = memo(({
 Sidebar.displayName = 'Sidebar'
 
 // ─────────────────────────────────────────────────────────────
+
+function MobileBottomNav({
+    currentSystem,
+    openMenu,
+}: {
+    currentSystem: 'invest' | 'kms' | 'calendar'
+    openMenu: () => void
+}) {
+    const items = currentSystem === 'invest'
+        ? [
+            { to: '/invest', icon: LayoutDashboard, label: '總覽', end: true },
+            { to: '/invest/trades', icon: ArrowLeftRight, label: '交易' },
+            { to: '/invest/holdings', icon: TrendingUp, label: '持倉' },
+            { to: '/invest/watchlist', icon: Target, label: '追蹤' },
+        ]
+        : currentSystem === 'calendar'
+            ? [
+                { to: '/calendar', icon: Calendar, label: '月曆', end: true },
+                { to: '/calendar/tasks', icon: CheckSquare, label: '任務' },
+                { to: '/calendar/settings', icon: List, label: '關注' },
+            ]
+            : [
+                { to: '/kms', icon: BookOpen, label: '筆記', end: true },
+                { to: '/kms/tags', icon: Tag, label: '標籤' },
+                { to: '/kms/graph', icon: Network, label: '圖譜' },
+            ]
+
+    return (
+        <nav className="mobile-bottom-nav" aria-label="手機快速導覽">
+            {items.map(({ to, icon: Icon, label, end }) => (
+                <NavLink key={to} to={to} end={end}
+                    className={({ isActive }) => `mobile-bottom-link${isActive ? ' active' : ''}`}>
+                    <Icon size={19} aria-hidden="true" />
+                    <span>{label}</span>
+                </NavLink>
+            ))}
+            <button type="button" className="mobile-bottom-link" onClick={openMenu} aria-label="開啟全部功能">
+                <Menu size={19} aria-hidden="true" />
+                <span>全部</span>
+            </button>
+        </nav>
+    )
+}
 
 export default function App() {
     const location = useLocation()
@@ -477,8 +536,21 @@ export default function App() {
     const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
     const [selectedTag, setSelectedTag] = useState('')
     const [kmsExpanded, setKmsExpanded] = useState(false)
+    const [untaggedCount, setUntaggedCount] = useState(0)
+    const [kmsDataVersion, setKmsDataVersion] = useState(0)
 
     const currentSystem = isKMS ? 'kms' : isCalendar ? 'calendar' : 'invest'
+    const mobileTitle = [
+        ...investNav,
+        ...investToolsNav,
+        ...investManageNav,
+        ...calendarNav,
+        { to: '/kms', label: '知識庫' },
+        { to: '/kms/tags', label: '標籤管理' },
+        { to: '/kms/export', label: '匯出筆記' },
+        { to: '/kms/graph', label: '知識圖譜' },
+        { to: '/kms/trash', label: '垃圾桶' },
+    ].find(item => item.to === location.pathname)?.label ?? '共生'
 
     // ── 使用者顯示名稱（讀取供 Sidebar 顯示，編輯入口在設定與備份頁）──
     const [displayName, setDisplayName] = useState('')
@@ -504,19 +576,20 @@ export default function App() {
     useEffect(() => {
         if (!isKMS) return
         const loadTags = async () => {
-            const [snap, orderSnap] = await Promise.all([
-                getDocs(query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc'))),
-                getDoc(userDocNested(kmsDB, 'settings', 'tagOrder')).catch(() => null),
+            const [notes, tagOrder] = await Promise.all([
+                fetchKmsNotes<{ hashtags?: string[] }>(),
+                fetchKmsTagOrder(),
             ])
             const tags = new Set<string>()
-            snap.docs.forEach(d => { d.data().hashtags?.forEach((t: string) => tags.add(t)) })
+            notes.forEach(note => { note.hashtags?.forEach(t => tags.add(t)) })
+            setUntaggedCount(notes.filter(note => (note.hashtags?.length ?? 0) === 0).length)
             const rawTree = buildTree(Array.from(tags).sort())
-            const parentOrder: string[] = orderSnap?.data()?.parentOrder || []
-            const childOrder: Record<string, string[]> = orderSnap?.data()?.childOrder || {}
+            const parentOrder = tagOrder.parentOrder
+            const childOrder = tagOrder.childOrder
             setTagTree(sortTreeByOrder(rawTree, parentOrder, childOrder))
         }
         loadTags()
-    }, [isKMS])
+    }, [isKMS, kmsDataVersion])
 
     const toggleNode = (path: string) => {
         setExpandedNodes(prev => {
@@ -536,6 +609,7 @@ export default function App() {
         setKmsExpanded,
         selectedTag,
         setSelectedTag,
+        untaggedCount,
         expandedNodes,
         toggleNode,
         displayName,
@@ -544,22 +618,22 @@ export default function App() {
     return (
         <PriceProvider>
             <MarketCapProvider>
-                <div style={{ display: 'flex', height: '100vh', backgroundColor: 'var(--c-bg)', overflow: 'hidden' }}>
+                <div className="app-shell" style={{ display: 'flex', backgroundColor: 'var(--c-bg)', overflow: 'hidden' }}>
                     {!isMobile && <Sidebar {...sidebarProps} />}
                     {isMobile && sidebarOpen && (
                         <>
-                            <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 99 }} />
+                            <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
                             <Sidebar {...sidebarProps} />
                         </>
                     )}
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                         {isMobile && (
-                            <header style={{ backgroundColor: 'var(--c-sidebar)', borderBottom: '1px solid var(--c-border)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-                                <button onClick={() => setSidebarOpen(true)} style={{ background: 'none', border: 'none', color: 'var(--c-text)', cursor: 'pointer', display: 'flex' }}><Menu size={22} /></button>
-                                <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)' }}>共生</span>
+                            <header className="mobile-header">
+                                <button className="mobile-menu-button" onClick={() => setSidebarOpen(true)} aria-label="開啟全部功能"><Menu size={22} /></button>
+                                <span className="mobile-header-title">{mobileTitle}</span>
                             </header>
                         )}
-                        <main style={{ flex: 1, overflowY: 'auto', color: 'var(--c-text)' }}>
+                        <main className="app-main" style={{ flex: 1, overflowY: 'auto', color: 'var(--c-text)' }}>
                             <Suspense fallback={<PageLoader />}>
                                 <Routes>
                                     <Route path="/" element={<Navigate to="/invest" replace />} />
@@ -578,7 +652,7 @@ export default function App() {
                                     <Route path="/invest/industry" element={<IndustryMap />} />
                                     <Route path="/invest/sold-tracker" element={<SoldTracker />} />
                                     <Route path="/invest/settings" element={<InvestSettings />} />
-                                    <Route path="/kms" element={<KMSHome selectedTag={selectedTag} setSelectedTag={setSelectedTag} />} />
+                                    <Route path="/kms" element={<KMSHome selectedTag={selectedTag} setSelectedTag={setSelectedTag} onNotesChanged={() => setKmsDataVersion(v => v + 1)} />} />
                                     <Route path="/kms/tags" element={<KMSTags />} />
                                     <Route path="/kms/export" element={<KMSExport />} />
                                     <Route path="/kms/graph" element={<KMSGraph />} />
@@ -589,6 +663,7 @@ export default function App() {
                                 </Routes>
                             </Suspense>
                         </main>
+                        {isMobile && <MobileBottomNav currentSystem={currentSystem} openMenu={() => setSidebarOpen(true)} />}
                     </div>
                 </div>
             </MarketCapProvider>

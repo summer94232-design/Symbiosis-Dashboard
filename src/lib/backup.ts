@@ -55,6 +55,7 @@ export const INVEST_COLLECTIONS = [
     'stockDict', 'stockDictFull', 'assetSnapshots',
     'sentiments', 'watchlist', 'industryMap', 'industryRelations',
     'calendarEvents', 'calendarWatchList',
+    'investorMeetingOverrides',
     'tasks', 'taskProjects',
     'settings',
 ] as const
@@ -74,6 +75,7 @@ const COLLECTION_LABELS: Record<string, string> = {
     industryRelations: '產業脈絡關係',
     calendarEvents: '行事曆事件',
     calendarWatchList: '行事曆關注',
+    investorMeetingOverrides: '個人法說會修正',
     tasks: '任務',
     taskProjects: '任務專案',
     settings: '系統設定',

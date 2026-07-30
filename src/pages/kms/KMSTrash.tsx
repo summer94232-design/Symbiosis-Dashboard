@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
-import { getDocs, setDoc, deleteDoc, query, orderBy } from 'firebase/firestore'
+import { deleteDoc, writeBatch } from 'firebase/firestore'
 import { kmsDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { userDoc } from '../../lib/userDB'
+import { fetchKmsTrash, invalidateKmsNotes, invalidateKmsTrash } from '../../lib/kmsData'
 import { Trash2, RotateCcw, FileText, Link, Image } from 'lucide-react'
 
 interface Note {
@@ -25,24 +26,24 @@ export default function KMSTrash() {
 
     const load = async () => {
         setLoading(true)
-        const q = query(userCol(kmsDB, 'trash'), orderBy('deletedAt', 'desc'))
-        const snap = await getDocs(q)
+        const rows = await fetchKmsTrash<Note>()
         const now = Date.now()
         const data: Note[] = []
         const toDelete: Promise<void>[] = []
 
-        snap.docs.forEach(d => {
-            const item = { id: d.id, ...d.data() } as Note
+        rows.forEach(item => {
             const deletedTime = new Date(item.deletedAt).getTime()
             // 超過 30 天自動永久刪除
             if (now - deletedTime > 30 * 24 * 60 * 60 * 1000) {
-                toDelete.push(deleteDoc(userDoc(kmsDB, 'trash', d.id)))
+                toDelete.push(deleteDoc(userDoc(kmsDB, 'trash', item.id)))
             } else {
                 data.push(item)
             }
         })
 
         await Promise.all(toDelete)
+        if (toDelete.length) invalidateKmsTrash()
+        data.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt))
         setTrashed(data)
         setLoading(false)
     }
@@ -55,11 +56,16 @@ export default function KMSTrash() {
     //    若用 updateDoc + addDoc fallback 會永遠產生新的隨機 ID，
     //    其他筆記 links 陣列指向舊 ID 的雙向連結會全部斷裂、知識圖譜連線消失。
     const handleRestore = async (note: Note) => {
-        const { id, ...data } = note
-        const { deletedAt, ...noteData } = data as any
-        void deletedAt
-        await setDoc(userDoc(kmsDB, 'notes', id), { ...noteData, updatedAt: new Date().toISOString() })
-        await deleteDoc(userDoc(kmsDB, 'trash', id))
+        const { id } = note
+        const noteData: Record<string, unknown> = { ...note }
+        delete noteData.id
+        delete noteData.deletedAt
+        const batch = writeBatch(kmsDB)
+        batch.set(userDoc(kmsDB, 'notes', id), { ...noteData, updatedAt: new Date().toISOString() })
+        batch.delete(userDoc(kmsDB, 'trash', id))
+        await batch.commit()
+        invalidateKmsNotes()
+        invalidateKmsTrash()
         load()
     }
 
@@ -67,6 +73,7 @@ export default function KMSTrash() {
     const handlePermanentDelete = async (id: string) => {
         if (!confirm('確定要永久刪除？此操作無法復原。')) return
         await deleteDoc(userDoc(kmsDB, 'trash', id))
+        invalidateKmsTrash()
         load()
     }
 
@@ -74,6 +81,7 @@ export default function KMSTrash() {
     const handleEmptyTrash = async () => {
         if (!confirm(`確定要清空垃圾桶？共 ${trashed.length} 則筆記將永久刪除。`)) return
         await Promise.all(trashed.map(n => deleteDoc(userDoc(kmsDB, 'trash', n.id))))
+        invalidateKmsTrash()
         setTrashed([])
     }
 

@@ -19,7 +19,7 @@ export function Root() {
     // 載入中（兩個 Auth 都還沒回應）
     if (user === undefined) {
         return (
-            <div style={{ minHeight: '100vh', backgroundColor: 'var(--c-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div className="app-loading" style={{ backgroundColor: 'var(--c-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <div style={{ textAlign: 'center', color: 'var(--c-muted)' }}>
                     <div style={{ fontSize: '24px', marginBottom: '12px' }}>⚡</div>
                     <p style={{ fontSize: '14px' }}>載入中...</p>

@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { getDocs, orderBy, query, getDoc, updateDoc } from 'firebase/firestore'
+import { getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc, userDocNested } from '../../lib/userDB'
+import { userDoc, userDocNested } from '../../lib/userDB'
 import { calcPositions, calcAvailableCash, calcReturnRate, simulateMarginBuy, aggregateMarginPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
 // ✅ 1-2：共用 UI 樣式與損益顏色
 import { card } from '../../ui/styles'
 import { pnlColor } from '../../ui/format'
-import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown } from 'lucide-react'
+import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown, ChevronDown, ChevronUp } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { usePrices } from '../../PriceContext'
@@ -14,6 +14,8 @@ import { fetchTrades, fetchDividends, fetchCashflow } from '../../lib/investData
 import { maybeAutoSnapshotToday } from '../../lib/snapshot'
 import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
+import ActionNotice, { type ActionNoticeState } from '../../components/ActionNotice'
+import { fetchCalendarEvents, fetchTasks, invalidateTasks } from '../../lib/plannerData'
 
 const COLORS = ['var(--c-accent)', 'var(--c-positive)', 'var(--c-warning)', 'var(--c-danger)', 'var(--c-purple)', '#34d399', '#fb923c', '#60a5fa', '#f472b6', '#facc15', '#38bdf8', '#4ade80']
 const CASH_COLOR = 'var(--c-muted)'
@@ -61,6 +63,25 @@ interface Task {
 
 const PRIORITY_COLORS = { high: 'var(--c-danger)', medium: 'var(--c-warning)', low: 'var(--c-positive)' }
 const PRIORITY_LABELS = { high: '高', medium: '中', low: '低' }
+
+type DashboardSectionKey = 'risk' | 'allocation' | 'holdings' | 'planner'
+
+const DASHBOARD_SECTIONS: Array<{ key: DashboardSectionKey; id: string; label: string }> = [
+    { key: 'risk', id: 'dashboard-risk', label: '資金與風險' },
+    { key: 'allocation', id: 'dashboard-allocation', label: '資產分布' },
+    { key: 'holdings', id: 'dashboard-holdings', label: '目前持倉' },
+    { key: 'planner', id: 'dashboard-planner', label: '行程任務' },
+]
+
+const loadCollapsedDashboardSections = (): Record<DashboardSectionKey, boolean> => {
+    const defaults = { risk: false, allocation: false, holdings: false, planner: false }
+    try {
+        const saved = JSON.parse(localStorage.getItem('dashboard_collapsed_sections') || '{}')
+        return { ...defaults, ...saved }
+    } catch {
+        return defaults
+    }
+}
 
 // ── 賣出追蹤通知預設值（實際值由 settings/soldAlert 讀取，與賣出追蹤頁共用）──
 const DEFAULT_SOLD_WATCH_DAYS = 14
@@ -155,6 +176,10 @@ export default function Dashboard() {
     const [reloadCooldown, setReloadCooldown] = useState(0) // 秒數倒數
     const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
     const [showReloadConfirm, setShowReloadConfirm] = useState(false)
+    const [expandedHoldingCode, setExpandedHoldingCode] = useState<string | null>(null)
+    const [notice, setNotice] = useState<ActionNoticeState | null>(null)
+    const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const [collapsedSections, setCollapsedSections] = useState(loadCollapsedDashboardSections)
 
     const [upcomingEvents, setUpcomingEvents] = useState<CalendarEvent[]>([])
     const [tasks, setTasks] = useState<Task[]>([])
@@ -180,10 +205,28 @@ export default function Dashboard() {
     const [simShares, setSimShares] = useState('')
     const [simRatio, setSimRatio] = useState('0.6')
 
+    const showNotice = (next: ActionNoticeState) => {
+        if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
+        setNotice(next)
+        noticeTimerRef.current = setTimeout(() => setNotice(null), 4200)
+    }
+
+    const toggleDashboardSection = (key: DashboardSectionKey) => {
+        setCollapsedSections(prev => {
+            const next = { ...prev, [key]: !prev[key] }
+            localStorage.setItem('dashboard_collapsed_sections', JSON.stringify(next))
+            return next
+        })
+    }
+
+    const scrollToDashboardSection = (id: string) => {
+        document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+
     // ✅ 優化：單一 Promise.all 並行抓取所有資料，消除串行等待
     // ✅ 3-1：載入瘦身——核心資料（持倉/現金/融資/賣出追蹤）獨立載入、先到先渲染；
     //    行事曆/任務側卡由 loadSideCards 平行延後載入，感知載入時間約減半。
-    const loadCore = async () => {
+    const loadCore = async (showFeedback = false) => {
         setLoading(true)
         try {
             const [
@@ -271,7 +314,11 @@ export default function Dashboard() {
                 marginAmount: m.marginAmount, marginCost: m.marginCost,
             }))
             setMarginPositions(activeMargin)
-        } catch (err) { console.error(err) }
+            if (showFeedback) showNotice({ type: 'success', message: '資料已重新載入。' })
+        } catch (err) {
+            console.error(err)
+            showNotice({ type: 'error', message: '資料載入失敗，請確認網路後再試一次。' })
+        }
         finally { setLoading(false) }
         // ✅ 5-1：核心資料就緒後嘗試自動快照（fire-and-forget，規則見 lib/snapshot.ts：
         //    同日只寫一次、不覆蓋手動快照、現價須為今日、缺價跳過）
@@ -284,18 +331,17 @@ export default function Dashboard() {
         try {
             const todayStr_ = toLocalDateString()
             const future14Str = toLocalDateString(new Date(Date.now() + 14 * 86400000))
-            const [eventsSnap, tasksSnap] = await Promise.all([
-                getDocs(userCol(investDB, 'calendarEvents')),
-                getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc'))),
+            const [eventRows, taskRows] = await Promise.all([
+                fetchCalendarEvents<CalendarEvent>(),
+                fetchTasks<Task>(),
             ])
             // 行事曆事件
-            const calEvents: CalendarEvent[] = eventsSnap.docs
-                .map(d => ({ id: d.id, ...d.data() } as CalendarEvent))
+            const calEvents: CalendarEvent[] = eventRows
                 .filter(e => e.date >= todayStr_ && e.date <= future14Str)
                 .sort((a, b) => a.date.localeCompare(b.date))
             setUpcomingEvents(calEvents)
             // 待辦任務
-            const allTasks = tasksSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task))
+            const allTasks = taskRows
             setTasks(allTasks.filter(t => !t.done))
         } catch (err) { console.error(err) }
         finally { setSideLoading(false) }
@@ -304,6 +350,7 @@ export default function Dashboard() {
     const toggleTask = async (id: string, done: boolean) => {
         try {
             await updateDoc(userDoc(investDB, 'tasks', id), { done: !done })
+            invalidateTasks()
             setTasks(prev => prev.filter(t => t.id !== id))
         } catch (err) { console.error(err) }
     }
@@ -314,8 +361,19 @@ export default function Dashboard() {
         const holdingCodes = holdings.map(h => h.code)
         const sellCodes = sellTradesCache.map(t => t.code)
         const symbols = [...new Set([...holdingCodes, ...sellCodes])]
-        if (symbols.length === 0) return
+        if (symbols.length === 0) {
+            showNotice({ type: 'info', message: '目前沒有需要更新現價的股票。' })
+            return
+        }
         const quotes = await ctxUpdatePrices(symbols)
+        const updatedCount = symbols.filter(code => typeof quotes[code] === 'number' && (quotes[code] as number) > 0).length
+        if (updatedCount === 0) {
+            showNotice({ type: 'error', message: '這次未取得有效現價，請稍後再試。' })
+        } else if (updatedCount < symbols.length) {
+            showNotice({ type: 'info', message: `已更新 ${updatedCount} 檔，另有 ${symbols.length - updatedCount} 檔暫時無報價。` })
+        } else {
+            showNotice({ type: 'success', message: `已更新 ${updatedCount} 檔股票現價。` })
+        }
 
         // 用 context 回傳的即時 quotes 同步更新本頁 holdings（不等 state 重渲染）
         let totalMarketValue = 0
@@ -368,6 +426,7 @@ export default function Dashboard() {
         void loadSideCards()
         return () => {
             if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current)
+            if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
@@ -380,7 +439,7 @@ export default function Dashboard() {
 
     const confirmReload = () => {
         setShowReloadConfirm(false)
-        void loadCore()
+        void loadCore(true)
         void loadSideCards()
         setReloadCooldown(30)
         cooldownTimerRef.current = setInterval(() => {
@@ -545,6 +604,7 @@ export default function Dashboard() {
 
     return (
         <>
+            {notice && <ActionNotice {...notice} onClose={() => setNotice(null)} />}
             <style>{`
         .dash-stats { display: grid; gap: 16px; grid-template-columns: repeat(3, 1fr); margin-bottom: 16px; }
         @media (max-width: 900px) { .dash-stats { grid-template-columns: repeat(2, 1fr); } }
@@ -557,6 +617,21 @@ export default function Dashboard() {
         .dash-side-cards > * { flex: 1 1 360px; min-width: 0; }
         .dash-extra { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; margin-top: 16px; }
         @media (max-width: 700px) { .dash-extra { grid-template-columns: 1fr; } }
+        .dashboard-section-nav { position: sticky; top: 0; z-index: 25; display: flex; gap: 8px; margin-bottom: 16px; padding: 8px; border: 1px solid var(--c-border); border-radius: 11px; background: color-mix(in srgb, var(--c-bg) 94%, transparent); box-shadow: 0 8px 22px rgba(0,0,0,.16); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+        .dashboard-section-nav button { min-height: 34px; padding: 6px 12px; border: 1px solid transparent; border-radius: 8px; color: var(--c-muted); background: transparent; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .dashboard-section-nav button:hover { color: var(--c-text); border-color: var(--c-border); background: var(--c-card); }
+        .dashboard-section { scroll-margin-top: 66px; margin-bottom: 16px; }
+        .dashboard-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; padding-inline: 2px; }
+        .dashboard-section-heading h2 { margin: 0; color: var(--c-text); font-size: 14px; font-weight: 700; }
+        .dashboard-section-heading button { display: inline-flex; min-height: 34px; align-items: center; gap: 5px; padding: 5px 9px; border: 1px solid var(--c-border); border-radius: 8px; color: var(--c-muted); background: var(--c-card); font-size: 12px; cursor: pointer; }
+        .dashboard-section > .dash-side-cards,
+        .dashboard-section > .dash-pies,
+        .dashboard-section > .dash-extra { margin-bottom: 0; margin-top: 0; }
+        @media (max-width: 767px) {
+            .dashboard-section-nav { display: none; }
+            .dashboard-section { scroll-margin-top: 0; }
+            .dashboard-section-heading button { min-height: 44px; }
+        }
         .h-table { width: 100%; border-collapse: collapse; font-size: 13px; }
         .h-table th { padding: 8px 10px; text-align: left; color: var(--c-muted); font-weight: 500; border-bottom: 1px solid var(--c-border); white-space: nowrap; }
         .h-table td { padding: 10px; border-bottom: 1px solid var(--c-border); color: var(--c-text); white-space: nowrap; }
@@ -569,22 +644,22 @@ export default function Dashboard() {
       `}</style>
 
             <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '8px' }}>
-                    <div>
-                        <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>儀表板</h1>
-                        <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
+                <div className="page-header">
+                    <div className="page-heading">
+                        <h1 className="page-title">儀表板</h1>
+                        <p className="page-subtitle">
                             {lastUpdated ? `現價更新：${lastUpdated}` : '尚未更新現價，點「更新現價」取得最新報價'}
                         </p>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div className="page-actions">
                         <div style={{ position: 'relative' }}>
                             <button
+                                className="ui-button ui-button-secondary"
                                 onClick={handleReload}
                                 disabled={loading || reloadCooldown > 0}
                                 title={reloadCooldown > 0 ? `請稍候 ${reloadCooldown} 秒後再試` : '重新載入資料'}
-                                style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 14px', color: reloadCooldown > 0 ? 'var(--c-muted)' : 'var(--c-text)', fontSize: '13px', cursor: reloadCooldown > 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', opacity: reloadCooldown > 0 ? 0.6 : 1 }}
                             >
-                                <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+                                <RefreshCw size={15} className={loading ? 'is-spinning' : undefined} />
                                 {reloadCooldown > 0 ? `${reloadCooldown}s` : '重新載入'}
                             </button>
                             {showReloadConfirm && (
@@ -605,15 +680,23 @@ export default function Dashboard() {
                             )}
                         </div>
                         <button
+                            className="ui-button ui-button-primary"
                             onClick={() => void updatePrices()}
                             disabled={priceLoading || loading}
-                            style={{ backgroundColor: 'var(--c-accent)', border: 'none', borderRadius: '8px', padding: '8px 14px', color: '#fff', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
                         >
-                            <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
+                            <RefreshCw size={15} className={priceLoading ? 'is-spinning' : undefined} />
                             {priceLoading ? '更新中...' : '更新現價'}
                         </button>
                     </div>
                 </div>
+
+                <nav className="dashboard-section-nav" aria-label="儀表板區塊導覽">
+                    {DASHBOARD_SECTIONS.map(section => (
+                        <button key={section.key} type="button" onClick={() => scrollToDashboardSection(section.id)}>
+                            {section.label}
+                        </button>
+                    ))}
+                </nav>
 
                 {/* ── 賣出追蹤通知卡片（有觸發才顯示）── */}
                 {soldAlerts.length > 0 && (
@@ -669,10 +752,10 @@ export default function Dashboard() {
                                 { label: '股票總市值', value: `$${totalMarketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: BarChart2 },
                                 { label: '可用現金', value: `$${totalCash.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-warning)', icon: DollarSign },
                             ].map(({ label, value, color, icon: Icon }) => (
-                                <div key={label} style={card}>
+                                <div key={label} className="dashboard-kpi-card" style={card}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                         <div>
-                                            <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}</div>
+                                            <div style={{ fontSize: '13px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}</div>
                                             <div style={{ fontSize: 'clamp(16px, 2vw, 22px)', fontWeight: 700, color }}>{value}</div>
                                         </div>
                                         <Icon size={18} color={color} style={{ opacity: 0.5 }} />
@@ -697,8 +780,8 @@ export default function Dashboard() {
                                     color: pnlColor(realizedPnL)
                                 },
                             ].map(({ label, value, color }) => (
-                                <div key={label} style={card}>
-                                    <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px', display: 'flex', alignItems: 'center' }}>
+                                <div key={label} className="dashboard-kpi-card" style={card}>
+                                    <div style={{ fontSize: '13px', color: 'var(--c-muted)', marginBottom: '8px', display: 'flex', alignItems: 'center' }}>
                                         {label}
                                         {label === unrealizedLabel && <InfoHint text="（現價 − 平均成本）× 股數。平均成本為移動平均、含手續費並經配股攤薄。下方表格的個股報酬率對融資部位改以自備款為分母。" />}
                                         {label === '已實現損益' && <InfoHint text="賣出價 − 賣出當時的移動平均成本（含配股攤薄），與歷史損益頁口徑一致；年度回顧的 XIRR 為另一種口徑，數字不同屬正常。" />}
@@ -709,6 +792,15 @@ export default function Dashboard() {
                         </div>
 
                         {/* ── 倉位 / 融資維持率 並排卡片（手機自動換行）── */}
+                        <section id="dashboard-risk" className="dashboard-section">
+                            <div className="dashboard-section-heading">
+                                <h2>資金與風險</h2>
+                                <button type="button" onClick={() => toggleDashboardSection('risk')}>
+                                    {collapsedSections.risk ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                                    {collapsedSections.risk ? '展開' : '收合'}
+                                </button>
+                            </div>
+                            {!collapsedSections.risk && (
                         <div className="dash-side-cards">
 
                             {/* 倉位卡片 */}
@@ -979,6 +1071,8 @@ export default function Dashboard() {
                                 </div>
                             )}
                         </div>
+                            )}
+                        </section>
                         {/* ── /倉位 + 融資 並排卡片 ── */}
 
                         {hasPrice && holdingsWithoutPrice.length > 0 && (
@@ -988,6 +1082,15 @@ export default function Dashboard() {
                         )}
 
                         {/* ── 兩個圓餅圖並排 ── */}
+                        <section id="dashboard-allocation" className="dashboard-section">
+                            <div className="dashboard-section-heading">
+                                <h2>資產分布</h2>
+                                <button type="button" onClick={() => toggleDashboardSection('allocation')}>
+                                    {collapsedSections.allocation ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                                    {collapsedSections.allocation ? '展開' : '收合'}
+                                </button>
+                            </div>
+                            {!collapsedSections.allocation && (
                         <div className="dash-pies">
                             {/* 個股分布 */}
                             <div style={card}>
@@ -1082,27 +1185,88 @@ export default function Dashboard() {
                                 )}
                             </div>
                         </div>
+                            )}
+                        </section>
 
                         {/* 目前持倉表格 */}
-                        <div style={{ ...card, marginBottom: '0' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '8px', flexWrap: 'wrap' }}>
-                                <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>目前持倉</div>
-                                <select
-                                    value={sortMode}
-                                    onChange={e => setSortMode(e.target.value as typeof sortMode)}
-                                    style={{ backgroundColor: 'var(--c-bg)', color: 'var(--c-text)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}
-                                >
-                                    <option value="marketValue">依市值</option>
-                                    <option value="group">依族群</option>
-                                    <option value="returnRate">依報酬率</option>
-                                    <option value="unrealizedPnL">依未實現損益</option>
-                                    <option value="code">依代號</option>
-                                </select>
+                        <section id="dashboard-holdings" className="dashboard-section">
+                            <div className="dashboard-section-heading">
+                                <h2>目前持倉</h2>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    {!collapsedSections.holdings && (
+                                        <select
+                                            value={sortMode}
+                                            onChange={e => setSortMode(e.target.value as typeof sortMode)}
+                                            aria-label="持倉排序"
+                                            style={{ backgroundColor: 'var(--c-bg)', color: 'var(--c-text)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '6px 8px', fontSize: '12px', cursor: 'pointer' }}
+                                        >
+                                            <option value="marketValue">依市值</option>
+                                            <option value="group">依族群</option>
+                                            <option value="returnRate">依報酬率</option>
+                                            <option value="unrealizedPnL">依未實現損益</option>
+                                            <option value="code">依代號</option>
+                                        </select>
+                                    )}
+                                    <button type="button" onClick={() => toggleDashboardSection('holdings')}>
+                                        {collapsedSections.holdings ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                                        {collapsedSections.holdings ? '展開' : '收合'}
+                                    </button>
+                                </div>
                             </div>
+                            {!collapsedSections.holdings && (
+                        <div style={{ ...card, marginBottom: '0' }}>
                             {holdings.length === 0 ? (
                                 <div style={{ textAlign: 'center', padding: '40px', color: 'var(--c-muted)', fontSize: '13px' }}>尚無持倉資料</div>
                             ) : (
-                                <div style={{ overflowX: 'auto' }}>
+                                <>
+                                <div className="mobile-holdings-list dashboard-mobile-holdings">
+                                    {sortedHoldings.map(h => {
+                                        const expanded = expandedHoldingCode === h.code
+                                        const detailId = `dashboard-holding-${h.code}`
+                                        return (
+                                            <div key={h.code} className="mobile-holding-card">
+                                                <button
+                                                    type="button"
+                                                    className="mobile-holding-summary"
+                                                    aria-expanded={expanded}
+                                                    aria-controls={detailId}
+                                                    onClick={() => setExpandedHoldingCode(expanded ? null : h.code)}
+                                                >
+                                                    <span className="mobile-holding-identity">
+                                                        <strong>{h.code}</strong>
+                                                        <span>{h.name}</span>
+                                                        {h.marginAmount > 0 && <em>融資</em>}
+                                                    </span>
+                                                    <span className="mobile-holding-result">
+                                                        <strong>${h.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</strong>
+                                                        <span style={{ color: h.currentPrice === null ? 'var(--c-muted)' : pnlColor(h.returnRate) }}>
+                                                            {h.currentPrice === null ? '請更新現價' : `${h.returnRate >= 0 ? '+' : ''}${h.returnRate.toFixed(2)}%`}
+                                                        </span>
+                                                    </span>
+                                                    {expanded ? <ChevronUp size={17} aria-hidden="true" /> : <ChevronDown size={17} aria-hidden="true" />}
+                                                </button>
+                                                {expanded && (
+                                                    <div id={detailId} className="mobile-holding-details dashboard-holding-details">
+                                                        {[
+                                                            ['股數', h.shares.toLocaleString()],
+                                                            ['平均成本', h.avgCost.toFixed(2)],
+                                                            ['現價', h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)],
+                                                            ['未實現損益', h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`],
+                                                            ['持倉佔比', `${h.ratio.toFixed(1)}%`],
+                                                            ['族群', stockGroups[h.code] || '未分類'],
+                                                        ].map(([label, value]) => (
+                                                            <div key={label}>
+                                                                <span>{label}</span>
+                                                                <strong>{value}</strong>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                                <div className="desktop-dashboard-holdings-table" style={{ overflowX: 'auto' }}>
                                     <table className="h-table">
                                         <thead>
                                             <tr>{['代號', '名稱', '股數', '均價', '現價', '未實現損益', '報酬率', '佔比', '族群'].map(h => <th key={h}>{h}</th>)}</tr>
@@ -1155,10 +1319,22 @@ export default function Dashboard() {
                                         </tbody>
                                     </table>
                                 </div>
+                                </>
                             )}
                         </div>
+                            )}
+                        </section>
 
                         {/* ── 兩欄：近14天行程 / 待辦任務 ── */}
+                        <section id="dashboard-planner" className="dashboard-section">
+                            <div className="dashboard-section-heading">
+                                <h2>行程與任務</h2>
+                                <button type="button" onClick={() => toggleDashboardSection('planner')}>
+                                    {collapsedSections.planner ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                                    {collapsedSections.planner ? '展開' : '收合'}
+                                </button>
+                            </div>
+                            {!collapsedSections.planner && (
                         <div className="dash-extra">
 
                             {/* 近 14 天行程 */}
@@ -1244,6 +1420,8 @@ export default function Dashboard() {
                             </div>
 
                         </div>
+                            )}
+                        </section>
                     </>
                 )}
             </div>

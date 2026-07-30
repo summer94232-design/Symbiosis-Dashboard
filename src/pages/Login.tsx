@@ -14,8 +14,10 @@ export default function Login() {
         setLoading(true); setError('')
         try {
             await signInAndSave(email, password)
-        } catch (err: any) {
-            const code = err.code
+        } catch (err: unknown) {
+            const code = typeof err === 'object' && err !== null && 'code' in err
+                ? String(err.code)
+                : ''
             if (code === 'auth/user-not-found' || code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
                 setError('帳號或密碼錯誤')
             } else if (code === 'auth/too-many-requests') {
@@ -30,7 +32,7 @@ export default function Login() {
     }
 
     return (
-        <div style={{ minHeight: '100vh', backgroundColor: '#0f1117', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+        <div className="login-screen" style={{ backgroundColor: '#0f1117', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
             <div style={{ width: '100%', maxWidth: '400px' }}>
 
                 {/* Logo */}
@@ -58,6 +60,8 @@ export default function Login() {
                         <label style={{ fontSize: '12px', color: '#8892a4', display: 'block', marginBottom: '6px' }}>電子郵件</label>
                         <input
                             type="email"
+                            autoComplete="email"
+                            inputMode="email"
                             placeholder="your@email.com"
                             value={email}
                             onChange={e => setEmail(e.target.value)}
@@ -74,6 +78,7 @@ export default function Login() {
                         <div style={{ position: 'relative' }}>
                             <input
                                 type={showPw ? 'text' : 'password'}
+                                autoComplete="current-password"
                                 placeholder="••••••••"
                                 value={password}
                                 onChange={e => setPassword(e.target.value)}
@@ -82,7 +87,7 @@ export default function Login() {
                                 onFocus={e => e.target.style.borderColor = '#4f8ef7'}
                                 onBlur={e => e.target.style.borderColor = '#2e3349'}
                             />
-                            <button onClick={() => setShowPw(v => !v)}
+                            <button type="button" aria-label={showPw ? '隱藏密碼' : '顯示密碼'} onClick={() => setShowPw(v => !v)}
                                 style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#8892a4', cursor: 'pointer', display: 'flex' }}>
                                 {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
                             </button>
@@ -90,7 +95,7 @@ export default function Login() {
                     </div>
 
                     {/* 登入按鈕 */}
-                    <button onClick={handleLogin} disabled={loading}
+                    <button type="button" onClick={handleLogin} disabled={loading}
                         style={{ width: '100%', backgroundColor: loading ? '#3a6fd4' : '#4f8ef7', border: 'none', borderRadius: '10px', padding: '12px', color: '#fff', fontSize: '15px', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'background-color 0.2s' }}>
                         <LogIn size={18} />
                         {loading ? '登入中...' : '登入'}

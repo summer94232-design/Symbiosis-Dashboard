@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getDocs, query, orderBy } from 'firebase/firestore'
-import { investDB } from '../../lib/firebase'
-import { userCol } from '../../lib/userDB'
+import { fetchCalendarEvents, fetchTasks } from '../../lib/plannerData'
 import { getDailyNews } from '../../lib/gemini'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS } from '../../lib/calendarData'
 import { toLocalDateString } from '../../lib/date'
@@ -53,18 +51,18 @@ export default function DailyBrief() {
     const loadData = async () => {
         setDataLoading(true)
         try {
-            const [personalSnap, taskSnap] = await Promise.all([
-                getDocs(userCol(investDB, 'calendarEvents')),
-                getDocs(query(userCol(investDB, 'tasks'), orderBy('order', 'asc'))),
+            const [personalRows, taskRows] = await Promise.all([
+                fetchCalendarEvents<EventItem>(),
+                fetchTasks<TaskItem>(),
             ])
 
             // 行事曆事件
-            const personal: EventItem[] = personalSnap.docs.map(d => ({
-                id: d.id,
-                date: d.data().date as string,
-                title: d.data().title as string,
+            const personal: EventItem[] = personalRows.map(row => ({
+                id: row.id,
+                date: row.date,
+                title: row.title,
                 type: 'personal',
-                description: d.data().description
+                description: row.description
             }))
 
             const futuresThisMonth = getFuturesSettlementDates(today.getFullYear(), today.getMonth() + 1)
@@ -86,13 +84,7 @@ export default function DailyBrief() {
             )
 
             // 任務
-            const tasks: TaskItem[] = taskSnap.docs.map(d => ({
-                id: d.id,
-                title: d.data().title as string,
-                done: d.data().done as boolean,
-                dueDate: d.data().dueDate as string | undefined,
-                priority: d.data().priority as string | undefined
-            }))
+            const tasks = taskRows
             setTodayTasks(tasks.filter(t => !t.done && t.dueDate === todayStr))
             setOverdueTasks(tasks.filter(t => !t.done && t.dueDate && t.dueDate < todayStr))
 
