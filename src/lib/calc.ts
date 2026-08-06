@@ -331,6 +331,43 @@ export function calcAvailableCash(
 //   - 借款一律用 calcMarginDebt 重算（捨去至千元，與券商撥款一致），不採信舊存的 marginAmount
 //   - 賣出時按「賣出股數 / 當時持股」比例歸還借款與成本
 
+export interface PositionAdjustmentResult {
+    action: 'buy' | 'sell' | 'hold'
+    currentPct: number
+    targetPct: number
+    amount: number
+    targetMarketValue: number
+}
+
+/**
+ * 計算把股票倉位調整到目標水位所需的交易金額。
+ *
+ * 倉位口徑與儀表板一致：股票市值 ÷ 自有資金。假設以現金買賣且暫不計
+ * 手續費、證交稅與成交滑價，因此交易前後的自有資金不變。
+ */
+export function calcPositionAdjustment(
+    currentMarketValue: number,
+    equityCapital: number,
+    targetPct: number,
+): PositionAdjustmentResult | null {
+    if (
+        !Number.isFinite(currentMarketValue)
+        || !Number.isFinite(equityCapital)
+        || !Number.isFinite(targetPct)
+        || currentMarketValue < 0
+        || equityCapital <= 0
+        || targetPct < 0
+    ) return null
+
+    const currentPct = (currentMarketValue / equityCapital) * 100
+    const targetMarketValue = equityCapital * targetPct / 100
+    const difference = targetMarketValue - currentMarketValue
+    const amount = Math.abs(difference)
+    const action = amount < 0.005 ? 'hold' : difference > 0 ? 'buy' : 'sell'
+
+    return { action, currentPct, targetPct, amount, targetMarketValue }
+}
+
 export interface MarginPositionAgg {
     code: string
     name: string

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { deleteDoc, writeBatch } from 'firebase/firestore'
+import { deleteDoc, getDoc, writeBatch } from 'firebase/firestore'
 import { kmsDB } from '../../lib/firebase'
 import { userDoc } from '../../lib/userDB'
 import { fetchKmsTrash, invalidateKmsNotes, invalidateKmsTrash } from '../../lib/kmsData'
+import { deleteNoteImageAssets, deleteStoragePath, type NoteImageAsset } from '../../lib/kmsImages'
 import { Trash2, RotateCcw, FileText, Link, Image } from 'lucide-react'
 
 interface Note {
@@ -11,6 +12,8 @@ interface Note {
     content: string
     type: 'note' | 'url' | 'image' | 'file'
     hashtags: string[]
+    assets?: NoteImageAsset[]
+    fileStoragePath?: string
     deletedAt: string
     createdAt: string
 }
@@ -23,29 +26,55 @@ const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border:
 export default function KMSTrash() {
     const [trashed, setTrashed] = useState<Note[]>([])
     const [loading, setLoading] = useState(true)
+    const [busy, setBusy] = useState(false)
+    const [errorMessage, setErrorMessage] = useState('')
+
+    const permanentlyDelete = async (note: Note) => {
+        const bodySnapshot = await getDoc(userDoc(kmsDB, 'noteBodies', note.id))
+        const bodyAssets = bodySnapshot.exists() && Array.isArray(bodySnapshot.data().assets)
+            ? bodySnapshot.data().assets as NoteImageAsset[]
+            : note.assets || []
+        if (bodyAssets.length) await deleteNoteImageAssets(bodyAssets)
+        if (note.fileStoragePath) await deleteStoragePath(note.fileStoragePath)
+        await Promise.all([
+            deleteDoc(userDoc(kmsDB, 'trash', note.id)),
+            deleteDoc(userDoc(kmsDB, 'noteBodies', note.id)),
+        ])
+    }
 
     const load = async () => {
         setLoading(true)
-        const rows = await fetchKmsTrash<Note>()
-        const now = Date.now()
-        const data: Note[] = []
-        const toDelete: Promise<void>[] = []
+        setErrorMessage('')
+        try {
+            const rows = await fetchKmsTrash<Note>()
+            const now = Date.now()
+            const data: Note[] = []
+            let cleanupFailed = false
 
-        rows.forEach(item => {
-            const deletedTime = new Date(item.deletedAt).getTime()
-            // 超過 30 天自動永久刪除
-            if (now - deletedTime > 30 * 24 * 60 * 60 * 1000) {
-                toDelete.push(deleteDoc(userDoc(kmsDB, 'trash', item.id)))
-            } else {
-                data.push(item)
+            for (const item of rows) {
+                const deletedTime = new Date(item.deletedAt).getTime()
+                if (now - deletedTime > 30 * 24 * 60 * 60 * 1000) {
+                    try {
+                        await permanentlyDelete(item)
+                    } catch (error) {
+                        console.error('自動清理垃圾桶失敗', error)
+                        cleanupFailed = true
+                        data.push(item)
+                    }
+                } else {
+                    data.push(item)
+                }
             }
-        })
-
-        await Promise.all(toDelete)
-        if (toDelete.length) invalidateKmsTrash()
-        data.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt))
-        setTrashed(data)
-        setLoading(false)
+            invalidateKmsTrash()
+            data.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt))
+            setTrashed(data)
+            if (cleanupFailed) setErrorMessage('部分逾期項目暫時無法永久刪除，稍後會再次嘗試。')
+        } catch (error) {
+            console.error(error)
+            setErrorMessage('垃圾桶載入失敗，請檢查網路後重試。')
+        } finally {
+            setLoading(false)
+        }
     }
 
     useEffect(() => { load() }, [])
@@ -56,6 +85,10 @@ export default function KMSTrash() {
     //    若用 updateDoc + addDoc fallback 會永遠產生新的隨機 ID，
     //    其他筆記 links 陣列指向舊 ID 的雙向連結會全部斷裂、知識圖譜連線消失。
     const handleRestore = async (note: Note) => {
+        if (busy) return
+        setBusy(true)
+        setErrorMessage('')
+        try {
         const { id } = note
         const noteData: Record<string, unknown> = { ...note }
         delete noteData.id
@@ -66,23 +99,45 @@ export default function KMSTrash() {
         await batch.commit()
         invalidateKmsNotes()
         invalidateKmsTrash()
-        load()
+        await load()
+        } catch (error) {
+            console.error(error)
+            setErrorMessage('復原失敗，筆記仍保留在垃圾桶。')
+        } finally {
+            setBusy(false)
+        }
     }
 
     // 永久刪除
-    const handlePermanentDelete = async (id: string) => {
+    const handlePermanentDelete = async (note: Note) => {
         if (!confirm('確定要永久刪除？此操作無法復原。')) return
-        await deleteDoc(userDoc(kmsDB, 'trash', id))
-        invalidateKmsTrash()
-        load()
+        if (busy) return
+        setBusy(true)
+        setErrorMessage('')
+        try {
+            await permanentlyDelete(note)
+            invalidateKmsTrash()
+            await load()
+        } catch (error) {
+            console.error(error)
+            setErrorMessage('永久刪除失敗，項目仍保留在垃圾桶。')
+        } finally {
+            setBusy(false)
+        }
     }
 
     // 清空垃圾桶
     const handleEmptyTrash = async () => {
         if (!confirm(`確定要清空垃圾桶？共 ${trashed.length} 則筆記將永久刪除。`)) return
-        await Promise.all(trashed.map(n => deleteDoc(userDoc(kmsDB, 'trash', n.id))))
+        if (busy) return
+        setBusy(true)
+        setErrorMessage('')
+        const results = await Promise.allSettled(trashed.map(permanentlyDelete))
+        const failed = trashed.filter((_, index) => results[index].status === 'rejected')
         invalidateKmsTrash()
-        setTrashed([])
+        setTrashed(failed)
+        if (failed.length) setErrorMessage(`${failed.length} 則筆記無法永久刪除，已保留在垃圾桶。`)
+        setBusy(false)
     }
 
     const getDaysLeft = (deletedAt: string) => {
@@ -106,11 +161,17 @@ export default function KMSTrash() {
                         </p>
                     </div>
                     {trashed.length > 0 && (
-                        <button onClick={handleEmptyTrash} style={{ backgroundColor: 'color-mix(in srgb, var(--c-danger) 12%, transparent)', border: '1px solid rgba(255,87,87,0.3)', borderRadius: '8px', padding: '8px 16px', color: 'var(--c-danger)', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <button onClick={handleEmptyTrash} disabled={busy} style={{ backgroundColor: 'color-mix(in srgb, var(--c-danger) 12%, transparent)', border: '1px solid rgba(255,87,87,0.3)', borderRadius: '8px', padding: '8px 16px', color: 'var(--c-danger)', fontSize: '14px', cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <Trash2 size={15} />清空垃圾桶
                         </button>
                     )}
                 </div>
+
+                {errorMessage && (
+                    <div role="alert" style={{ marginBottom: '16px', padding: '10px 14px', borderRadius: '8px', backgroundColor: 'rgba(255,87,87,0.1)', border: '1px solid rgba(255,87,87,0.3)', color: 'var(--c-danger)', fontSize: '13px' }}>
+                        {errorMessage}
+                    </div>
+                )}
 
                 {loading ? (
                     <div style={{ textAlign: 'center', padding: '64px', color: 'var(--c-muted)' }}>載入中...</div>
@@ -135,11 +196,11 @@ export default function KMSTrash() {
                                             <span style={{ fontSize: '11px', color, fontWeight: 600 }}>{TYPE_LABELS[note.type]}</span>
                                         </div>
                                         <div style={{ display: 'flex', gap: '6px' }}>
-                                            <button onClick={() => handleRestore(note)} title="復原"
+                                            <button onClick={() => void handleRestore(note)} disabled={busy} title="復原"
                                                 style={{ background: 'none', border: '1px solid var(--c-border)', borderRadius: '6px', color: 'var(--c-positive)', cursor: 'pointer', padding: '4px 8px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px' }}>
                                                 <RotateCcw size={13} />復原
                                             </button>
-                                            <button onClick={() => handlePermanentDelete(note.id)} title="永久刪除"
+                                            <button onClick={() => void handlePermanentDelete(note)} disabled={busy} title="永久刪除"
                                                 style={{ background: 'none', border: 'none', color: 'var(--c-danger)', cursor: 'pointer', padding: '4px' }}>
                                                 <Trash2 size={14} />
                                             </button>

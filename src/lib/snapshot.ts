@@ -28,6 +28,7 @@ import { userDoc, userDocNested } from './userDB'
 import { calcPositions, calcAvailableCash, aggregateMarginDebt, type TradeRecord, type DividendRecord } from './calc'
 import { fetchTrades, fetchDividends, fetchCashflow, invalidateAssetSnapshots } from './investData'
 import { toLocalDateString } from './date'
+import { canRunAutoSnapshot, type AutoSnapshotTrigger } from './snapshotPolicy'
 
 // ── 共用市值計算（原 AssetTrend 內部函式抽出）──────────────────────────────
 
@@ -145,6 +146,42 @@ export type AutoSnapshotStatus =
     | 'empty'            // 空帳戶
     | 'error'            // 過程出錯（已記 console，不影響頁面）
 
+export interface AutoSnapshotResult {
+    status: AutoSnapshotStatus
+    date: string
+    reason: string
+    missing?: string[]
+}
+
+export function formatAutoSnapshotFeedback(result: AutoSnapshotResult): {
+    type: 'success' | 'info' | 'error'
+    message: string
+} {
+    switch (result.status) {
+        case 'written':
+            return { type: 'success', message: `${result.date} 資產快照已更新。` }
+        case 'already-covered':
+            return { type: 'success', message: `${result.date} 資產快照已存在。` }
+        case 'throttled':
+            return { type: 'info', message: '今日快照剛更新過，本次不重複寫入。' }
+        case 'disabled':
+            return { type: 'info', message: '自動快照目前為關閉，現價已更新但未儲存快照。' }
+        case 'missing-prices':
+            return {
+                type: 'info',
+                message: `現價已更新，但 ${result.missing?.join('、') || '部分持股'} 缺少現價，快照未儲存。`,
+            }
+        case 'empty':
+            return { type: 'info', message: '帳戶目前沒有可記錄的資產，快照未儲存。' }
+        case 'outside-window':
+            return { type: 'info', message: '目前不在背景快照時段，快照未儲存。' }
+        case 'stale-prices':
+            return { type: 'error', message: '現價日期不是今天，快照未儲存。' }
+        case 'error':
+            return { type: 'error', message: `快照更新失敗：${result.reason}` }
+    }
+}
+
 /** 同一個分頁 session 中，今日快照已確認存在（寫入成功或 DB 已有）就不再查 DB（非覆寫模式用） */
 let coveredDate = ''
 /** 上次自動寫入完成的時間戳（覆寫模式的節流基準） */
@@ -154,15 +191,8 @@ let autoSnapInFlight = false
 /** 覆寫模式的最小寫入間隔：避免短時間內連續更新現價造成重複讀算寫 */
 const AUTO_WRITE_MIN_INTERVAL_MS = 60_000
 
-/** 自動快照運作時段：系統時間 08:00（含）～ 22:00（不含） */
-function isWithinAutoWindow(now: Date = new Date()): boolean {
-    const h = now.getHours()
-    return h >= 8 && h < 22
-}
-
 /**
- * 嘗試寫入今日自動快照。設計為 fire-and-forget：
- * 永不拋出例外、所有失敗只記 console，呼叫端不需要 await 或 try/catch。
+ * 嘗試寫入今日自動快照。永不拋出例外，並回傳可供介面顯示的結果。
  *
  * 兩種模式：
  * - 預設（overwrite 未傳或 false）：今日已有快照就不動作。
@@ -171,24 +201,28 @@ function isWithinAutoWindow(now: Date = new Date()): boolean {
  *   觸發點：PriceContext.updatePrices 每次成功更新現價後。
  *   內建 60 秒節流＋防重入，短時間內多頁連續更新現價只會寫一次。
  *
- * 兩種模式都只在 08:00–22:00（系統時間）運作；
- * 該時段內 toISOString 的 UTC 日期與台灣本地日期必然一致，不會跨日錯置。
+ * 背景補寫只在 08:00–22:00（裝置本地時間）運作；使用者明確更新現價
+ * 時不受時段限制，仍使用 toLocalDateString 寫入裝置本地日期。
  *
  * 診斷：每次執行都會在 console 留下一行 [autoSnapshot] 狀態與原因，
  * 排查「為什麼沒寫入」時打開 DevTools Console 按一次「更新現價」即可看到。
  */
-export async function maybeAutoSnapshotToday(options?: { overwrite?: boolean }): Promise<AutoSnapshotStatus> {
+export async function maybeAutoSnapshotToday(options?: {
+    overwrite?: boolean
+    trigger?: AutoSnapshotTrigger
+}): Promise<AutoSnapshotResult> {
     const overwrite = options?.overwrite === true
+    const trigger = options?.trigger ?? 'background'
     const today = toLocalDateString()
     const mode = overwrite ? '覆寫模式' : '補寫模式'
-    const skip = (status: AutoSnapshotStatus, reason: string): AutoSnapshotStatus => {
+    const skip = (status: AutoSnapshotStatus, reason: string, missing?: string[]): AutoSnapshotResult => {
         console.info(`[autoSnapshot] ${mode}略過（${status}）：${reason}`)
-        return status
+        return { status, date: today, reason, ...(missing?.length ? { missing } : {}) }
     }
     try {
         // 0. 運作時段檢查（零讀取）
-        if (!isWithinAutoWindow()) {
-            return skip('outside-window', `現在 ${new Date().getHours()} 點，僅 08:00–22:00 運作`)
+        if (!canRunAutoSnapshot(trigger)) {
+            return skip('outside-window', `現在 ${new Date().getHours()} 點，背景快照僅 08:00–22:00 運作`)
         }
 
         // 1. 防重入 + 節流（零讀取）
@@ -226,7 +260,11 @@ export async function maybeAutoSnapshotToday(options?: { overwrite?: boolean }):
             // 4. 計算（資料走 investData 共用快取，幾乎零額外讀取）
             const { snapshot, missing } = await buildTodaySnapshot()
             if (missing.length > 0) {
-                return skip('missing-prices', `以下持股缺現價：${missing.join('、')}（每次都會被擋，請確認這些代號 Fugle 抓得到價）`)
+                return skip(
+                    'missing-prices',
+                    `以下持股缺現價：${missing.join('、')}（每次都會被擋，請確認這些代號 Fugle 抓得到價）`,
+                    missing,
+                )
             }
             if (snapshot.marketValue === 0 && snapshot.cash === 0 && snapshot.marginDebt === 0) {
                 return skip('empty', '空帳戶（無市值、無現金、無借款）')
@@ -238,12 +276,16 @@ export async function maybeAutoSnapshotToday(options?: { overwrite?: boolean }):
             coveredDate = today
             lastAutoWriteTs = Date.now()
             console.info(`[autoSnapshot] ${mode}已${overwrite ? '更新' : '寫入'}今日快照（${today}）`, snapshot)
-            return 'written'
+            return { status: 'written', date: today, reason: overwrite ? '今日快照已更新' : '今日快照已寫入' }
         } finally {
             autoSnapInFlight = false
         }
     } catch (err) {
         console.error('[autoSnapshot] failed:', err)
-        return 'error'   // 不標記 coveredDate / lastAutoWriteTs，下次觸發會再試
+        return {
+            status: 'error',
+            date: today,
+            reason: err instanceof Error ? err.message : '未知錯誤',
+        }
     }
 }

@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'
 import { updateDoc, setDoc } from 'firebase/firestore'
 import { kmsDB } from '../../lib/firebase'
 import { userDoc, userDocNested } from '../../lib/userDB'
-import { fetchKmsNotes, fetchKmsTagOrder, invalidateKmsNotes, invalidateKmsTagOrder } from '../../lib/kmsData'
+import { fetchKmsNoteSummaries, fetchKmsTagOrder, fetchKmsTagStats, invalidateKmsNotes, invalidateKmsTagOrder } from '../../lib/kmsData'
 import { Pencil, Check, X, Tag, FolderOpen, ChevronRight, ChevronUp, ChevronDown, GripVertical } from 'lucide-react'
+import { buildKmsSearchTerms, buildKmsTagPaths } from '../../lib/kmsSearch'
 
 interface TagInfo {
     name: string
@@ -31,17 +32,17 @@ export default function KMSTags() {
 
     const load = async () => {
         setLoading(true)
-        const [notes, tagOrder] = await Promise.all([
-            fetchKmsNotes<{ id: string; hashtags?: string[] }>(),
+        const [stats, tagOrder] = await Promise.all([
+            fetchKmsTagStats(),
             fetchKmsTagOrder(),
         ])
 
-        const tagCount: Record<string, number> = {}
-        notes.forEach(note => {
-            note.hashtags?.forEach((t: string) => {
-                tagCount[t] = (tagCount[t] || 0) + 1
-            })
-        })
+        let tagCount: Record<string, number> = stats?.counts || {}
+        if (!stats) {
+            const summaries = await fetchKmsNoteSummaries<{ id: string; hashtags?: string[] }>()
+            tagCount = {}
+            summaries.forEach(note => note.hashtags?.forEach(tag => { tagCount[tag] = (tagCount[tag] || 0) + 1 }))
+        }
 
         const parents: Record<string, TagInfo> = {}
         const allTags = Object.keys(tagCount).sort()
@@ -172,13 +173,18 @@ export default function KMSTags() {
             t === oldTag ? newTag
                 : t.startsWith(oldTag + '/') ? newTag + t.slice(oldTag.length)
                     : t
-        const notes = await fetchKmsNotes<{ id: string; hashtags?: string[] }>()
+        const notes = await fetchKmsNoteSummaries<{ id: string; title?: string; hashtags?: string[] }>()
         let updated = 0
         const batch: Promise<void>[] = []
         notes.forEach(note => {
             if (note.hashtags?.some((t: string) => t === oldTag || t.startsWith(oldTag + '/'))) {
                 const newHashtags = note.hashtags.map((t: string) => renameTag(t))
-                batch.push(updateDoc(userDoc(kmsDB, 'notes', note.id), { hashtags: newHashtags }))
+                batch.push(updateDoc(userDoc(kmsDB, 'notes', note.id), {
+                    hashtags: newHashtags,
+                    searchTerms: buildKmsSearchTerms(note.title || '', newHashtags),
+                    tagPaths: buildKmsTagPaths(newHashtags),
+                    isUntagged: newHashtags.length === 0,
+                }))
                 updated++
             }
         })
@@ -208,12 +214,17 @@ export default function KMSTags() {
             t === fromTag ? target
                 : t.startsWith(fromTag + '/') ? target + t.slice(fromTag.length)
                     : t
-        const notes = await fetchKmsNotes<{ id: string; hashtags?: string[] }>()
+        const notes = await fetchKmsNoteSummaries<{ id: string; title?: string; hashtags?: string[] }>()
         const batch: Promise<void>[] = []
         notes.forEach(note => {
             if (note.hashtags?.some((t: string) => t === fromTag || t.startsWith(fromTag + '/'))) {
                 const newHashtags = [...new Set(note.hashtags.map((t: string) => mergeTag(t)))]
-                batch.push(updateDoc(userDoc(kmsDB, 'notes', note.id), { hashtags: newHashtags }))
+                batch.push(updateDoc(userDoc(kmsDB, 'notes', note.id), {
+                    hashtags: newHashtags,
+                    searchTerms: buildKmsSearchTerms(note.title || '', newHashtags),
+                    tagPaths: buildKmsTagPaths(newHashtags),
+                    isUntagged: newHashtags.length === 0,
+                }))
             }
         })
         await Promise.all(batch)

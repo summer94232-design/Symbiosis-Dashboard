@@ -16,11 +16,15 @@ import { setDoc } from 'firebase/firestore'
 import { investDB } from './lib/firebase'
 import { userDocNested } from './lib/userDB'
 import { getMultipleQuotes } from './lib/fugle'
-import { maybeAutoSnapshotToday } from './lib/snapshot'
+import { maybeAutoSnapshotToday, type AutoSnapshotResult } from './lib/snapshot'
 
 // ── Types ──────────────────────────────────────────────────────
 
 export type PriceMap = Record<string, number | null>
+
+export interface PriceUpdateOptions {
+    onSnapshot?: (result: AutoSnapshotResult) => void
+}
 
 interface PriceContextValue {
     /** 所有已知股票現價，null = 無資料 */
@@ -36,7 +40,7 @@ interface PriceContextValue {
      * - 更新全域 prices state
      * @returns 本次取得的 quotes（供呼叫端同步使用，不需等 state 更新）
      */
-    updatePrices: (codes: string[]) => Promise<PriceMap>
+    updatePrices: (codes: string[], options?: PriceUpdateOptions) => Promise<PriceMap>
     /**
      * 從 Firebase lastPrices 快取初始化（不打 Fugle API）。
      * 各頁面 load() 讀完 Firebase 後呼叫此方法。
@@ -89,7 +93,7 @@ export function PriceProvider({ children }: { children: ReactNode }) {
         if (savedAt) setLastUpdated(prev => (parseUpdatedAt(savedAt) > parseUpdatedAt(prev) ? savedAt : prev))
     }, [])
 
-    const updatePrices = useCallback(async (codes: string[]): Promise<PriceMap> => {
+    const updatePrices = useCallback(async (codes: string[], options?: PriceUpdateOptions): Promise<PriceMap> => {
         if (codes.length === 0) return {}
         setPriceLoading(true)
 
@@ -108,14 +112,19 @@ export function PriceProvider({ children }: { children: ReactNode }) {
             })
             await setDoc(userDocNested(investDB, 'settings', 'lastPrices'), priceData, { merge: true })
 
-            // ✅ 5-1（前端版）：每次現價更新成功後刷新今日快照。
-            // fire-and-forget；運作時段（08:00–22:00）、60 秒節流、防重入皆在 snapshot.ts 內處理。
-            // 所有走 PriceContext 的頁面（儀表板/持倉/賣出追蹤/觀點追蹤…）更新現價都會觸發。
-            void maybeAutoSnapshotToday({ overwrite: true })
-
             // 更新全域 state → 所有訂閱頁面重渲染
             setPrices(prev => ({ ...prev, ...result }))
             setLastUpdated(now)
+
+            // 使用者明確更新現價時全天都可刷新今日快照；等待結果，讓呼叫頁面能顯示原因。
+            const hasValidQuote = Object.values(result).some(value => typeof value === 'number' && value > 0)
+            if (hasValidQuote) {
+                const snapshotResult = await maybeAutoSnapshotToday({
+                    overwrite: true,
+                    trigger: 'price-update',
+                })
+                options?.onSnapshot?.(snapshotResult)
+            }
         } catch (err) {
             console.error('[PriceContext] updatePrices error:', err)
         }

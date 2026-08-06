@@ -1,12 +1,16 @@
 import { useState, useEffect } from 'react'
-import { fetchKmsNotes } from '../../lib/kmsData'
+import { fetchKmsBodiesInBatches, fetchKmsNoteSummaries, fetchKmsTagStats } from '../../lib/kmsData'
 import { toLocalDateString } from '../../lib/date'
 import { Download, FileText, Filter, Check } from 'lucide-react'
+import type { JSONContent } from '@tiptap/react'
+import type { NoteImageAsset } from '../../lib/kmsImages'
 
 interface Note {
     id: string
     title: string
     content: string
+    contentDoc?: JSONContent
+    assets?: NoteImageAsset[]
     type: string
     url?: string
     hashtags: string[]
@@ -17,6 +21,55 @@ interface Note {
 const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
 const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
+function richDocToMarkdown(doc: JSONContent, assets: NoteImageAsset[] = []): string {
+    const render = (node: JSONContent, depth = 0): string => {
+        if (node.type === 'text') {
+            let text = node.text || ''
+            for (const mark of node.marks || []) {
+                if (mark.type === 'bold') text = `**${text}**`
+                else if (mark.type === 'italic') text = `*${text}*`
+                else if (mark.type === 'strike') text = `~~${text}~~`
+                else if (mark.type === 'code') text = `\`${text}\``
+                else if (mark.type === 'link' && mark.attrs?.href) text = `[${text}](${mark.attrs.href})`
+            }
+            return text
+        }
+        if (node.type === 'hardBreak') return '\n'
+        if (node.type === 'image') {
+            const asset = assets.find(item => item.id === node.attrs?.assetId)
+            const url = asset?.downloadUrl || node.attrs?.src || ''
+            return url ? `![${node.attrs?.alt || '圖片'}](${url})` : ''
+        }
+
+        const children = (node.content || []).map(child => render(child, depth + 1))
+        if (node.type === 'doc') return children.filter(Boolean).join('\n\n')
+        if (node.type === 'paragraph') return children.join('')
+        if (node.type === 'heading') return `${'#'.repeat(Number(node.attrs?.level) || 2)} ${children.join('')}`
+        if (node.type === 'bulletList') return children.join('\n')
+        if (node.type === 'orderedList') return children.map((child, index) => `${index + 1}. ${child.replace(/^[-*] /, '')}`).join('\n')
+        if (node.type === 'listItem') return `- ${children.join('\n').replace(/\n/g, `\n${'  '.repeat(depth)}`)}`
+        if (node.type === 'blockquote') return children.join('\n').split('\n').map(line => `> ${line}`).join('\n')
+        if (node.type === 'codeBlock') return `\`\`\`\n${children.join('')}\n\`\`\``
+        if (node.type === 'horizontalRule') return '---'
+        return children.join('')
+    }
+    return render(doc).trim()
+}
+
+function richDocImageText(doc: JSONContent, assets: NoteImageAsset[] = []): string {
+    const lines: string[] = []
+    const visit = (node: JSONContent) => {
+        if (node.type === 'image') {
+            const asset = assets.find(item => item.id === node.attrs?.assetId)
+            const url = asset?.downloadUrl || node.attrs?.src
+            if (url) lines.push(`[圖片：${node.attrs?.alt || '未命名'}] ${url}`)
+        }
+        node.content?.forEach(visit)
+    }
+    visit(doc)
+    return lines.join('\n')
+}
+
 export default function KMSExport() {
     const [notes, setNotes] = useState<Note[]>([])
     const [allTags, setAllTags] = useState<string[]>([])
@@ -24,15 +77,18 @@ export default function KMSExport() {
     const [format, setFormat] = useState<'single-txt' | 'per-tag-txt' | 'markdown'>('single-txt')
     const [loading, setLoading] = useState(true)
     const [exporting, setExporting] = useState(false)
+    const [exportProgress, setExportProgress] = useState('')
     const [filterMode, setFilterMode] = useState<'all' | 'tag'>('all')
 
     const load = async () => {
         setLoading(true)
-        const data = await fetchKmsNotes<Note>()
+        const [data, stats] = await Promise.all([
+            fetchKmsNoteSummaries<Note>(),
+            fetchKmsTagStats(),
+        ])
         setNotes(data)
-        const tags = new Set<string>()
-        data.forEach(n => n.hashtags?.forEach(t => tags.add(t)))
-        setAllTags(Array.from(tags).sort())
+        const tags = stats ? Object.keys(stats.counts) : [...new Set(data.flatMap(note => note.hashtags || []))]
+        setAllTags(tags.sort())
         setLoading(false)
     }
 
@@ -54,22 +110,25 @@ export default function KMSExport() {
     // 格式化單一筆記
     const formatNote = (note: Note, fmt: string): string => {
         if (fmt === 'markdown') {
+            const body = note.contentDoc ? richDocToMarkdown(note.contentDoc, note.assets) : note.content || ''
             return [
                 `# ${note.title}`,
                 note.hashtags?.length > 0 ? `**標籤：** ${note.hashtags.map(t => `#${t}`).join(' ')}` : '',
                 note.url ? `**網址：** ${note.url}` : '',
                 '',
-                note.content || '',
+                body,
                 '',
                 `*建立於 ${new Date(note.createdAt).toLocaleDateString('zh-TW')}*`,
                 '---',
             ].filter(l => l !== null).join('\n')
         } else {
+            const imageLinks = note.contentDoc ? richDocImageText(note.contentDoc, note.assets) : ''
             return [
                 `【${note.title}】`,
                 note.hashtags?.length > 0 ? `標籤：${note.hashtags.join('、')}` : '',
                 note.url ? `網址：${note.url}` : '',
                 note.content || '',
+                imageLinks,
                 `建立於：${new Date(note.createdAt).toLocaleDateString('zh-TW')}`,
                 '────────────────────────',
             ].filter(Boolean).join('\n')
@@ -87,6 +146,14 @@ export default function KMSExport() {
 
     const handleExport = async () => {
         setExporting(true)
+        setExportProgress('準備讀取正文…')
+        try {
+        const bodyMap = await fetchKmsBodiesInBatches<Pick<Note, 'content' | 'contentDoc' | 'assets'>>(
+            filteredNotes.map(note => note.id),
+            20,
+            (completed, total) => setExportProgress(`讀取正文 ${completed} / ${total}`),
+        )
+        const exportNotes = filteredNotes.map(note => ({ ...note, ...(bodyMap[note.id] || {}) }))
         const ext = format === 'markdown' ? 'md' : 'txt'
         const date = toLocalDateString()
 
@@ -94,7 +161,7 @@ export default function KMSExport() {
             // 依標籤分類匯出，每個標籤一個檔案
             const tagMap: Record<string, Note[]> = {}
 
-            filteredNotes.forEach(note => {
+            exportNotes.forEach(note => {
                 const tags = note.hashtags?.length > 0 ? note.hashtags : ['未分類']
                 tags.forEach(tag => {
                     if (!tagMap[tag]) tagMap[tag] = []
@@ -122,17 +189,23 @@ export default function KMSExport() {
             const header = [
                 `知識庫匯出`,
                 `匯出日期：${date}`,
-                `筆記數量：${filteredNotes.length}`,
+                `筆記數量：${exportNotes.length}`,
                 filterMode === 'tag' ? `篩選標籤：${Array.from(selectedTags).join('、')}` : '範圍：全部筆記',
                 '════════════════════════',
                 '',
             ].join('\n')
 
-            const body = filteredNotes.map(n => formatNote(n, format)).join('\n')
+            const body = exportNotes.map(n => formatNote(n, format)).join('\n')
             downloadFile(header + body, `知識庫_${date}.${ext}`)
         }
 
-        setExporting(false)
+        } catch (error) {
+            console.error(error)
+            alert('匯出失敗，已停止讀取後續正文，請稍後重試。')
+        } finally {
+            setExporting(false)
+            setExportProgress('')
+        }
     }
 
     const exportCount = filteredNotes.length
@@ -241,7 +314,7 @@ export default function KMSExport() {
 
                         <button onClick={handleExport} disabled={exporting || exportCount === 0} style={btn(exportCount === 0 ? 'var(--c-border)' : 'var(--c-positive)')}>
                             <Download size={16} />
-                            {exporting ? '匯出中...' : `匯出 ${exportCount} 則筆記`}
+                            {exporting ? exportProgress || '匯出中...' : `匯出 ${exportCount} 則筆記`}
                         </button>
 
                         {/* NotebookLM 使用說明 */}

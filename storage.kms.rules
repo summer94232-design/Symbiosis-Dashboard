@@ -1,0 +1,51 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownsStoragePath(uid) {
+      return signedIn()
+        && (request.auth.uid == uid || request.auth.token.get('investUid', '') == uid);
+    }
+
+    match /users/{uid}/notes/{noteId}/images/{fileName} {
+      allow read, delete: if ownsStoragePath(uid);
+      allow create, update: if ownsStoragePath(uid)
+        && request.resource.size <= 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/(webp|jpeg|png)');
+    }
+
+    match /users/{uid}/notes/{noteId}/thumbnails/{fileName} {
+      allow read, delete: if ownsStoragePath(uid);
+      allow create, update: if ownsStoragePath(uid)
+        && request.resource.size <= 300 * 1024
+        && request.resource.contentType.matches('image/(webp|jpeg|png)');
+    }
+
+    match /users/{uid}/notes/{noteId}/files/{fileName} {
+      allow read, delete: if ownsStoragePath(uid);
+      allow create, update: if ownsStoragePath(uid)
+        && request.resource.size <= 50 * 1024 * 1024
+        && request.resource.contentType.matches('(application/pdf|application/msword|application/vnd.openxmlformats-officedocument.wordprocessingml.document|application/octet-stream)');
+    }
+
+    // 舊版共用路徑僅保留讀取相容性，禁止新增、覆寫與刪除。
+    // 完成畫面中的「遷移舊附件」後，可把 read 也改為 false。
+    match /images/{path=**} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    match /files/{path=**} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

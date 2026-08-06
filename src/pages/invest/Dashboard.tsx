@@ -2,16 +2,16 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userDoc, userDocNested } from '../../lib/userDB'
-import { calcPositions, calcAvailableCash, calcReturnRate, simulateMarginBuy, aggregateMarginPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
+import { calcPositions, calcAvailableCash, calcReturnRate, calcPositionAdjustment, simulateMarginBuy, aggregateMarginPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
 // ✅ 1-2：共用 UI 樣式與損益顏色
 import { card } from '../../ui/styles'
 import { pnlColor } from '../../ui/format'
-import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown, ChevronDown, ChevronUp } from 'lucide-react'
+import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown, ChevronDown, ChevronUp, Calculator } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { usePrices } from '../../PriceContext'
 import { fetchTrades, fetchDividends, fetchCashflow } from '../../lib/investData'
-import { maybeAutoSnapshotToday } from '../../lib/snapshot'
+import { formatAutoSnapshotFeedback, maybeAutoSnapshotToday, type AutoSnapshotResult } from '../../lib/snapshot'
 import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
 import ActionNotice, { type ActionNoticeState } from '../../components/ActionNotice'
@@ -72,16 +72,6 @@ const DASHBOARD_SECTIONS: Array<{ key: DashboardSectionKey; id: string; label: s
     { key: 'holdings', id: 'dashboard-holdings', label: '目前持倉' },
     { key: 'planner', id: 'dashboard-planner', label: '行程任務' },
 ]
-
-const loadCollapsedDashboardSections = (): Record<DashboardSectionKey, boolean> => {
-    const defaults = { risk: false, allocation: false, holdings: false, planner: false }
-    try {
-        const saved = JSON.parse(localStorage.getItem('dashboard_collapsed_sections') || '{}')
-        return { ...defaults, ...saved }
-    } catch {
-        return defaults
-    }
-}
 
 // ── 賣出追蹤通知預設值（實際值由 settings/soldAlert 讀取，與賣出追蹤頁共用）──
 const DEFAULT_SOLD_WATCH_DAYS = 14
@@ -179,7 +169,6 @@ export default function Dashboard() {
     const [expandedHoldingCode, setExpandedHoldingCode] = useState<string | null>(null)
     const [notice, setNotice] = useState<ActionNoticeState | null>(null)
     const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-    const [collapsedSections, setCollapsedSections] = useState(loadCollapsedDashboardSections)
 
     const [upcomingEvents, setUpcomingEvents] = useState<CalendarEvent[]>([])
     const [tasks, setTasks] = useState<Task[]>([])
@@ -204,19 +193,15 @@ export default function Dashboard() {
     const [simPrice, setSimPrice] = useState('')
     const [simShares, setSimShares] = useState('')
     const [simRatio, setSimRatio] = useState('0.6')
+    // 倉位水位試算（只存在本機畫面，不寫入資料庫）
+    const [targetPositionPct, setTargetPositionPct] = useState('')
+    const [adjustmentCode, setAdjustmentCode] = useState('')
+    const [adjustmentPrice, setAdjustmentPrice] = useState('')
 
     const showNotice = (next: ActionNoticeState) => {
         if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
         setNotice(next)
         noticeTimerRef.current = setTimeout(() => setNotice(null), 4200)
-    }
-
-    const toggleDashboardSection = (key: DashboardSectionKey) => {
-        setCollapsedSections(prev => {
-            const next = { ...prev, [key]: !prev[key] }
-            localStorage.setItem('dashboard_collapsed_sections', JSON.stringify(next))
-            return next
-        })
     }
 
     const scrollToDashboardSection = (id: string) => {
@@ -365,15 +350,26 @@ export default function Dashboard() {
             showNotice({ type: 'info', message: '目前沒有需要更新現價的股票。' })
             return
         }
-        const quotes = await ctxUpdatePrices(symbols)
+        let snapshotResult: AutoSnapshotResult | null = null
+        const quotes = await ctxUpdatePrices(symbols, {
+            onSnapshot: result => { snapshotResult = result },
+        })
         const updatedCount = symbols.filter(code => typeof quotes[code] === 'number' && (quotes[code] as number) > 0).length
+        let priceFeedback: ActionNoticeState
         if (updatedCount === 0) {
-            showNotice({ type: 'error', message: '這次未取得有效現價，請稍後再試。' })
+            priceFeedback = { type: 'error', message: '這次未取得有效現價，請稍後再試。' }
         } else if (updatedCount < symbols.length) {
-            showNotice({ type: 'info', message: `已更新 ${updatedCount} 檔，另有 ${symbols.length - updatedCount} 檔暫時無報價。` })
+            priceFeedback = { type: 'info', message: `已更新 ${updatedCount} 檔，另有 ${symbols.length - updatedCount} 檔暫時無報價。` }
         } else {
-            showNotice({ type: 'success', message: `已更新 ${updatedCount} 檔股票現價。` })
+            priceFeedback = { type: 'success', message: `已更新 ${updatedCount} 檔股票現價。` }
         }
+        const snapshotFeedback = snapshotResult ? formatAutoSnapshotFeedback(snapshotResult) : null
+        showNotice({
+            type: snapshotFeedback?.type === 'error' || priceFeedback.type === 'error'
+                ? 'error'
+                : snapshotFeedback?.type === 'info' || priceFeedback.type === 'info' ? 'info' : 'success',
+            message: `${priceFeedback.message}${snapshotFeedback ? ` ${snapshotFeedback.message}` : ''}`,
+        })
 
         // 用 context 回傳的即時 quotes 同步更新本頁 holdings（不等 state 重渲染）
         let totalMarketValue = 0
@@ -416,8 +412,6 @@ export default function Dashboard() {
             .sort((a, b) => b.changePct - a.changePct)
         setSoldAlerts(alerts)
 
-        // ✅ 5-1：現價剛寫回 lastPrices（_updatedAt 為今日），是自動快照最準的時機
-        void maybeAutoSnapshotToday()
     }
 
     // ✅ 優化：直接呼叫，移除不必要的 setTimeout 延遲
@@ -480,6 +474,27 @@ export default function Dashboard() {
     // 無融資時分母 = 總資產，倉位% 退化為單純的持股佔比
     const equityCapital = totalAssets - totalMarginDebt
     const positionPct = equityCapital > 0 ? (totalMarketValue / equityCapital) * 100 : null
+    const targetPositionNum = Number(targetPositionPct)
+    const positionAdjustment = targetPositionPct !== '' && Number.isFinite(targetPositionNum)
+        ? calcPositionAdjustment(totalMarketValue, equityCapital, targetPositionNum)
+        : null
+    const adjustmentPriceNum = Number(adjustmentPrice)
+    const estimatedShares = positionAdjustment && positionAdjustment.action !== 'hold' && adjustmentPriceNum > 0
+        ? Math.max(1, Math.round(positionAdjustment.amount / adjustmentPriceNum))
+        : null
+    const selectedAdjustmentHolding = holdings.find(h => h.code === adjustmentCode)
+    const achievedPositionPct = positionAdjustment && estimatedShares !== null
+        ? (
+            totalMarketValue
+            + (positionAdjustment.action === 'buy' ? 1 : -1) * estimatedShares * adjustmentPriceNum
+        ) / equityCapital * 100
+        : null
+    const adjustmentExceedsCash = positionAdjustment?.action === 'buy'
+        && positionAdjustment.amount > Math.max(totalCash, 0)
+    const adjustmentExceedsHolding = positionAdjustment?.action === 'sell'
+        && estimatedShares !== null
+        && selectedAdjustmentHolding !== undefined
+        && estimatedShares > selectedAdjustmentHolding.shares
 
     // 淨資產 = 市值 + 現金 − 融資借款（負債）。與資產趨勢、年度回顧快照口徑一致。
     // 註：totalAssets（毛額）仍用於圓餅圖佔比與維持率分母，故兩者並存。
@@ -615,6 +630,8 @@ export default function Dashboard() {
         @media (max-width: 800px) { .dash-pies { grid-template-columns: 1fr; } }
         .dash-side-cards { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; }
         .dash-side-cards > * { flex: 1 1 360px; min-width: 0; }
+        .position-tool-grid { display: grid; grid-template-columns: 1fr 1.35fr 1fr; gap: 10px; }
+        @media (max-width: 560px) { .position-tool-grid { grid-template-columns: 1fr; } }
         .dash-extra { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; margin-top: 16px; }
         @media (max-width: 700px) { .dash-extra { grid-template-columns: 1fr; } }
         .dashboard-section-nav { position: sticky; top: 0; z-index: 25; display: flex; gap: 8px; margin-bottom: 16px; padding: 8px; border: 1px solid var(--c-border); border-radius: 11px; background: color-mix(in srgb, var(--c-bg) 94%, transparent); box-shadow: 0 8px 22px rgba(0,0,0,.16); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
@@ -623,14 +640,12 @@ export default function Dashboard() {
         .dashboard-section { scroll-margin-top: 66px; margin-bottom: 16px; }
         .dashboard-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; padding-inline: 2px; }
         .dashboard-section-heading h2 { margin: 0; color: var(--c-text); font-size: 14px; font-weight: 700; }
-        .dashboard-section-heading button { display: inline-flex; min-height: 34px; align-items: center; gap: 5px; padding: 5px 9px; border: 1px solid var(--c-border); border-radius: 8px; color: var(--c-muted); background: var(--c-card); font-size: 12px; cursor: pointer; }
         .dashboard-section > .dash-side-cards,
         .dashboard-section > .dash-pies,
         .dashboard-section > .dash-extra { margin-bottom: 0; margin-top: 0; }
         @media (max-width: 767px) {
             .dashboard-section-nav { display: none; }
             .dashboard-section { scroll-margin-top: 0; }
-            .dashboard-section-heading button { min-height: 44px; }
         }
         .h-table { width: 100%; border-collapse: collapse; font-size: 13px; }
         .h-table th { padding: 8px 10px; text-align: left; color: var(--c-muted); font-weight: 500; border-bottom: 1px solid var(--c-border); white-space: nowrap; }
@@ -795,12 +810,7 @@ export default function Dashboard() {
                         <section id="dashboard-risk" className="dashboard-section">
                             <div className="dashboard-section-heading">
                                 <h2>資金與風險</h2>
-                                <button type="button" onClick={() => toggleDashboardSection('risk')}>
-                                    {collapsedSections.risk ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-                                    {collapsedSections.risk ? '展開' : '收合'}
-                                </button>
                             </div>
-                            {!collapsedSections.risk && (
                         <div className="dash-side-cards">
 
                             {/* 倉位卡片 */}
@@ -882,6 +892,116 @@ export default function Dashboard() {
                                             <div style={{ fontSize: '14px', fontWeight: 600, color }}>${value.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
                                         </div>
                                     ))}
+                                </div>
+                            </div>
+
+                            {/* 倉位水位試算工具 */}
+                            <div style={{ ...card, display: 'flex', flexDirection: 'column' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '18px' }}>
+                                    <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: 'color-mix(in srgb, var(--c-accent) 14%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                        <Calculator size={20} color="var(--c-accent)" />
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize: '14px', color: 'var(--c-text)', fontWeight: 700 }}>倉位水位試算</div>
+                                        <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginTop: '3px' }}>輸入目標水位，快速換算應買賣金額與股數</div>
+                                    </div>
+                                </div>
+
+                                <div className="position-tool-grid">
+                                    <label>
+                                        <span style={{ display: 'block', fontSize: '11px', color: 'var(--c-muted)', marginBottom: '5px' }}>目標倉位（%）</span>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.1"
+                                            inputMode="decimal"
+                                            value={targetPositionPct}
+                                            onChange={e => setTargetPositionPct(e.target.value)}
+                                            placeholder={positionPct !== null ? positionPct.toFixed(1) : '例如 55'}
+                                            aria-label="目標倉位百分比"
+                                            style={{ width: '100%', boxSizing: 'border-box', backgroundColor: 'var(--c-bg)', color: 'var(--c-text)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '9px 10px', fontSize: '13px', outline: 'none' }}
+                                        />
+                                    </label>
+                                    <label>
+                                        <span style={{ display: 'block', fontSize: '11px', color: 'var(--c-muted)', marginBottom: '5px' }}>換算股票（選填）</span>
+                                        <select
+                                            value={adjustmentCode}
+                                            onChange={e => {
+                                                const code = e.target.value
+                                                setAdjustmentCode(code)
+                                                const holding = holdings.find(h => h.code === code)
+                                                setAdjustmentPrice(holding ? String(holding.currentPrice ?? holding.avgCost) : '')
+                                            }}
+                                            aria-label="換算股票"
+                                            style={{ width: '100%', boxSizing: 'border-box', backgroundColor: 'var(--c-bg)', color: 'var(--c-text)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '9px 10px', fontSize: '13px', outline: 'none' }}
+                                        >
+                                            <option value="">只計算金額</option>
+                                            {holdings.map(h => <option key={h.code} value={h.code}>{h.code} {h.name}</option>)}
+                                        </select>
+                                    </label>
+                                    <label>
+                                        <span style={{ display: 'block', fontSize: '11px', color: 'var(--c-muted)', marginBottom: '5px' }}>參考股價</span>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            inputMode="decimal"
+                                            value={adjustmentPrice}
+                                            onChange={e => setAdjustmentPrice(e.target.value)}
+                                            placeholder="選股票後帶入"
+                                            disabled={!adjustmentCode}
+                                            aria-label="參考股價"
+                                            style={{ width: '100%', boxSizing: 'border-box', backgroundColor: 'var(--c-bg)', color: 'var(--c-text)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '9px 10px', fontSize: '13px', outline: 'none', opacity: adjustmentCode ? 1 : 0.55 }}
+                                        />
+                                    </label>
+                                </div>
+
+                                <div style={{ marginTop: '16px', backgroundColor: 'var(--c-bg)', borderRadius: '10px', padding: '14px' }}>
+                                    {!positionAdjustment ? (
+                                        <div style={{ fontSize: '12px', color: 'var(--c-muted)', textAlign: 'center', padding: '8px 0' }}>
+                                            目前 {positionPct !== null ? positionPct.toFixed(1) : '—'}%，輸入目標水位開始試算
+                                        </div>
+                                    ) : positionAdjustment.action === 'hold' ? (
+                                        <div style={{ fontSize: '14px', color: 'var(--c-positive)', fontWeight: 700, textAlign: 'center', padding: '8px 0' }}>已在目標水位，不需調整</div>
+                                    ) : (
+                                        <>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px', flexWrap: 'wrap' }}>
+                                                <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>
+                                                    {positionAdjustment.currentPct.toFixed(1)}% → {positionAdjustment.targetPct.toFixed(1)}%
+                                                </span>
+                                                <span style={{ fontSize: 'clamp(18px, 2.5vw, 24px)', color: positionAdjustment.action === 'buy' ? 'var(--c-positive)' : 'var(--c-danger)', fontWeight: 800 }}>
+                                                    {positionAdjustment.action === 'buy' ? '買進' : '賣出'} ${positionAdjustment.amount.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
+                                                </span>
+                                            </div>
+                                            {estimatedShares !== null && (
+                                                <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--c-border)', display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                                                    <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>{adjustmentCode} 以 ${adjustmentPriceNum.toLocaleString('zh-TW')} 試算</span>
+                                                    <strong style={{ fontSize: '14px', color: 'var(--c-text)' }}>
+                                                        約 {estimatedShares.toLocaleString()} 股
+                                                        <span style={{ marginLeft: '6px', color: 'var(--c-muted)', fontSize: '11px', fontWeight: 500 }}>
+                                                            （{Math.floor(estimatedShares / 1000)} 張 + {estimatedShares % 1000} 股）
+                                                        </span>
+                                                    </strong>
+                                                </div>
+                                            )}
+                                            {achievedPositionPct !== null && (
+                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginTop: '8px', textAlign: 'right' }}>
+                                                    依整股估算，交易後約 {achievedPositionPct.toFixed(2)}%
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+
+                                {(adjustmentExceedsCash || adjustmentExceedsHolding) && (
+                                    <div style={{ marginTop: '10px', fontSize: '11px', lineHeight: 1.5, color: 'var(--c-warning)' }}>
+                                        {adjustmentExceedsCash
+                                            ? `⚠ 可用現金約 $${Math.max(totalCash, 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}，不足以完成全部買進。`
+                                            : `⚠ ${adjustmentCode} 目前持有 ${selectedAdjustmentHolding?.shares.toLocaleString()} 股，不足以單靠這檔完成賣出。`}
+                                    </div>
+                                )}
+                                <div style={{ marginTop: 'auto', paddingTop: '12px', fontSize: '10px', lineHeight: 1.5, color: 'var(--c-dim)' }}>
+                                    未計入手續費、證交稅與成交滑價；融資帳戶以自有資金口徑計算。
                                 </div>
                             </div>
 
@@ -1071,7 +1191,6 @@ export default function Dashboard() {
                                 </div>
                             )}
                         </div>
-                            )}
                         </section>
                         {/* ── /倉位 + 融資 並排卡片 ── */}
 
@@ -1085,12 +1204,7 @@ export default function Dashboard() {
                         <section id="dashboard-allocation" className="dashboard-section">
                             <div className="dashboard-section-heading">
                                 <h2>資產分布</h2>
-                                <button type="button" onClick={() => toggleDashboardSection('allocation')}>
-                                    {collapsedSections.allocation ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-                                    {collapsedSections.allocation ? '展開' : '收合'}
-                                </button>
                             </div>
-                            {!collapsedSections.allocation && (
                         <div className="dash-pies">
                             {/* 個股分布 */}
                             <div style={card}>
@@ -1185,7 +1299,6 @@ export default function Dashboard() {
                                 )}
                             </div>
                         </div>
-                            )}
                         </section>
 
                         {/* 目前持倉表格 */}
@@ -1193,27 +1306,20 @@ export default function Dashboard() {
                             <div className="dashboard-section-heading">
                                 <h2>目前持倉</h2>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    {!collapsedSections.holdings && (
-                                        <select
-                                            value={sortMode}
-                                            onChange={e => setSortMode(e.target.value as typeof sortMode)}
-                                            aria-label="持倉排序"
-                                            style={{ backgroundColor: 'var(--c-bg)', color: 'var(--c-text)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '6px 8px', fontSize: '12px', cursor: 'pointer' }}
-                                        >
-                                            <option value="marketValue">依市值</option>
-                                            <option value="group">依族群</option>
-                                            <option value="returnRate">依報酬率</option>
-                                            <option value="unrealizedPnL">依未實現損益</option>
-                                            <option value="code">依代號</option>
-                                        </select>
-                                    )}
-                                    <button type="button" onClick={() => toggleDashboardSection('holdings')}>
-                                        {collapsedSections.holdings ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-                                        {collapsedSections.holdings ? '展開' : '收合'}
-                                    </button>
+                                    <select
+                                        value={sortMode}
+                                        onChange={e => setSortMode(e.target.value as typeof sortMode)}
+                                        aria-label="持倉排序"
+                                        style={{ backgroundColor: 'var(--c-bg)', color: 'var(--c-text)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '6px 8px', fontSize: '12px', cursor: 'pointer' }}
+                                    >
+                                        <option value="marketValue">依市值</option>
+                                        <option value="group">依族群</option>
+                                        <option value="returnRate">依報酬率</option>
+                                        <option value="unrealizedPnL">依未實現損益</option>
+                                        <option value="code">依代號</option>
+                                    </select>
                                 </div>
                             </div>
-                            {!collapsedSections.holdings && (
                         <div style={{ ...card, marginBottom: '0' }}>
                             {holdings.length === 0 ? (
                                 <div style={{ textAlign: 'center', padding: '40px', color: 'var(--c-muted)', fontSize: '13px' }}>尚無持倉資料</div>
@@ -1322,19 +1428,13 @@ export default function Dashboard() {
                                 </>
                             )}
                         </div>
-                            )}
                         </section>
 
                         {/* ── 兩欄：近14天行程 / 待辦任務 ── */}
                         <section id="dashboard-planner" className="dashboard-section">
                             <div className="dashboard-section-heading">
                                 <h2>行程與任務</h2>
-                                <button type="button" onClick={() => toggleDashboardSection('planner')}>
-                                    {collapsedSections.planner ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-                                    {collapsedSections.planner ? '展開' : '收合'}
-                                </button>
                             </div>
-                            {!collapsedSections.planner && (
                         <div className="dash-extra">
 
                             {/* 近 14 天行程 */}
@@ -1420,7 +1520,6 @@ export default function Dashboard() {
                             </div>
 
                         </div>
-                            )}
                         </section>
                     </>
                 )}

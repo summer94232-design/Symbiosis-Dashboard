@@ -1,7 +1,8 @@
-import { getDoc, getDocs, orderBy, query } from 'firebase/firestore'
+import { getDoc, getDocs, limit, orderBy, query, startAfter, where, type DocumentData, type QueryDocumentSnapshot } from 'firebase/firestore'
 import { kmsDB } from './firebase'
 import { cache } from './cache'
-import { getUID, userCol, userDocNested } from './userDB'
+import { getUID, userCol, userDoc, userDocNested } from './userDB'
+import { normalizeKmsSearch } from './kmsSearch'
 
 const TTL_SECONDS = 90
 const TAG_ORDER_DOC = 'tagOrder'
@@ -24,16 +25,126 @@ export interface KmsTagOrder {
   childOrder: Record<string, string[]>
 }
 
+export interface KmsNoteBody {
+  content: string
+  contentDoc?: unknown
+  assets?: unknown[]
+}
+
+export interface KmsNotePage<T> {
+  rows: T[]
+  cursor: QueryDocumentSnapshot<DocumentData> | null
+  hasMore: boolean
+}
+
+export interface KmsTagStats {
+  counts: Record<string, number>
+  rootCounts: Record<string, number>
+  totalNotes: number
+  untagged: number
+  updatedAt?: string
+}
+
 const notesKey = () => `kms:notes:${getUID()}`
 const tagOrderKey = () => `kms:tag-order:${getUID()}`
 const trashKey = () => `kms:trash:${getUID()}`
 
 export async function fetchKmsNotes<T = KmsNoteData>(): Promise<T[]> {
   const rows = await cache.getOrLoad<Record<string, unknown>[]>(notesKey(), async () => {
-    const snap = await getDocs(query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc')))
-    return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+    const [notesSnapshot, bodiesSnapshot] = await Promise.all([
+      getDocs(query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc'))),
+      getDocs(userCol(kmsDB, 'noteBodies')),
+    ])
+    const bodies = new Map(bodiesSnapshot.docs.map(body => [body.id, body.data()]))
+    return notesSnapshot.docs.map(note => ({ id: note.id, ...note.data(), ...(bodies.get(note.id) || {}) }))
   }, TTL_SECONDS)
   return rows.map(row => ({ ...row })) as T[]
+}
+
+export async function fetchKmsNoteSummaries<T = KmsNoteData>(): Promise<T[]> {
+  const snapshot = await getDocs(query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc')))
+  return snapshot.docs.map(note => ({ id: note.id, ...note.data() })) as T[]
+}
+
+export async function fetchKmsTagStats(): Promise<KmsTagStats | null> {
+  const snapshot = await getDoc(userDoc(kmsDB, 'metadata', 'tagStats'))
+  if (!snapshot.exists()) return null
+  const data = snapshot.data()
+  return {
+    counts: data.counts && typeof data.counts === 'object' ? data.counts : {},
+    rootCounts: data.rootCounts && typeof data.rootCounts === 'object' ? data.rootCounts : {},
+    totalNotes: Number(data.totalNotes) || 0,
+    untagged: Number(data.untagged) || 0,
+    updatedAt: data.updatedAt,
+  }
+}
+
+export async function searchKmsNoteSummaries<T = KmsNoteData>(
+  search: string,
+  selectedTag: string,
+  pageSize = 40,
+): Promise<T[]> {
+  const notes = userCol(kmsDB, 'notes')
+  const normalized = normalizeKmsSearch(search).replace(/\s+/g, '').slice(0, 12)
+  const resultQuery = normalized
+    ? query(notes, where('searchTerms', 'array-contains', normalized), limit(pageSize))
+    : selectedTag === KMS_UNTAGGED_KEY
+      ? query(notes, where('isUntagged', '==', true), limit(pageSize))
+      : query(notes, where('tagPaths', 'array-contains', selectedTag), limit(pageSize))
+  const snapshot = await getDocs(resultQuery)
+  return snapshot.docs.map(note => ({ id: note.id, ...note.data() })) as T[]
+}
+
+export async function fetchKmsBodiesInBatches<T = KmsNoteBody>(
+  noteIds: string[],
+  batchSize = 20,
+  onProgress: (completed: number, total: number) => void = () => undefined,
+): Promise<Record<string, T>> {
+  const result: Record<string, T> = {}
+  for (let start = 0; start < noteIds.length; start += batchSize) {
+    const ids = noteIds.slice(start, start + batchSize)
+    const bodies = await Promise.all(ids.map(id => fetchKmsNoteBody<T>(id)))
+    ids.forEach((id, index) => { result[id] = bodies[index] })
+    onProgress(Math.min(start + ids.length, noteIds.length), noteIds.length)
+  }
+  return result
+}
+
+export async function fetchKmsNotePage<T = KmsNoteData>(
+  pageSize = 40,
+  cursor?: QueryDocumentSnapshot<DocumentData> | null,
+): Promise<KmsNotePage<T>> {
+  const constraints = [orderBy('createdAt', 'desc')]
+  const pageQuery = cursor
+    ? query(userCol(kmsDB, 'notes'), ...constraints, startAfter(cursor), limit(pageSize + 1))
+    : query(userCol(kmsDB, 'notes'), ...constraints, limit(pageSize + 1))
+  const snapshot = await getDocs(pageQuery)
+  const hasMore = snapshot.docs.length > pageSize
+  const pageDocs = snapshot.docs.slice(0, pageSize)
+  return {
+    rows: pageDocs.map(note => ({ id: note.id, ...note.data() })) as T[],
+    cursor: pageDocs.at(-1) || null,
+    hasMore,
+  }
+}
+
+export async function fetchKmsNoteBody<T = KmsNoteBody>(noteId: string): Promise<T> {
+  const snapshot = await getDoc(userDoc(kmsDB, 'noteBodies', noteId))
+  if (snapshot.exists()) return snapshot.data() as T
+
+  // 遷移前相容：舊資料的正文仍在 notes 文件內。
+  const legacy = await getDoc(userDoc(kmsDB, 'notes', noteId))
+  const data = legacy.exists() ? legacy.data() : {}
+  return {
+    content: typeof data.content === 'string' ? data.content : '',
+    contentDoc: data.contentDoc,
+    assets: Array.isArray(data.assets) ? data.assets : [],
+  } as T
+}
+
+export async function fetchKmsNoteSummary<T = KmsNoteData>(noteId: string): Promise<T | null> {
+  const snapshot = await getDoc(userDoc(kmsDB, 'notes', noteId))
+  return snapshot.exists() ? ({ id: snapshot.id, ...snapshot.data() } as T) : null
 }
 
 export function fetchKmsTagOrder(): Promise<KmsTagOrder> {

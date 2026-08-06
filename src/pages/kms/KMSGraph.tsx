@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchKmsNotes, fetchKmsTagOrder } from '../../lib/kmsData'
+import { fetchKmsNoteSummaries, fetchKmsTagOrder } from '../../lib/kmsData'
 import { Search, X, ExternalLink, ChevronRight, ChevronDown, Tag } from 'lucide-react'
 
 interface Note {
@@ -77,7 +77,7 @@ export default function KMSGraph() {
     const load = async () => {
       setLoading(true)
       const [data, tagOrder] = await Promise.all([
-        fetchKmsNotes<Note>(),
+        fetchKmsNoteSummaries<Note>(),
         fetchKmsTagOrder(),
       ])
       setNotes(data)

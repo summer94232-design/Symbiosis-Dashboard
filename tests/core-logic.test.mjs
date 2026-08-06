@@ -16,11 +16,33 @@ const taskOrder = await importTypeScriptModule('../src/lib/taskOrder.ts')
 const { cache } = await importTypeScriptModule('../src/lib/cache.ts')
 const dataHealth = await importTypeScriptModule('../src/lib/dataHealth.ts')
 const investorMeetingMerge = await importTypeScriptModule('../src/lib/investorMeetingMerge.ts')
+const snapshotPolicy = await importTypeScriptModule('../src/lib/snapshotPolicy.ts')
 
 const trade = (overrides) => ({
     id: '', date: '2026-07-23', type: 'buy', code: '2330', name: '台積電',
     price: 100, shares: 100, fee: 0, tax: 0, total: 10000,
     ...overrides,
+})
+
+test('倉位水位試算會正確計算應買進或賣出的金額', () => {
+    const raise = calc.calcPositionAdjustment(500_000, 1_000_000, 55)
+    assert.deepEqual(raise, {
+        action: 'buy',
+        currentPct: 50,
+        targetPct: 55,
+        amount: 50_000,
+        targetMarketValue: 550_000,
+    })
+
+    const reduce = calc.calcPositionAdjustment(760_000, 1_000_000, 51)
+    assert.equal(reduce.action, 'sell')
+    assert.equal(reduce.amount, 250_000)
+})
+
+test('倉位水位試算拒絕無效自有資金，目標相同時不交易', () => {
+    assert.equal(calc.calcPositionAdjustment(100, 0, 50), null)
+    assert.equal(calc.calcPositionAdjustment(100, 200, -1), null)
+    assert.equal(calc.calcPositionAdjustment(500_000, 1_000_000, 50)?.action, 'hold')
 })
 
 test('同日交易依 createdAt 穩定排序，不受輸入陣列順序影響', () => {
@@ -91,6 +113,18 @@ test('載入期間失效的舊資料不會重新寫回快取', async () => {
     resolveLoader('old')
     assert.equal(await request, 'old')
     assert.equal(cache.get('stale:test'), null)
+})
+
+test('背景快照只在本地 08:00–22:00 執行', () => {
+    assert.equal(snapshotPolicy.canRunAutoSnapshot('background', new Date(2026, 6, 31, 7, 59)), false)
+    assert.equal(snapshotPolicy.canRunAutoSnapshot('background', new Date(2026, 6, 31, 8, 0)), true)
+    assert.equal(snapshotPolicy.canRunAutoSnapshot('background', new Date(2026, 6, 31, 21, 59)), true)
+    assert.equal(snapshotPolicy.canRunAutoSnapshot('background', new Date(2026, 6, 31, 22, 0)), false)
+})
+
+test('使用者更新現價可在任何本地時間刷新快照', () => {
+    assert.equal(snapshotPolicy.canRunAutoSnapshot('price-update', new Date(2026, 6, 31, 2, 17)), true)
+    assert.equal(snapshotPolicy.canRunAutoSnapshot('price-update', new Date(2026, 6, 31, 23, 30)), true)
 })
 
 test('資料健康中心能辨識超賣、失效連結與垃圾桶衝突', () => {

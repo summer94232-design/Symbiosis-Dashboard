@@ -7,7 +7,6 @@ import { fetchTrades, fetchDividends, invalidateDividends } from '../../lib/inve
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS, type CalendarEvent } from '../../lib/calendarData'
 import { Plus, X, ChevronLeft, ChevronRight, ExternalLink, Upload, Pencil, RefreshCw, UploadCloud } from 'lucide-react'
 import { getGoogleCalendarAuth, performGoogleCalendarSync, type SyncSummary } from '../../lib/googleCalendar'
-import * as XLSX from 'xlsx'
 import { fetchCalendarEvents, fetchTasks, invalidateCalendarEvents } from '../../lib/plannerData'
 import { addInvestorMeetingDates, fetchInvestorMeetings, removeInvestorMeetingDate } from '../../lib/investorMeetings'
 
@@ -199,6 +198,7 @@ export default function CalendarHome() {
         reader.onload = async (evt) => {
             try {
                 const data = new Uint8Array(evt.target!.result as ArrayBuffer)
+                const XLSX = await import('xlsx')
                 // raw: true 保留原始值（含 Excel 序列數字），不讓 SheetJS 自動轉換
                 const wb = XLSX.read(data, { type: 'array', cellDates: false })
                 const sheet = wb.Sheets[wb.SheetNames[0]]
@@ -432,11 +432,22 @@ export default function CalendarHome() {
         <>
             <style>{`
         .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
-        .cal-day { min-height: 80px; padding: 6px; border-radius: 6px; cursor: pointer; transition: background 0.15s; position: relative; }
+        .calendar-filter-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+        .calendar-filter-strip button { flex: 0 0 auto; }
+        .calendar-month-button { display: inline-flex !important; width: 44px; height: 44px; align-items: center; justify-content: center; padding: 0 !important; border-radius: 8px; }
+        .cal-day { width: 100%; min-width: 0; min-height: 80px; padding: 6px; border: 0; border-radius: 6px; color: inherit; background: transparent; cursor: pointer; transition: background 0.15s; position: relative; text-align: left; font: inherit; }
         .cal-day:hover { background: rgba(79,142,247,0.06); }
+        .cal-day:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
         .cal-day.today { background: rgba(79,142,247,0.10); }
         .cal-day.selected { background: rgba(79,142,247,0.15); outline: 1px solid var(--c-accent); }
-        @media (max-width: 768px) { .cal-day { min-height: 56px; } }
+        .calendar-event-icon-button { display: inline-flex; width: 36px; height: 36px; align-items: center; justify-content: center; border-radius: 8px; }
+        @media (max-width: 768px) {
+            .calendar-filter-strip { flex-wrap: nowrap; margin-inline: -16px; padding: 0 16px 6px; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: none; }
+            .calendar-filter-strip::-webkit-scrollbar { display: none; }
+            .calendar-filter-strip button { min-height: 44px; }
+            .cal-day { min-height: 56px; }
+            .calendar-event-icon-button { width: 44px; height: 44px; }
+        }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
 
@@ -496,9 +507,9 @@ export default function CalendarHome() {
                 )}
 
                 {/* 篩選器 */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                <div className="calendar-filter-strip" aria-label="事件類型篩選">
                     {Object.entries(EVENT_LABELS).map(([type, label]) => (
-                        <button key={type} onClick={() => toggleFilter(type)}
+                        <button key={type} type="button" onClick={() => toggleFilter(type)} aria-pressed={filterTypes.has(type)}
                             style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 12px', borderRadius: '20px', border: '1px solid', borderColor: filterTypes.has(type) ? EVENT_COLORS[type] : 'var(--c-border)', backgroundColor: filterTypes.has(type) ? `${EVENT_COLORS[type]}18` : 'transparent', color: filterTypes.has(type) ? EVENT_COLORS[type] : 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}>
                             <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: EVENT_COLORS[type], display: 'inline-block' }} />
                             {label}
@@ -524,9 +535,9 @@ export default function CalendarHome() {
                     {/* 月曆 */}
                     <div style={card}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                            <button onClick={prevMonth} style={{ background: 'none', border: 'none', color: 'var(--c-text)', cursor: 'pointer', display: 'flex', padding: '6px' }}><ChevronLeft size={20} /></button>
+                            <button type="button" className="calendar-month-button" onClick={prevMonth} aria-label="上一個月" title="上一個月" style={{ background: 'none', border: 'none', color: 'var(--c-text)', cursor: 'pointer' }}><ChevronLeft size={20} /></button>
                             <span style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-text)' }}>{year} 年 {month} 月</span>
-                            <button onClick={nextMonth} style={{ background: 'none', border: 'none', color: 'var(--c-text)', cursor: 'pointer', display: 'flex', padding: '6px' }}><ChevronRight size={20} /></button>
+                            <button type="button" className="calendar-month-button" onClick={nextMonth} aria-label="下一個月" title="下一個月" style={{ background: 'none', border: 'none', color: 'var(--c-text)', cursor: 'pointer' }}><ChevronRight size={20} /></button>
                         </div>
 
                         <div className="cal-grid" style={{ marginBottom: '4px' }}>
@@ -545,7 +556,9 @@ export default function CalendarHome() {
                                 const isSelected = dateStr === selectedDay
                                 const isWeekend = new Date(year, month - 1, d).getDay() === 0 || new Date(year, month - 1, d).getDay() === 6
                                 return (
-                                    <div key={d} className={`cal-day${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}`}
+                                    <button key={d} type="button" className={`cal-day${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}`}
+                                        aria-label={`${year} 年 ${month} 月 ${d} 日，${dayEvents.length} 個事件`}
+                                        aria-pressed={isSelected}
                                         onClick={() => setSelectedDay(isSelected ? null : dateStr)}>
                                         <div style={{ fontSize: '13px', fontWeight: isToday ? 700 : 400, color: isToday ? 'var(--c-accent)' : isWeekend ? 'var(--c-danger)' : 'var(--c-text)', marginBottom: '4px' }}>{d}</div>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -556,7 +569,7 @@ export default function CalendarHome() {
                                             ))}
                                             {dayEvents.length > 3 && <div className="cal-more-count" style={{ fontSize: '10px', color: 'var(--c-muted)' }}>+{dayEvents.length - 3} 更多</div>}
                                         </div>
-                                    </div>
+                                    </button>
                                 )
                             })}
                         </div>
@@ -584,17 +597,20 @@ export default function CalendarHome() {
                                                 <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                                                     {ev.url && (
                                                         <a href={ev.url} target="_blank" rel="noopener noreferrer"
-                                                            style={{ color: 'var(--c-accent)', display: 'flex' }}><ExternalLink size={14} /></a>
+                                                            className="calendar-event-icon-button" aria-label={`開啟「${ev.title}」連結`} title="開啟外部連結"
+                                                            style={{ color: 'var(--c-accent)' }}><ExternalLink size={14} /></a>
                                                     )}
                                                     {/* 手動建立的行程（存在 calendarEvents collection）才顯示編輯／刪除鈕 */}
                                                     {['personal', 'tech', 'fomc', 'dividend', 'shareholder', 'futures'].includes(ev.type) && ev.id && !ev.id.startsWith('fomc-') && !ev.id.startsWith('gtc-') && !ev.id.startsWith('wwdc-') && !ev.id.startsWith('build-') && !ev.id.startsWith('google-io-') && !ev.id.startsWith('ces-') && !ev.id.startsWith('futures-') && !ev.id.startsWith('div-') && (
                                                         <>
-                                                            <button onClick={() => handleEditEvent(ev)}
+                                                            <button type="button" className="calendar-event-icon-button" onClick={() => handleEditEvent(ev)}
+                                                                aria-label={`編輯「${ev.title}」`}
                                                                 style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer', padding: 0 }}
                                                                 title="編輯此行程">
                                                                 <Pencil size={13} />
                                                             </button>
-                                                            <button onClick={() => handleDeleteEvent(ev.id)}
+                                                            <button type="button" className="calendar-event-icon-button" onClick={() => handleDeleteEvent(ev.id)}
+                                                                aria-label={`刪除「${ev.title}」`}
                                                                 style={{ background: 'none', border: 'none', color: 'var(--c-danger)', cursor: 'pointer', padding: 0 }}
                                                                 title="刪除此行程">
                                                                 <X size={14} />
@@ -602,14 +618,16 @@ export default function CalendarHome() {
                                                         </>
                                                     )}
                                                     {ev.type === 'investor' && ev.stockCode && (
-                                                        <button onClick={() => handleDeleteInvestorDate(ev.stockCode!, ev.date)}
+                                                        <button type="button" className="calendar-event-icon-button" onClick={() => handleDeleteInvestorDate(ev.stockCode!, ev.date)}
+                                                            aria-label={`刪除「${ev.title}」日期`}
                                                             style={{ background: 'none', border: 'none', color: 'var(--c-danger)', cursor: 'pointer', padding: 0 }}
                                                             title="刪除此法說會日期">
                                                             <X size={14} />
                                                         </button>
                                                     )}
                                                     {ev.type === 'dividend' && (
-                                                        <button onClick={() => handleDeleteDividend(ev)}
+                                                        <button type="button" className="calendar-event-icon-button" onClick={() => handleDeleteDividend(ev)}
+                                                            aria-label={`刪除「${ev.title}」記錄`}
                                                             style={{ background: 'none', border: 'none', color: 'var(--c-danger)', cursor: 'pointer', padding: 0 }}
                                                             title="刪除此除權息記錄">
                                                             <X size={14} />

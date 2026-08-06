@@ -9,6 +9,7 @@ import { calcPositions, calcReturnRate, type TradeRecord, type DividendRecord } 
 // ✅ 1-2：共用 UI 樣式與損益顏色
 import { card } from '../../ui/styles'
 import { pnlColor } from '../../ui/format'
+import { formatAutoSnapshotFeedback, type AutoSnapshotResult } from '../../lib/snapshot'
 import { RefreshCw, TrendingUp, TrendingDown, Check, X, ChevronDown, ChevronUp } from 'lucide-react'
 import { usePrices } from '../../PriceContext'
 
@@ -158,15 +159,26 @@ export default function Holdings() {
             showNotice({ type: 'info', message: '目前沒有需要更新現價的持倉。' })
             return
         }
-        const quotes = await ctxUpdatePrices(symbols)
+        let snapshotResult: AutoSnapshotResult | null = null
+        const quotes = await ctxUpdatePrices(symbols, {
+            onSnapshot: result => { snapshotResult = result },
+        })
         const updatedCount = symbols.filter(code => typeof quotes[code] === 'number' && (quotes[code] as number) > 0).length
+        let priceFeedback: ActionNoticeState
         if (updatedCount === 0) {
-            showNotice({ type: 'error', message: '這次未取得有效現價，請稍後再試。' })
+            priceFeedback = { type: 'error', message: '這次未取得有效現價，請稍後再試。' }
         } else if (updatedCount < symbols.length) {
-            showNotice({ type: 'info', message: `已更新 ${updatedCount} 檔，另有 ${symbols.length - updatedCount} 檔暫時無報價。` })
+            priceFeedback = { type: 'info', message: `已更新 ${updatedCount} 檔，另有 ${symbols.length - updatedCount} 檔暫時無報價。` }
         } else {
-            showNotice({ type: 'success', message: `已更新 ${updatedCount} 檔持倉現價。` })
+            priceFeedback = { type: 'success', message: `已更新 ${updatedCount} 檔持倉現價。` }
         }
+        const snapshotFeedback = snapshotResult ? formatAutoSnapshotFeedback(snapshotResult) : null
+        showNotice({
+            type: snapshotFeedback?.type === 'error' || priceFeedback.type === 'error'
+                ? 'error'
+                : snapshotFeedback?.type === 'info' || priceFeedback.type === 'info' ? 'info' : 'success',
+            message: `${priceFeedback.message}${snapshotFeedback ? ` ${snapshotFeedback.message}` : ''}`,
+        })
 
         setHoldings(prev => prev.map(h => {
             const currentPrice = quotes[h.code] ?? null

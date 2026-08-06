@@ -62,7 +62,7 @@ Symbiosis 是一個單頁式個人管理系統，分為三個彼此串接的領�
 - 融資部位與整戶維持率、加碼試算。
 - 即將到來的 14 天行程、未完成任務。
 - 近期賣出後上漲警示與機會損益。
-- 手動更新 Fugle 現價；成功後寫入 `settings/lastPrices` 並嘗試更新今日資產快照。
+- 手動更新 Fugle 現價；成功後寫入 `settings/lastPrices`，不受背景時段限制，並等待今日資產快照完成後顯示成功、關閉、缺價或失敗原因。
 
 現價缺失時畫面會以成本代替市值，該檔未實現損益顯示為 0；使用時需留意這是估值 fallback，不是市場價格。
 
@@ -96,6 +96,8 @@ Symbiosis 是一個單頁式個人管理系統，分為三個彼此串接的領�
 ### 4.5 資產趨勢
 
 - 讀取 `assetSnapshots` 繪製總資產趨勢。
+- 自動背景補寫依裝置本地時間於 08:00–22:00 執行；使用者手動按「更新現價」則全天皆可更新本地日期的當日快照。
+- 每個本地日期固定一筆快照；同日再次更新現價會更新當日快照，不會新增多筆或刪除其他日期資料。
 - 可手動保存／刪除快照、切換前端自動快照。
 - 快照內容：持股市值、可用現金、融資負債、總資產。
 - 總資產公式：`市場價值 + 可用現金 − 融資借款`。
@@ -143,10 +145,21 @@ Symbiosis 是一個單頁式個人管理系統，分為三個彼此串接的領�
 ### 5.1 知識庫首頁
 
 - 筆記類型：文字、網址、圖片、文件。
+- 知識庫首頁以 Firestore cursor 分頁，每次讀取 40 則 `notes` 摘要；按「載入下一頁」才讀下一批。首頁搜尋與標籤數量以目前已載入的分頁為範圍。
+- `notes/{noteId}` 只保存標題、標籤、類型、連結、時間及縮圖 URL 等摘要；完整 `content`、`contentDoc` 與圖片資產清單存於 `noteBodies/{noteId}`，只有展開或編輯時才讀取。
+- 摘要另保存最多 300 個標題／標籤搜尋片段及父子標籤路徑，首頁可直接查詢尚未載入分頁的筆記；`metadata/tagStats` 保存全域標籤與未分類數量。
+- 知識圖譜只讀摘要與 links；匯出頁先讀摘要，按下匯出後才每批讀取 20 篇正文並顯示進度。
+- 筆記卡片使用 IntersectionObserver 虛擬化，僅建立視窗附近（含 700px 預載區）的卡片內容；離開範圍後保留等高占位，降低大量卡片的 DOM 與圖片請求。
 - 支援標題／內容／標籤搜尋、建立／更新／標題排序、標籤篩選。
 - 模板：交易日誌、選股分析、法說會筆記。
 - 交易日誌模板會拉取大盤指數與當日交易，組成市場快照與操作計畫。
-- `.docx` 上傳會用 Mammoth 抽取文字；原始檔與圖片上傳 Firebase Storage。
+- 文章內容使用富文字編輯器，可在游標位置插入、貼上或拖入多張圖片；舊版純文字筆記可直接開啟與繼續編輯。
+- 手機照片會先在瀏覽器端轉檔與壓縮：正文圖最長邊 2048px、目標 1.5MB，另產生最長邊 480px 的縮圖；HEIC／HEIF 解碼器只在遇到該格式時動態載入。
+- 新圖片存於 KMS Storage 的 `users/{kmsUid}/notes/{noteId}/images` 與 `thumbnails`；列表採瀏覽器 lazy loading 並只使用縮圖，展開文章或編輯時才載入正文圖。
+- 圖片上傳草稿記錄在本機瀏覽器；未儲存且超過 24 小時的圖片會在下次開啟知識庫時核對 notes／trash 後清除，不會為了清理而下載圖片內容。
+- 圖片草稿亦會以 best-effort 寫入 `imageUploadDrafts`；部署 `firebase-functions/` 後，每週一 03:00 由後端核對 notes／noteBodies／trash，清理跨瀏覽器或跨裝置留下的孤兒圖片。排程 Functions 不部署就不會產生費用。
+- `.docx` 上傳會用 Mammoth 抽取文字；新文件存於 `users/{kmsUid}/notes/{noteId}/files`，單檔上限 50MB。
+- 舊資料不會自動批次下載；首頁只檢查目前 40 則分頁並顯示待遷移數量。按「遷移舊附件」後才逐筆拆分摘要／正文、搬移舊原圖並產生縮圖。載入下一頁後可繼續下一批；失敗時保留舊資料，可再次執行。
 - AI 可依標題／內容產生標籤，或從其他筆記中建議相關連結。
 - links 以筆記 ID 儲存；新增、修改、刪除筆記時，筆記本體與所有反向連結會在同一批次寫入，整批成功或整批失敗。
 - 批次匯入支援 JSON／CSV。
@@ -266,8 +279,12 @@ Symbiosis 是一個單頁式個人管理系統，分為三個彼此串接的領�
 - 本地若需 Netlify Functions，應用 `netlify dev`，單純 `npm run dev` 無法提供 proxy。
 - 必須設定兩組 Firebase 前端設定、Google OAuth client、Netlify 後端 secrets，以及外部市場／AI 金鑰。
 - 不要把 `.env` 提交；目前 `.gitignore` 已忽略 `.env`。
-- investDB 已提供 `firestore.invest.rules` 與 `firebase.invest.json`；正式上線前必須部署該規則，並繼續補齊 kmsDB rules、indexes、Storage rules 與 emulator 測試。
+- investDB 提供 `firestore.invest.rules` 與 `firebase.invest.json`；KMS 提供 `firestore.kms.rules`、`storage.kms.rules`、`firebase.kms.json` 與 Emulator 規則測試。KMS 因跨 Firebase 專案 UID 可能不同，部署前必須依 `docs/KMS_MIGRATION.md` 建立唯讀 UID mapping 並完成遷移驗證。
 - investDB 規則部署範例：`firebase deploy --only firestore:rules --config firebase.invest.json --project <invest-project-id>`。
+- KMS 規則部署範例：`firebase deploy --only firestore:rules,storage --config firebase.kms.json --project <kms-project-id>`。
+- 全域搜尋／標籤 metadata 初次建立：先執行 `npm run kms:metadata:dry-run -- --project=<kms-project-id>`，確認後再執行 `npm run kms:metadata -- --project=<kms-project-id>`。
+- `firebase-functions/` 包含標籤統計／搜尋索引維護及每週孤兒圖片清理；部署前需確認 KMS 專案計費方案與預算警示，再使用 `firebase deploy --only functions --config firebase.kms.json --project <kms-project-id>`。未部署時前端仍可使用，但舊筆記的全域搜尋依賴 metadata 重建，跨裝置孤兒清理不會執行。
+- 上線順序建議先部署 `storage.kms.rules`，再部署新版前端並執行舊附件遷移；此規則讓舊全域路徑唯讀，新上傳只能寫入使用者自己的路徑。確認所有舊附件均已遷移、舊物件已由管理端清理後，可將舊路徑的 `read` 也關閉。
 - 每次部署至少執行 build、lint、核心計算測試、Firebase rules emulator 測試與備份還原演練。
 - `npm test` 目前包含 48 項測試，其中 32 項為現股／融資、整股／零股、ETF／股票、部分賣出／全數平倉、同年度／跨年度的完整財務計算矩陣。
 
@@ -287,10 +304,13 @@ Symbiosis 是一個單頁式個人管理系統，分為三個彼此串接的領�
 - 第三輪介面精修：儀表板的「目前持倉」在手機改成可展開摘要卡，桌面仍保留完整表格與原排序功能。
 - 儀表板、股票持倉及買賣紀錄的頁首、主要／次要按鈕、字級與 44px 觸控高度已統一；更新現價與重新載入會顯示成功、部分成功或失敗提示。
 - 交易新增、更新、刪除與持倉族群儲存會顯示結果提示；失敗時保留表單內容或原族群設定，避免使用者誤以為資料已寫入。
+- 知識庫的搜尋／排序列會固定於內容上方，顯示目前結果筆數並可一鍵清除搜尋；標籤入口及筆記編輯／刪除支援鍵盤與輔助操作。
+- 手機行事曆的事件類型篩選改為橫向滑動；日期格、月份切換及事件圖示按鈕具備完整操作名稱與較大的觸控範圍。
+- Word 與 Excel 解析工具只在實際匯入檔案時載入，降低第一次開啟知識庫與行事曆的下載量。
 
 ## 12. 桌面網頁版操作
 
 - 買賣紀錄的桌面表格每頁顯示 50 筆；搜尋後會回到第一頁，頁尾顯示目前筆數範圍與總頁數。手機卡片仍顯示完整搜尋結果。
 - 頁首操作與搜尋列在桌面捲動時固定於上方；交易表格在獨立捲動區內固定表頭。
 - 表格維持原始欄位順序：「日期、類型、代號、名稱、價格、股數、手續費、交易稅、收付金額、備註」，並依交易時間顯示最新紀錄在前，不提供額外欄位排序或密度切換。
-- 儀表板提供「資金與風險、資產分布、目前持倉、行程任務」快速跳轉；各區塊可收合，收合狀態保存於目前瀏覽器。
+- 儀表板提供「資金與風險、資產分布、目前持倉、行程任務」快速跳轉；各區塊固定展開，直接顯示完整資訊。

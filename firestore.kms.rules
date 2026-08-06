@@ -1,0 +1,28 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // 跨專案 UID 由 Admin SDK 寫入 KMS Auth custom claim。規則直接讀 token，
+    // 不需為每次請求額外讀取 mapping 文件，也不允許前端自行宣告身分。
+    function ownsUserPath(userId) {
+      return signedIn()
+        && (request.auth.uid == userId || request.auth.token.get('investUid', '') == userId);
+    }
+
+    match /users/{userId}/{document=**} {
+      allow read, write: if ownsUserPath(userId);
+    }
+
+    match /uidMappings/{kmsUid} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

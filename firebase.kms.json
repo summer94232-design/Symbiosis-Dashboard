@@ -1,0 +1,23 @@
+{
+  "firestore": {
+    "rules": "firestore.kms.rules"
+  },
+  "storage": {
+    "rules": "storage.kms.rules"
+  },
+  "functions": {
+    "source": "firebase-functions"
+  },
+  "emulators": {
+    "firestore": {
+      "port": 8085
+    },
+    "storage": {
+      "port": 9195
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true
+  }
+}

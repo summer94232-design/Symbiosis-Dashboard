@@ -4,7 +4,7 @@ import { LayoutDashboard, ArrowLeftRight, TrendingUp, TrendingDown, History, Dol
 import { getDoc } from 'firebase/firestore'
 import { investDB } from './lib/firebase'
 import { userDocNested } from './lib/userDB'
-import { fetchKmsNotes, fetchKmsTagOrder, KMS_UNTAGGED_KEY } from './lib/kmsData'
+import { fetchKmsNoteSummaries, fetchKmsTagOrder, fetchKmsTagStats, KMS_UNTAGGED_KEY } from './lib/kmsData'
 import { signOutAll, switchAccount, investAuth } from './lib/auth'
 import { loadAccounts, removeAccount, type SavedAccount } from './lib/accountStore'
 import { PriceProvider } from './PriceContext'
@@ -576,14 +576,21 @@ export default function App() {
     useEffect(() => {
         if (!isKMS) return
         const loadTags = async () => {
-            const [notes, tagOrder] = await Promise.all([
-                fetchKmsNotes<{ hashtags?: string[] }>(),
+            const [stats, tagOrder] = await Promise.all([
+                fetchKmsTagStats(),
                 fetchKmsTagOrder(),
             ])
-            const tags = new Set<string>()
-            notes.forEach(note => { note.hashtags?.forEach(t => tags.add(t)) })
-            setUntaggedCount(notes.filter(note => (note.hashtags?.length ?? 0) === 0).length)
-            const rawTree = buildTree(Array.from(tags).sort())
+            let tags: string[]
+            if (stats) {
+                tags = Object.keys(stats.counts)
+                setUntaggedCount(stats.untagged)
+            } else {
+                // 後端 metadata 尚未首次重建時的相容 fallback；建立後不再全表讀取。
+                const summaries = await fetchKmsNoteSummaries<{ hashtags?: string[] }>()
+                tags = [...new Set(summaries.flatMap(note => note.hashtags || []))]
+                setUntaggedCount(summaries.filter(note => (note.hashtags?.length ?? 0) === 0).length)
+            }
+            const rawTree = buildTree(tags.sort())
             const parentOrder = tagOrder.parentOrder
             const childOrder = tagOrder.childOrder
             setTagTree(sortTreeByOrder(rawTree, parentOrder, childOrder))
