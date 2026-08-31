@@ -1,3 +1,4 @@
+import { importDayTradeFields, orderTradeImportRows, exportDayTradeFields } from '../../lib/dayTradeCsv'
 import { useState, useEffect } from 'react'
 import { getDocs, getDoc, setDoc, orderBy, query, addDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
@@ -5,14 +6,16 @@ import { invalidateTrades, invalidateCashflow, invalidateDividends, invalidateAl
 import { invalidateAllKmsData } from '../../lib/kmsData'
 import { userCol, userDoc, userDocNested, getUID } from '../../lib/userDB'
 import { buildFullBackup, downloadBackup, parseBackup, restoreFullBackup, backupSummary, countBackupDocs, type FullBackup } from '../../lib/backup'
-import { calcFee, calcTax, calcTradeTotal, calcSharesBeforeTrade, type TradeRecord, type DividendRecord } from '../../lib/calc'
+import { analyzeDayTrades, calcFee, calcTax, calcTradeTotal, calcSharesBeforeTrade, reconcileSnapshotBreakdowns, DEFAULT_MARGIN_INTEREST_RATE, type TradeRecord, type DividendRecord } from '../../lib/calc'
 // ✅ 1-2：共用 CSV 解析模組
 import { parseCSVLine, toNum, toInt } from '../../lib/csv'
 import { toLocalDateString } from '../../lib/date'
 import { Download, Upload, FileSpreadsheet, Database, FileDown, User, Calendar, FileJson, AlertTriangle } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import DataHealthCenter from '../../components/DataHealthCenter'
 import { cache } from '../../lib/cache'
+import { validateCashflowForWrite, validateDividendForWrite, validateTradeForWrite } from '../../lib/investmentValidation'
+import { updateAccountDisplayName } from '../../lib/accountStore'
+import { investAuth } from '../../lib/auth'
 
 interface SnapshotRecord {
     date: string
@@ -33,7 +36,8 @@ interface StockRow {
     Name?: string
 }
 
-interface TradeRow {
+interface TradeRow extends Omit<TradeRecord, 'type'> {
+    id?: string
     date: string
     type: string
     code: string
@@ -47,6 +51,12 @@ interface TradeRow {
     isMargin?: boolean
     marginRatio?: number
     marginRepay?: number
+    marginPrincipal?: number
+    marginInterest?: number
+    marginInterestRate?: number
+    marginRepayManual?: boolean
+    createdAt?: string
+    sequence?: number
 }
 
 interface CashflowRow {
@@ -167,6 +177,7 @@ export default function InvestSettings() {
         setNameSaving(true)
         try {
             await setDoc(userDocNested(investDB, 'settings', 'profile'), { displayName: name }, { merge: true })
+            if (investAuth.currentUser?.email) updateAccountDisplayName(investAuth.currentUser.email, name)
             setDisplayName(name)
             showMsg('✅ 顯示名稱已儲存')
         } catch {
@@ -222,8 +233,9 @@ export default function InvestSettings() {
         ])
         const tradeKeys = new Set(existTradesSnap.docs.map(d => {
             const t = d.data()
-            return `${t.date}|${t.code}|${t.type}|${Number(t.price)}|${Number(t.shares)}`
+            return `${t.date}|${t.code}|${t.type}|${Number(t.price)}|${Number(t.shares)}|${String(t.brokerAccount || '').trim()}`
         }))
+        const existingIds = new Set(existTradesSnap.docs.map(d => d.id))
         let duplicated = 0
         const validationTrades: TradeRecord[] = existTradesSnap.docs.map(d => ({ id: d.id, ...d.data() } as TradeRecord))
         const validationDividends: DividendRecord[] = dividendsSnap.docs.map(d => ({ id: d.id, ...d.data() } as DividendRecord))
@@ -246,10 +258,12 @@ export default function InvestSettings() {
         const headers = parseCSVLine(lines[0])
         let success = 0, failed = 0, skipped = 0
 
-        for (let i = 1; i < lines.length; i++) {
-            const cols = parseCSVLine(lines[i])
-            const row: Record<string, string> = {}
-            headers.forEach((h, idx) => { row[h] = cols[idx] || '' })
+        const importBaseTime = Date.now()
+        const importRows = orderTradeImportRows(lines.slice(1).map((line, index) => {
+            const cols = parseCSVLine(line)
+            return { row: Object.fromEntries(headers.map((h, idx) => [h, cols[idx] || ''])), sourceIndex: index + 1 }
+        }))
+        for (const { row, sourceIndex: i } of importRows) {
 
             const date = row['日期'] || ''
             const typeStr = row['類型'] || ''
@@ -258,6 +272,7 @@ export default function InvestSettings() {
             const price = toNum(row['價格'] || row['價格/金額'] || '')
             const shares = toInt(row['股數'])
             const note = row['備註'] || row['備註/筆記'] || ''
+            const sourceId = (row['Firestore ID'] || '').trim()
 
             if (!date || !typeStr) { skipped++; continue }
             const validTypes = ['買入', '賣出', '買進', '現貨買入', '現貨賣出', '融資買入', '融資賣出']
@@ -265,14 +280,21 @@ export default function InvestSettings() {
             if (!code || !price || !shares) { failed++; continue }
 
             const tradeType: 'buy' | 'sell' = (typeStr === '買入' || typeStr === '買進' || typeStr === '現貨買入' || typeStr === '融資買入') ? 'buy' : 'sell'
-            const tradeKey = `${date}|${code}|${tradeType}|${Number(price)}|${Number(shares)}`
-            if (tradeKeys.has(tradeKey)) { duplicated++; continue }
+            const tradeKey = `${date}|${code}|${tradeType}|${Number(price)}|${Number(shares)}|${(row['券商帳戶'] || '').trim()}`
+            if (!sourceId && tradeKeys.has(tradeKey)) { duplicated++; continue }
+            if (sourceId && existingIds.has(sourceId)) { duplicated++; continue }
             const isMargin = typeStr === '融資買入' || typeStr === '融資賣出'
             const marginRatio = isMargin
                 ? (row['融資成數'] !== undefined && row['融資成數'] !== '' ? toNum(row['融資成數']) || 0.6 : 0.6)
                 : 0
             const marginRepay = isMargin && tradeType === 'sell'
                 ? (row['融資償還金額'] !== undefined && row['融資償還金額'] !== '' ? toNum(row['融資償還金額']) : 0)
+                : 0
+            const marginPrincipal = isMargin && tradeType === 'sell' ? toNum(row['融資本金'] || '') || 0 : 0
+            const marginInterest = isMargin && tradeType === 'sell' ? toNum(row['融資利息'] || '') || 0 : 0
+            const rawInterestRate = toNum(row['融資年利率 (%)'] || '')
+            const marginInterestRate = isMargin
+                ? (rawInterestRate && rawInterestRate > 1 ? rawInterestRate / 100 : rawInterestRate || DEFAULT_MARGIN_INTEREST_RATE)
                 : 0
 
             const feeRaw = row['手續費'] !== undefined && row['手續費'] !== '' ? toNum(row['手續費']) : null
@@ -283,22 +305,45 @@ export default function InvestSettings() {
             const total = totalRaw !== null ? totalRaw
                 : calcTradeTotal({ type: tradeType, price, shares, fee, tax, isMargin, marginRatio, marginRepay })
 
-            const createdAt = new Date(Date.now() + i).toISOString()
+            const createdAt = (row['建立時間'] || '').trim() || new Date(importBaseTime + i).toISOString()
+            const importedSequence = toNum(row['同日順序'] || '')
+            const sequence = typeof importedSequence === 'number' && Number.isFinite(importedSequence) ? importedSequence : i
+            let dayTradeFields: ReturnType<typeof importDayTradeFields>
+            try { dayTradeFields = importDayTradeFields(row) } catch { failed++; continue }
             const candidate: TradeRecord = {
-                id: `__settings_csv_${i}`, date, type: tradeType, code, name, price, shares, fee, tax, total, note,
-                isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay, createdAt, sequence: i,
+                ...dayTradeFields,
+                id: sourceId || `__settings_csv_${i}`, date, type: tradeType, code, name, price, shares, fee, tax, total, note,
+                isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay,
+                marginPrincipal, marginInterest, marginInterestRate, marginRepayManual: Boolean(marginRepay), createdAt, sequence,
             }
-            if (tradeType === 'sell' && shares > calcSharesBeforeTrade(candidate, validationTrades, validationDividends)) {
+            if (!validateTradeForWrite(candidate).valid) {
+                failed++
+                continue
+            }
+            if (tradeType === 'sell' && !candidate.dayTradePending && shares > calcSharesBeforeTrade(candidate, validationTrades, validationDividends)) {
                 failed++
                 continue
             }
 
+            const existingMatchIssues = new Set(analyzeDayTrades(validationTrades, false).issues.map(issue => issue.trade.id))
+            if (analyzeDayTrades([...validationTrades, candidate], false).issues.some(issue => issue.trade === candidate || !existingMatchIssues.has(issue.trade.id))) { failed++; continue }
+
             try {
-                const docRef = await addDoc(userCol(investDB, 'trades'), {
+                const payload = {
+                    ...dayTradeFields,
                     date, type: tradeType, code, name, price, shares, fee, tax, total, note,
-                    isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay, createdAt, sequence: i,
-                })
-                validationTrades.push({ ...candidate, id: docRef.id })
+                    isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay,
+                    marginPrincipal, marginInterest, marginInterestRate, marginRepayManual: Boolean(marginRepay), createdAt, sequence,
+                }
+                let importedId = sourceId
+                if (sourceId) {
+                    await setDoc(userDoc(investDB, 'trades', sourceId), payload)
+                    existingIds.add(sourceId)
+                } else {
+                    const docRef = await addDoc(userCol(investDB, 'trades'), payload)
+                    importedId = docRef.id
+                }
+                validationTrades.push({ ...candidate, id: importedId })
                 tradeKeys.add(tradeKey)
                 if (name && code) await setDoc(userDoc(investDB, 'stockDict', code), { name })
                 success++
@@ -354,6 +399,7 @@ export default function InvestSettings() {
 
             const cashType = typeStr === '入金' || typeStr === 'in' ? 'in' : typeStr === '出金' || typeStr === 'out' ? 'out' : null
             if (!cashType) { failed++; continue }
+            if (!validateCashflowForWrite({ date, type: cashType, amount }).valid) { failed++; continue }
 
             const cashKey = `${date}|${cashType}|${Number(amount)}|${note}`
             if (cashKeys.has(cashKey)) { duplicated++; continue }
@@ -413,6 +459,7 @@ export default function InvestSettings() {
             const note = row['備註'] || ''
 
             if (!date || !code) { failed++; continue }
+            if (!validateDividendForWrite({ date, code, name, cashDividend, stockDividend }).valid) { failed++; continue }
 
             const divKey = `${date}|${code}|${Number(cashDividend) || 0}|${Number(stockDividend) || 0}`
             if (divKeys.has(divKey)) { duplicated++; continue }
@@ -451,6 +498,9 @@ export default function InvestSettings() {
                     const t = d.data() as TradeRow
                     return {
                         'Firestore ID': d.id,
+                        '建立時間': t.createdAt ?? '',
+                        '同日順序': t.sequence ?? '',
+                        ...exportDayTradeFields(t),
                         '日期': t.date,
                         '類型': t.isMargin ? (t.type === 'buy' ? '融資買入' : '融資賣出') : (t.type === 'buy' ? '買入' : '賣出'),
                         '代號': t.code,
@@ -461,6 +511,9 @@ export default function InvestSettings() {
                         '交易稅': t.tax,
                         '收付金額': t.total,
                         '融資成數': t.isMargin ? (t.marginRatio ?? 0.6) : '',
+                        '融資年利率 (%)': t.isMargin ? (t.marginInterestRate ?? DEFAULT_MARGIN_INTEREST_RATE) * 100 : '',
+                        '融資本金': t.isMargin && t.type === 'sell' ? (t.marginPrincipal ?? '') : '',
+                        '融資利息': t.isMargin && t.type === 'sell' ? (t.marginInterest ?? '') : '',
                         '融資償還金額': t.isMargin && t.type === 'sell' ? (t.marginRepay ?? 0) : '',
                         '備註': t.note ?? '',
                     }
@@ -499,10 +552,15 @@ export default function InvestSettings() {
                 '股票名稱': (d.data() as { name: string }).name,
             }))
 
-            const snapshotsData = snapshotsSnap.docs
-                .filter(d => inRange((d.data() as SnapshotRecord).date))
-                .map(d => {
-                    const s = d.data() as SnapshotRecord
+            const reconciledSnapshots = reconcileSnapshotBreakdowns(
+                snapshotsSnap.docs.map(d => d.data() as SnapshotRecord),
+                tradesSnap.docs.map(d => ({ id: d.id, ...d.data() } as TradeRecord)),
+                dividendsSnap.docs.map(d => ({ id: d.id, ...d.data() } as DividendRecord)),
+                cashSnap.docs.map(d => d.data() as CashflowRow),
+            )
+            const snapshotsData = reconciledSnapshots
+                .filter(s => inRange(s.date))
+                .map(s => {
                     return {
                         '日期': s.date,
                         '總資產': s.totalAssets,
@@ -563,9 +621,13 @@ export default function InvestSettings() {
         setExportLoading(true)
         try {
             const snap = await getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'desc')))
-            const trades = snap.docs.map(d => d.data() as TradeRow).filter(t => inRange(t.date))
+            const trades = snap.docs.map(d => ({ id: d.id, ...d.data() } as TradeRow)).filter(t => inRange(t.date))
             if (trades.length === 0) { showMsg('⚠️ 此區間沒有買賣紀錄'); setExportLoading(false); return }
             const rows = trades.map(t => ({
+                'Firestore ID': t.id ?? '',
+                '建立時間': t.createdAt ?? '',
+                '同日順序': t.sequence ?? '',
+                        ...exportDayTradeFields(t),
                 '日期': t.date,
                 '類型': t.isMargin ? (t.type === 'buy' ? '融資買入' : '融資賣出') : (t.type === 'buy' ? '買入' : '賣出'),
                 '代號': t.code,
@@ -576,11 +638,14 @@ export default function InvestSettings() {
                 '交易稅': t.tax,
                 '收付金額': t.total,
                 '融資成數': t.isMargin ? (t.marginRatio ?? 0.6) : '',
+                '融資年利率 (%)': t.isMargin ? (t.marginInterestRate ?? DEFAULT_MARGIN_INTEREST_RATE) * 100 : '',
+                '融資本金': t.isMargin && t.type === 'sell' ? (t.marginPrincipal ?? '') : '',
+                '融資利息': t.isMargin && t.type === 'sell' ? (t.marginInterest ?? '') : '',
                 '融資償還金額': t.isMargin && t.type === 'sell' ? (t.marginRepay ?? 0) : '',
                 '備註': t.note ?? '',
             }))
             exportRows(rows, '買賣紀錄', `買賣紀錄${rangeSuffix()}`, format,
-                [12, 10, 8, 12, 8, 8, 8, 8, 12, 8, 12, 16])
+                [22, 24, 12, 12, 10, 8, 12, 8, 8, 8, 8, 12, 8, 12, 16])
             showMsg(`✅ 已匯出買賣紀錄（${format.toUpperCase()}）共 ${rows.length} 筆`)
         } catch { showMsg('❌ 匯出失敗，請稍後再試') }
         setExportLoading(false)
@@ -628,8 +693,18 @@ export default function InvestSettings() {
     const exportTrend = async (format: ExportFormat) => {
         setTrendExportLoading(true)
         try {
-            const snap = await getDocs(query(userCol(investDB, 'assetSnapshots'), orderBy('date', 'asc')))
-            const records = snap.docs.map(d => d.data() as SnapshotRecord).filter(r => inRange(r.date))
+            const [snap, tradesSnap, dividendsSnap, cashSnap] = await Promise.all([
+                getDocs(query(userCol(investDB, 'assetSnapshots'), orderBy('date', 'asc'))),
+                getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
+                getDocs(query(userCol(investDB, 'dividends'), orderBy('date', 'asc'))),
+                getDocs(query(userCol(investDB, 'cashflow'), orderBy('date', 'asc'))),
+            ])
+            const records = reconcileSnapshotBreakdowns(
+                snap.docs.map(d => d.data() as SnapshotRecord),
+                tradesSnap.docs.map(d => ({ id: d.id, ...d.data() } as TradeRecord)),
+                dividendsSnap.docs.map(d => ({ id: d.id, ...d.data() } as DividendRecord)),
+                cashSnap.docs.map(d => d.data() as CashflowRow),
+            ).filter(r => inRange(r.date))
             if (records.length === 0) { showMsg('⚠️ 此區間沒有資產趨勢資料'); setTrendExportLoading(false); return }
             const rows = records.map(r => ({ '日期': r.date, '總資產': r.totalAssets, '股票市值': r.marketValue, '現金': r.cash, '融資借款': r.marginDebt ?? 0 }))
             exportRows(rows, '資產趨勢', `資產趨勢${rangeSuffix()}`, format, [14, 14, 14, 14, 14])
@@ -755,14 +830,13 @@ export default function InvestSettings() {
                         <User size={16} color="var(--c-muted)" />
                         <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>顯示名稱</span>
                     </div>
-                    <p style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '12px', lineHeight: 1.6 }}>設定後顯示在 Sidebar 的「使用者：」欄位。</p>
+                    <p style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '12px', lineHeight: 1.6 }}>顯示在側邊欄與帳號切換選單；每個登入帳號會保存自己的名稱。</p>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         <input value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveName() }} maxLength={20} placeholder="輸入名稱…" style={{ flex: 1, backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 10px', color: 'var(--c-text)', fontSize: '13px', outline: 'none', minWidth: 0 }} />
                         <button onClick={saveName} disabled={nameSaving || !nameInput.trim() || nameInput.trim() === displayName} style={{ ...btn('var(--c-accent)'), padding: '8px 14px', fontSize: '13px', flexShrink: 0, opacity: (nameSaving || !nameInput.trim() || nameInput.trim() === displayName) ? 0.5 : 1 }}>{nameSaving ? '儲存中…' : '儲存'}</button>
                     </div>
                     {displayName && <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--c-muted)' }}>目前：<span style={{ color: 'var(--c-accent)', fontWeight: 600 }}>{displayName}</span></div>}
                 </div>
-                <DataHealthCenter />
             </div>
 
             {/* ── 匯入區（兩欄） ── */}

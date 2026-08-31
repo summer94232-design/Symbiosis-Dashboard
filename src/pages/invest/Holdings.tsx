@@ -2,16 +2,17 @@ import { useState, useEffect, useRef } from 'react'
 import { getDoc, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userDocNested } from '../../lib/userDB'
-import { fetchTrades, fetchDividends } from '../../lib/investData'
+import { loadPortfolioSnapshot } from '../../lib/portfolioSnapshot'
 import InfoHint from '../../components/InfoHint'
 import ActionNotice, { type ActionNoticeState } from '../../components/ActionNotice'
-import { calcPositions, calcReturnRate, type TradeRecord, type DividendRecord } from '../../lib/calc'
+import { calcGrossAmount, calcReturnRate } from '../../lib/calc'
 // ✅ 1-2：共用 UI 樣式與損益顏色
 import { card } from '../../ui/styles'
 import { pnlColor } from '../../ui/format'
 import { formatAutoSnapshotFeedback, type AutoSnapshotResult } from '../../lib/snapshot'
 import { RefreshCw, TrendingUp, TrendingDown, Check, X, ChevronDown, ChevronUp } from 'lucide-react'
 import { usePrices } from '../../PriceContext'
+import { useInvestSync } from '../../InvestSyncContext'
 
 interface DisplayHolding {
     code: string
@@ -89,6 +90,7 @@ function GroupCell({
 export default function Holdings() {
     // ── 全域現價 Context ──
     const { prices, lastUpdated, priceLoading, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
+    const { version: syncVersion } = useInvestSync()
 
     const [holdings, setHoldings] = useState<DisplayHolding[]>([])
     const [loading, setLoading] = useState(true)
@@ -108,40 +110,20 @@ export default function Holdings() {
         setLoading(true)
         try {
             // ✅ 1-1：改走共用快取層（lib/investData）
-            const [trades, dividends] = await Promise.all([
-                fetchTrades<TradeRecord>('asc'),
-                fetchDividends<DividendRecord>('asc'),
-            ])
-            const { holdings: positions } = calcPositions(trades, dividends)
-            const activePositions = Object.values(positions).filter((pos: any) => pos.shares > 0)
-
-            const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
-            const savedPrices: Record<string, any> = priceDoc.exists() ? priceDoc.data() : {}
-            const savedAt = savedPrices._updatedAt || ''
-
-            // ★ 把 Firebase 快取匯入全域 Context
-            loadCachedPrices(savedPrices, savedAt)
+            const snapshot = await loadPortfolioSnapshot(prices)
+            loadCachedPrices(snapshot.prices, snapshot.priceUpdatedAt)
 
             const groupDoc = await getDoc(userDocNested(investDB, 'settings', 'stockGroups'))
             const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
             setStockGroups(groups)
 
-            const list: DisplayHolding[] = activePositions.map((pos: any) => {
-                // 優先用 Context 現價（可能其他頁面已更新），fallback 到 Firebase 快取
-                const ctxVal = prices[pos.code]
-                const fbVal = savedPrices[pos.code]
-                const currentPrice = ctxVal ?? (typeof fbVal === 'number' && fbVal > 0 ? fbVal : null)
-                const marketValue = currentPrice !== null ? currentPrice * pos.shares : pos.totalCost
-                const unrealizedPnL = currentPrice !== null ? marketValue - pos.totalCost : 0
-                const marginAmount = pos.marginAmount ?? 0
-                // ✅ 融資用自備款為分母，現股用全額成本
-                const returnRate = calcReturnRate(unrealizedPnL, pos.totalCost, marginAmount)
-                return {
-                    code: pos.code, name: pos.name, shares: pos.shares,
-                    avgCost: pos.avgCost, currentPrice, marketValue,
-                    totalCost: pos.totalCost, marginAmount, unrealizedPnL, returnRate
-                }
-            }).sort((a, b) => b.marketValue - a.marketValue)
+            const list: DisplayHolding[] = snapshot.holdings.map(holding => ({
+                code: holding.code, name: holding.name, shares: holding.shares,
+                avgCost: holding.avgCost, currentPrice: holding.currentPrice,
+                marketValue: holding.marketValue, totalCost: holding.totalCost,
+                marginAmount: holding.marginAmount, unrealizedPnL: holding.unrealizedPnL,
+                returnRate: holding.returnRate,
+            }))
 
             setHoldings(list)
             if (showFeedback) showNotice({ type: 'success', message: '持倉資料已重新載入。' })
@@ -182,7 +164,7 @@ export default function Holdings() {
 
         setHoldings(prev => prev.map(h => {
             const currentPrice = quotes[h.code] ?? null
-            const marketValue = currentPrice !== null ? currentPrice * h.shares : h.totalCost
+            const marketValue = currentPrice !== null ? calcGrossAmount(currentPrice, h.shares) : h.totalCost
             const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
             // ✅ 融資用自備款為分母，現股用全額成本
             const returnRate = calcReturnRate(unrealizedPnL, h.totalCost, h.marginAmount)
@@ -213,13 +195,16 @@ export default function Holdings() {
             if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [syncVersion])
 
     const totalMarketValue = holdings.reduce((s, h) => s + h.marketValue, 0)
     const totalCost = holdings.reduce((s, h) => s + h.totalCost, 0)
     const totalPnL = holdings.reduce((s, h) => s + h.unrealizedPnL, 0)
     const totalReturn = totalCost > 0 ? (totalPnL / totalCost) * 100 : 0
     const hasPrice = holdings.some(h => h.currentPrice !== null)
+    const pricedHoldings = holdings.filter(h => h.currentPrice !== null)
+    const missingPriceHoldings = holdings.filter(h => h.currentPrice === null)
+    const valuationCompleteness = holdings.length > 0 ? Math.round(pricedHoldings.length / holdings.length * 100) : 100
     const allGroups = Array.from(new Set(Object.values(stockGroups).filter(Boolean)))
 
     return (
@@ -258,6 +243,14 @@ export default function Holdings() {
                         </button>
                     </div>
                 </div>
+
+                {holdings.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '14px', padding: '8px 12px', borderRadius: '9px', border: `1px solid ${missingPriceHoldings.length ? 'color-mix(in srgb, var(--c-warning) 35%, transparent)' : 'color-mix(in srgb, var(--c-positive) 30%, transparent)'}`, background: missingPriceHoldings.length ? 'color-mix(in srgb, var(--c-warning) 7%, transparent)' : 'color-mix(in srgb, var(--c-positive) 6%, transparent)', color: missingPriceHoldings.length ? 'var(--c-warning)' : 'var(--c-positive)', fontSize: '12px' }}>
+                        {missingPriceHoldings.length ? <X size={14} /> : <Check size={14} />}
+                        <strong>估值完整度 {pricedHoldings.length}/{holdings.length}（{valuationCompleteness}%）</strong>
+                        {missingPriceHoldings.length > 0 && <span style={{ color: 'var(--c-muted)' }}>缺價：{missingPriceHoldings.map(h => h.code).join('、')}；暫以成本估算市值</span>}
+                    </div>
+                )}
 
                 <div className="holdings-stats">
                     {[

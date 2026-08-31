@@ -45,6 +45,42 @@ export interface KmsTagStats {
   updatedAt?: string
 }
 
+export function buildKmsTagStatsFromSummaries(
+  notes: Array<{ hashtags?: string[] }>,
+): KmsTagStats {
+  const counts: Record<string, number> = {}
+  const rootCounts: Record<string, number> = {}
+  let untagged = 0
+
+  notes.forEach(note => {
+    const tags = [...new Set((note.hashtags || []).filter(Boolean))]
+    if (tags.length === 0) {
+      untagged += 1
+      return
+    }
+    tags.forEach(tag => { counts[tag] = (counts[tag] || 0) + 1 })
+    new Set(tags.map(tag => tag.split('/')[0])).forEach(root => {
+      rootCounts[root] = (rootCounts[root] || 0) + 1
+    })
+  })
+
+  return { counts, rootCounts, totalNotes: notes.length, untagged }
+}
+
+export function hasUsableKmsTagStats(stats: KmsTagStats | null): stats is KmsTagStats {
+  return Boolean(stats && (stats.totalNotes > 0 || Object.keys(stats.counts).length > 0 || stats.untagged > 0))
+}
+
+export function parseKmsTagStats(data: Record<string, unknown>): KmsTagStats {
+  return {
+    counts: data.counts && typeof data.counts === 'object' ? data.counts as Record<string, number> : {},
+    rootCounts: data.rootCounts && typeof data.rootCounts === 'object' ? data.rootCounts as Record<string, number> : {},
+    totalNotes: Number(data.totalNotes) || 0,
+    untagged: Number(data.untagged) || 0,
+    updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : undefined,
+  }
+}
+
 const notesKey = () => `kms:notes:${getUID()}`
 const tagOrderKey = () => `kms:tag-order:${getUID()}`
 const trashKey = () => `kms:trash:${getUID()}`
@@ -69,28 +105,22 @@ export async function fetchKmsNoteSummaries<T = KmsNoteData>(): Promise<T[]> {
 export async function fetchKmsTagStats(): Promise<KmsTagStats | null> {
   const snapshot = await getDoc(userDoc(kmsDB, 'metadata', 'tagStats'))
   if (!snapshot.exists()) return null
-  const data = snapshot.data()
-  return {
-    counts: data.counts && typeof data.counts === 'object' ? data.counts : {},
-    rootCounts: data.rootCounts && typeof data.rootCounts === 'object' ? data.rootCounts : {},
-    totalNotes: Number(data.totalNotes) || 0,
-    untagged: Number(data.untagged) || 0,
-    updatedAt: data.updatedAt,
-  }
+  return parseKmsTagStats(snapshot.data())
 }
 
 export async function searchKmsNoteSummaries<T = KmsNoteData>(
   search: string,
   selectedTag: string,
-  pageSize = 40,
+  pageSize = 0,
 ): Promise<T[]> {
   const notes = userCol(kmsDB, 'notes')
   const normalized = normalizeKmsSearch(search).replace(/\s+/g, '').slice(0, 12)
-  const resultQuery = normalized
-    ? query(notes, where('searchTerms', 'array-contains', normalized), limit(pageSize))
+  const filter = normalized
+    ? where('searchTerms', 'array-contains', normalized)
     : selectedTag === KMS_UNTAGGED_KEY
-      ? query(notes, where('isUntagged', '==', true), limit(pageSize))
-      : query(notes, where('tagPaths', 'array-contains', selectedTag), limit(pageSize))
+      ? where('isUntagged', '==', true)
+      : where('tagPaths', 'array-contains', selectedTag)
+  const resultQuery = pageSize > 0 ? query(notes, filter, limit(pageSize)) : query(notes, filter)
   const snapshot = await getDocs(resultQuery)
   return snapshot.docs.map(note => ({ id: note.id, ...note.data() })) as T[]
 }

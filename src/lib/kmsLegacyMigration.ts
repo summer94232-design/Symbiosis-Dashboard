@@ -58,10 +58,10 @@ export async function migrateLegacyKmsNote(
   onProgress: (progress: number) => void = () => undefined,
 ): Promise<void> {
   if (!note.id) throw new Error('筆記缺少識別碼')
+  if (!needsLegacyNoteMigration(note)) return
 
   const migrateImage = Boolean(note.imageUrl && !note.coverAssetId)
   const migrateFile = Boolean(note.fileUrl && !note.fileStoragePath)
-  if (!migrateImage && !migrateFile) return
 
   let newImage: NoteImageAsset | undefined
   const regeneratedImages: NoteImageAsset[] = []
@@ -83,7 +83,7 @@ export async function migrateLegacyKmsNote(
 
   try {
     let bodyAssets = [...(note.assets || [])]
-    for (const oldAsset of bodyAssets.filter(asset => !asset.thumbnailUrl || !asset.thumbnailPath)) {
+    for (const oldAsset of bodyAssets.filter(asset => !asset.storagePath.startsWith('users/'))) {
       const sourceUrl = oldAsset.downloadUrl
       if (!sourceUrl) continue
       const file = await downloadAsFile(sourceUrl, oldAsset.originalName || `legacy-image-${oldAsset.id}.jpg`, oldAsset.mimeType || 'image/jpeg')
@@ -100,7 +100,8 @@ export async function migrateLegacyKmsNote(
       newImage = await prepareAndUploadNoteImage(imageFile, note.id, value => onProgress(value * 0.55))
       summary.imageUrl = newImage.downloadUrl
       summary.coverAssetId = newImage.id
-      summary.coverThumbnailUrl = newImage.thumbnailUrl
+      if (newImage.thumbnailUrl) summary.coverThumbnailUrl = newImage.thumbnailUrl
+      else delete summary.coverThumbnailUrl
       body.assets = [...bodyAssets, newImage]
     }
 

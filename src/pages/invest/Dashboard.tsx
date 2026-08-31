@@ -2,20 +2,23 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { getDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userDoc, userDocNested } from '../../lib/userDB'
-import { calcPositions, calcAvailableCash, calcReturnRate, calcPositionAdjustment, simulateMarginBuy, aggregateMarginPositions, type TradeRecord, type DividendRecord } from '../../lib/calc'
+import { calcGrossAmount, calcReturnRate, calcPositionAdjustment, simulateMarginBuy } from '../../lib/calc'
 // ✅ 1-2：共用 UI 樣式與損益顏色
 import { card } from '../../ui/styles'
 import { pnlColor } from '../../ui/format'
-import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown, ChevronDown, ChevronUp, Calculator } from 'lucide-react'
+import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown, ChevronDown, ChevronUp, Calculator, AlertTriangle, X } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { usePrices } from '../../PriceContext'
-import { fetchTrades, fetchDividends, fetchCashflow } from '../../lib/investData'
+import { loadPortfolioSnapshot } from '../../lib/portfolioSnapshot'
+import { useInvestSync } from '../../InvestSyncContext'
 import { formatAutoSnapshotFeedback, maybeAutoSnapshotToday, type AutoSnapshotResult } from '../../lib/snapshot'
 import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
 import ActionNotice, { type ActionNoticeState } from '../../components/ActionNotice'
 import { fetchCalendarEvents, fetchTasks, invalidateTasks } from '../../lib/plannerData'
+import { syncYahooInvestorMeetings } from '../../lib/investorMeetings'
+import { DEFAULT_MARGIN_RULES, loadMarginRules } from '../../lib/marginSettings'
 
 const COLORS = ['var(--c-accent)', 'var(--c-positive)', 'var(--c-warning)', 'var(--c-danger)', 'var(--c-purple)', '#34d399', '#fb923c', '#60a5fa', '#f472b6', '#facc15', '#38bdf8', '#4ade80']
 const CASH_COLOR = 'var(--c-muted)'
@@ -38,11 +41,6 @@ interface PieEntry {
     name: string
     value: number
     fill: string
-}
-
-interface CashRecord {
-    type: 'in' | 'out'
-    amount: number
 }
 
 interface CalendarEvent {
@@ -151,12 +149,15 @@ function GroupTooltip({ active, payload, totalAssets }: any) {
 export default function Dashboard() {
     const navigate = useNavigate()
     // ✅ 修正：改用 PriceContext，updatePrices 會同步更新全域，Holdings/Watchlist 等頁面一併反映
-    const { prices: ctxPrices, lastUpdated: ctxLastUpdated, priceLoading, updatePrices: ctxUpdatePrices } = usePrices()
+    const { prices: ctxPrices, lastUpdated: ctxLastUpdated, priceLoading, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
+    const { version: syncVersion } = useInvestSync()
 
     const [holdings, setHoldings] = useState<HoldingItem[]>([])
     const [totalCash, setTotalCash] = useState(0)
     const [realizedPnL, setRealizedPnL] = useState(0)
     const [loading, setLoading] = useState(true)
+    const [marginRules, setMarginRules] = useState(DEFAULT_MARGIN_RULES)
+    const [syncingInvestorMeetings, setSyncingInvestorMeetings] = useState(false)
     // ✅ 3-1：行程/任務側卡獨立載入狀態，不擋核心指標渲染
     const [sideLoading, setSideLoading] = useState(true)
     const [lastUpdated, setLastUpdated] = useState('')
@@ -169,6 +170,7 @@ export default function Dashboard() {
     const [expandedHoldingCode, setExpandedHoldingCode] = useState<string | null>(null)
     const [notice, setNotice] = useState<ActionNoticeState | null>(null)
     const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const [valuationNoticeVisible, setValuationNoticeVisible] = useState(false)
 
     const [upcomingEvents, setUpcomingEvents] = useState<CalendarEvent[]>([])
     const [tasks, setTasks] = useState<Task[]>([])
@@ -198,10 +200,13 @@ export default function Dashboard() {
     const [adjustmentCode, setAdjustmentCode] = useState('')
     const [adjustmentPrice, setAdjustmentPrice] = useState('')
 
+    useEffect(() => { void loadMarginRules().then(setMarginRules) }, [])
+
     const showNotice = (next: ActionNoticeState) => {
         if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
         setNotice(next)
-        noticeTimerRef.current = setTimeout(() => setNotice(null), 4200)
+        // 成功／一般提示自動收合；錯誤持續保留到使用者手動關閉。
+        if (next.type !== 'error') noticeTimerRef.current = setTimeout(() => setNotice(null), 4200)
     }
 
     const scrollToDashboardSection = (id: string) => {
@@ -214,18 +219,12 @@ export default function Dashboard() {
     const loadCore = async (showFeedback = false) => {
         setLoading(true)
         try {
-            const [
-                trades, dividends, cashRecords,
-                priceDoc, groupDoc, soldCfgDoc,
-            ] = await Promise.all([
-                // ✅ 1-1：改走共用快取層（lib/investData），多頁共用同一份資料
-                fetchTrades<TradeRecord>('asc'),
-                fetchDividends<DividendRecord>('asc'),
-                fetchCashflow<CashRecord>('asc'),
-                getDoc(userDocNested(investDB, 'settings', 'lastPrices')),
+            const [snapshot, groupDoc, soldCfgDoc] = await Promise.all([
+                loadPortfolioSnapshot(ctxPrices),
                 getDoc(userDocNested(investDB, 'settings', 'stockGroups')),
                 getDoc(userDocNested(investDB, 'settings', 'soldAlert')),
             ])
+            const trades = snapshot.trades
 
             // 賣出追蹤通知設定（與賣出追蹤頁共用同一份）
             const soldCfg = {
@@ -245,56 +244,33 @@ export default function Dashboard() {
                 })
             setSellTradesCache(sellCache)
 
-            const { holdings: positions, realized } = calcPositions(trades, dividends)
-            setRealizedPnL(realized.reduce((s, r) => s + r.realized, 0))
-
-            const savedPrices: Record<string, number | string> = priceDoc.exists() ? priceDoc.data() : {}
-            const savedAt = typeof savedPrices._updatedAt === 'string' ? savedPrices._updatedAt : ''
+            setRealizedPnL(snapshot.realizedPnL)
+            loadCachedPrices(snapshot.prices, snapshot.priceUpdatedAt)
 
             const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
             setStockGroups(groups)
 
-            let totalMarketValue = 0
-            let priceAvailable = false
-
-            // 過濾已平倉（shares <= 0）部位
-            const activePositions = Object.values(positions).filter(pos => pos.shares > 0)
-
-            const holdingList: HoldingItem[] = activePositions.map(pos => {
-                // ✅ 修正：優先用 PriceContext（跨頁同步），再 fallback Firebase 快取
-                const ctxVal = ctxPrices[pos.code]
-                const fbVal = savedPrices[pos.code]
-                const currentPrice = (typeof ctxVal === 'number' && ctxVal > 0)
-                    ? ctxVal
-                    : (typeof fbVal === 'number' && fbVal > 0 ? fbVal : null)
-                if (currentPrice !== null) priceAvailable = true
-                const marketValue = currentPrice !== null ? currentPrice * pos.shares : pos.totalCost
-                const unrealizedPnL = currentPrice !== null ? marketValue - pos.totalCost : 0
-                const marginAmount = pos.marginAmount ?? 0
-                // ✅ 融資用自備款為分母，現股用全額成本
-                const returnRate = calcReturnRate(unrealizedPnL, pos.totalCost, marginAmount)
-                totalMarketValue += marketValue
-                return { ...pos, marginAmount, currentPrice, marketValue, unrealizedPnL, returnRate, ratio: 0 }
-            })
-
-            holdingList.forEach(h => {
-                h.ratio = totalMarketValue > 0 ? (h.marketValue / totalMarketValue) * 100 : 0
-            })
-            holdingList.sort((a, b) => b.marketValue - a.marketValue)
+            const holdingList: HoldingItem[] = snapshot.holdings.map(holding => ({
+                code: holding.code, name: holding.name, shares: holding.shares,
+                avgCost: holding.avgCost, totalCost: holding.totalCost,
+                marginAmount: holding.marginAmount, currentPrice: holding.currentPrice,
+                marketValue: holding.marketValue, unrealizedPnL: holding.unrealizedPnL,
+                returnRate: holding.returnRate, ratio: holding.ratio,
+            }))
 
             setHoldings(holdingList)
             // ✅ Bug 修正：傳 false。本系統的賣出 total（收付金額）記的是「已扣除歸還券商借款後的
             //   淨入帳金額」，calcAvailableCash 直接 + sellTotal 即為正確可用現金。
             //   若傳 true 會再扣一次 calcMarginRepaid（借款本金），導致融資賣出後現金被低估。
             // ✅ 方案 A：可用現金含現金股利（與 calcAvailableCash 的全系統口徑一致）
-            setTotalCash(calcAvailableCash(cashRecords, trades, dividends))
-            setHasPrice(priceAvailable)
+            setTotalCash(snapshot.cash)
+            setHasPrice(snapshot.hasMarketPrice)
             // ✅ 修正：優先用 PriceContext 的最後更新時間，再 fallback Firebase savedAt
             if (ctxLastUpdated) setLastUpdated(ctxLastUpdated)
-            else if (savedAt) setLastUpdated(savedAt)
+            else if (snapshot.priceUpdatedAt) setLastUpdated(snapshot.priceUpdatedAt)
 
             // ── 計算融資部位（集中於 calc.ts，與資產趨勢頁口徑一致）──
-            const activeMargin: MarginPosition[] = aggregateMarginPositions(trades).map(m => ({
+            const activeMargin: MarginPosition[] = snapshot.marginPositions.map(m => ({
                 code: m.code, name: m.name, shares: m.shares,
                 marginAmount: m.marginAmount, marginCost: m.marginCost,
             }))
@@ -342,21 +318,25 @@ export default function Dashboard() {
 
     // ✅ 修正：委託 PriceContext 更新，結果自動同步到 Holdings、Watchlist 等所有頁面
     const updatePrices = async () => {
+        if (syncingInvestorMeetings) return
+        setSyncingInvestorMeetings(true)
+        const meetingSync = syncYahooInvestorMeetings()
         // 持倉代號 + 近期賣出代號（賣出追蹤通知需要）一併查詢，不額外呼叫 Firebase
         const holdingCodes = holdings.map(h => h.code)
         const sellCodes = sellTradesCache.map(t => t.code)
         const symbols = [...new Set([...holdingCodes, ...sellCodes])]
-        if (symbols.length === 0) {
-            showNotice({ type: 'info', message: '目前沒有需要更新現價的股票。' })
-            return
-        }
         let snapshotResult: AutoSnapshotResult | null = null
-        const quotes = await ctxUpdatePrices(symbols, {
-            onSnapshot: result => { snapshotResult = result },
-        })
+        let quotes: Record<string, number | null> = {}
+        if (symbols.length > 0) {
+            quotes = await ctxUpdatePrices(symbols, {
+                onSnapshot: result => { snapshotResult = result },
+            })
+        }
         const updatedCount = symbols.filter(code => typeof quotes[code] === 'number' && (quotes[code] as number) > 0).length
         let priceFeedback: ActionNoticeState
-        if (updatedCount === 0) {
+        if (symbols.length === 0) {
+            priceFeedback = { type: 'info', message: '目前沒有需要更新現價的股票。' }
+        } else if (updatedCount === 0) {
             priceFeedback = { type: 'error', message: '這次未取得有效現價，請稍後再試。' }
         } else if (updatedCount < symbols.length) {
             priceFeedback = { type: 'info', message: `已更新 ${updatedCount} 檔，另有 ${symbols.length - updatedCount} 檔暫時無報價。` }
@@ -364,12 +344,6 @@ export default function Dashboard() {
             priceFeedback = { type: 'success', message: `已更新 ${updatedCount} 檔股票現價。` }
         }
         const snapshotFeedback = snapshotResult ? formatAutoSnapshotFeedback(snapshotResult) : null
-        showNotice({
-            type: snapshotFeedback?.type === 'error' || priceFeedback.type === 'error'
-                ? 'error'
-                : snapshotFeedback?.type === 'info' || priceFeedback.type === 'info' ? 'info' : 'success',
-            message: `${priceFeedback.message}${snapshotFeedback ? ` ${snapshotFeedback.message}` : ''}`,
-        })
 
         // 用 context 回傳的即時 quotes 同步更新本頁 holdings（不等 state 重渲染）
         let totalMarketValue = 0
@@ -378,7 +352,7 @@ export default function Dashboard() {
             const rawPrice = quotes[h.code]
             const currentPrice = (typeof rawPrice === 'number' && rawPrice > 0) ? rawPrice : null
             if (currentPrice !== null) priceAvailable = true
-            const marketValue = currentPrice !== null ? currentPrice * h.shares : h.totalCost
+            const marketValue = currentPrice !== null ? calcGrossAmount(currentPrice, h.shares) : h.totalCost
             const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
             // ✅ 融資用自備款為分母，現股用全額成本
             const returnRate = calcReturnRate(unrealizedPnL, h.totalCost, h.marginAmount)
@@ -412,6 +386,27 @@ export default function Dashboard() {
             .sort((a, b) => b.changePct - a.changePct)
         setSoldAlerts(alerts)
 
+        let meetingFeedback: ActionNoticeState
+        try {
+            const result = await meetingSync
+            meetingFeedback = result.fetched === 0
+                ? { type: 'info', message: '法說會目前沒有可更新資料。' }
+                : result.changedGroups > 0
+                    ? { type: 'success', message: `法說會已同步，更新 ${result.changedGroups} 組資料。` }
+                    : { type: 'success', message: '法說會已同步，沒有新異動。' }
+        } catch (err) {
+            console.error('[Dashboard] investor meeting sync error:', err)
+            meetingFeedback = { type: 'info', message: '現價已處理，但法說會暫時無法同步。' }
+        } finally {
+            setSyncingInvestorMeetings(false)
+        }
+        showNotice({
+            type: priceFeedback.type === 'error'
+                ? 'error'
+                : snapshotFeedback?.type === 'info' || priceFeedback.type === 'info' || meetingFeedback.type === 'info' ? 'info' : 'success',
+            message: `${priceFeedback.message}${snapshotFeedback ? ` ${snapshotFeedback.message}` : ''} ${meetingFeedback.message}`,
+        })
+
     }
 
     // ✅ 優化：直接呼叫，移除不必要的 setTimeout 延遲
@@ -423,7 +418,7 @@ export default function Dashboard() {
             if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [syncVersion])
 
     // 重新載入加 30 秒 cooldown，防止連續點擊觸發多次全量讀取
     const handleReload = () => {
@@ -454,7 +449,18 @@ export default function Dashboard() {
 
     const holdingsWithPrice = holdings.filter(h => h.currentPrice !== null)
     const holdingsWithoutPrice = holdings.filter(h => h.currentPrice === null)
+    const valuationCompleteness = holdings.length > 0 ? Math.round(holdingsWithPrice.length / holdings.length * 100) : 100
     const totalUnrealized = holdingsWithPrice.reduce((s, h) => s + h.unrealizedPnL, 0)
+    const valuationIssueKey = holdingsWithoutPrice.map(holding => holding.code).sort().join('|')
+
+    useEffect(() => {
+        if (holdings.length === 0) { setValuationNoticeVisible(false); return }
+        setValuationNoticeVisible(true)
+        // 完整估值只短暫告知；缺價屬疑慮，直到使用者關閉前持續顯示。
+        if (valuationIssueKey) return
+        const timer = setTimeout(() => setValuationNoticeVisible(false), 4200)
+        return () => clearTimeout(timer)
+    }, [holdings.length, valuationIssueKey])
 
     // ── 融資維持率計算 ──
     // 維持率 = 融資股票目前市值 / 融資金額（借款） × 100%
@@ -463,7 +469,7 @@ export default function Dashboard() {
     const marginStockMarketValue = marginPositions.reduce((s, m) => {
         const h = holdings.find(h => h.code === m.code)
         // 若有現價用市值，否則用買入時成本
-        const mv = h ? h.currentPrice !== null ? h.currentPrice * m.shares : m.marginCost : m.marginCost
+        const mv = h ? h.currentPrice !== null ? calcGrossAmount(h.currentPrice, m.shares) : m.marginCost : m.marginCost
         return s + mv
     }, 0)
     const marginRatioValue = totalMarginDebt > 0 ? (marginStockMarketValue / totalMarginDebt) * 100 : null
@@ -499,11 +505,12 @@ export default function Dashboard() {
     // 淨資產 = 市值 + 現金 − 融資借款（負債）。與資產趨勢、年度回顧快照口徑一致。
     // 註：totalAssets（毛額）仍用於圓餅圖佔比與維持率分母，故兩者並存。
     const netAssets = totalAssets - totalMarginDebt
+    const cashShortfall = Math.max(-totalCash, 0)
 
     // 維持率顏色：>160% 綠，130~160% 橙，<130% 紅
     const marginRatioColor = marginRatioValue === null ? 'var(--c-muted)'
-        : marginRatioValue >= 160 ? 'var(--c-positive)'
-            : marginRatioValue >= 130 ? 'var(--c-warning)'
+        : marginRatioValue >= marginRules.safeRatio ? 'var(--c-positive)'
+            : marginRatioValue >= marginRules.maintenanceRatio ? 'var(--c-warning)'
                 : 'var(--c-danger)'
 
     // 融資加碼試算結果（即時計算，純前端）
@@ -511,11 +518,11 @@ export default function Dashboard() {
     const simSharesNum = parseInt(simShares, 10)
     const simRatioNum = parseFloat(simRatio)
     const simResult = (simOpen && simPriceNum > 0 && simSharesNum > 0 && simRatioNum > 0)
-        ? simulateMarginBuy(marginStockMarketValue, totalMarginDebt, simPriceNum, simSharesNum, simRatioNum)
+        ? simulateMarginBuy(marginStockMarketValue, totalMarginDebt, simPriceNum, simSharesNum, simRatioNum, marginRules)
         : null
     const simRatioColor = simResult === null ? 'var(--c-muted)'
-        : simResult.newMarginRatio >= 160 ? 'var(--c-positive)'
-            : simResult.newMarginRatio >= 130 ? 'var(--c-warning)'
+        : simResult.newMarginRatio >= marginRules.safeRatio ? 'var(--c-positive)'
+            : simResult.newMarginRatio >= marginRules.maintenanceRatio ? 'var(--c-warning)'
                 : 'var(--c-danger)'
 
     // 個股圓餅圖
@@ -697,13 +704,23 @@ export default function Dashboard() {
                         <button
                             className="ui-button ui-button-primary"
                             onClick={() => void updatePrices()}
-                            disabled={priceLoading || loading}
+                            disabled={priceLoading || loading || syncingInvestorMeetings}
+                            title="更新股票現價、今日資產快照與法說會資料"
                         >
-                            <RefreshCw size={15} className={priceLoading ? 'is-spinning' : undefined} />
-                            {priceLoading ? '更新中...' : '更新現價'}
+                            <RefreshCw size={15} className={priceLoading || syncingInvestorMeetings ? 'is-spinning' : undefined} />
+                            {priceLoading || syncingInvestorMeetings ? '同步中...' : '更新現價'}
                         </button>
                     </div>
                 </div>
+
+                {holdings.length > 0 && valuationNoticeVisible && (
+                    <div role={holdingsWithoutPrice.length ? 'alert' : 'status'} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px', padding: '8px 10px 8px 12px', borderRadius: '9px', border: `1px solid ${holdingsWithoutPrice.length ? 'color-mix(in srgb, var(--c-warning) 35%, transparent)' : 'color-mix(in srgb, var(--c-positive) 30%, transparent)'}`, background: holdingsWithoutPrice.length ? 'color-mix(in srgb, var(--c-warning) 7%, transparent)' : 'color-mix(in srgb, var(--c-positive) 6%, transparent)', color: holdingsWithoutPrice.length ? 'var(--c-warning)' : 'var(--c-positive)', fontSize: '12px' }}>
+                        {holdingsWithoutPrice.length ? <AlertTriangle size={14} /> : <CheckSquare size={14} />}
+                        <strong>估值完整度 {holdingsWithPrice.length}/{holdings.length}（{valuationCompleteness}%）</strong>
+                        {holdingsWithoutPrice.length > 0 && <span style={{ color: 'var(--c-muted)', flex: 1 }}>缺價：{holdingsWithoutPrice.map(h => h.code).join('、')}；暫以成本估算市值</span>}
+                        <button type="button" aria-label="關閉估值完整度提示" onClick={() => setValuationNoticeVisible(false)} style={{ marginLeft: 'auto', border: 0, background: 'transparent', color: 'currentColor', cursor: 'pointer', display: 'grid', placeItems: 'center', padding: '2px', opacity: 0.75 }}><X size={14} /></button>
+                    </div>
+                )}
 
                 <nav className="dashboard-section-nav" aria-label="儀表板區塊導覽">
                     {DASHBOARD_SECTIONS.map(section => (
@@ -765,13 +782,14 @@ export default function Dashboard() {
                             {[
                                 { label: '總資產', value: `$${netAssets.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: DollarSign },
                                 { label: '股票總市值', value: `$${totalMarketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: BarChart2 },
-                                { label: '可用現金', value: `$${totalCash.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-warning)', icon: DollarSign },
-                            ].map(({ label, value, color, icon: Icon }) => (
-                                <div key={label} className="dashboard-kpi-card" style={card}>
+                                { label: '可用現金', value: `$${totalCash.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: cashShortfall > 0 ? 'var(--c-danger)' : 'var(--c-warning)', icon: DollarSign, cashWarning: cashShortfall > 0 },
+                            ].map(({ label, value, color, icon: Icon, cashWarning }) => (
+                                <div key={label} className="dashboard-kpi-card" style={{ ...card, borderColor: cashWarning ? 'color-mix(in srgb, var(--c-danger) 55%, var(--c-border))' : card.borderColor, background: cashWarning ? 'linear-gradient(135deg, var(--c-sidebar) 0%, color-mix(in srgb, var(--c-danger) 8%, transparent) 100%)' : card.backgroundColor }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                         <div>
                                             <div style={{ fontSize: '13px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}</div>
                                             <div style={{ fontSize: 'clamp(16px, 2vw, 22px)', fontWeight: 700, color }}>{value}</div>
+                                            {cashWarning && <div role="alert" style={{ marginTop: '5px', color: 'var(--c-danger)', fontSize: '11px', fontWeight: 700 }}>可能違約交割 · 資金缺口 ${cashShortfall.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>}
                                         </div>
                                         <Icon size={18} color={color} style={{ opacity: 0.5 }} />
                                     </div>
@@ -1010,11 +1028,11 @@ export default function Dashboard() {
                                 <div style={{
                                     ...card,
                                     display: 'flex', flexDirection: 'column',
-                                    borderColor: marginRatioValue !== null && marginRatioValue < 130 ? 'rgba(255,87,87,0.5)'
-                                        : marginRatioValue !== null && marginRatioValue < 160 ? 'rgba(245,166,35,0.4)'
+                                    borderColor: marginRatioValue !== null && marginRatioValue < marginRules.maintenanceRatio ? 'rgba(255,87,87,0.5)'
+                                        : marginRatioValue !== null && marginRatioValue < marginRules.safeRatio ? 'rgba(245,166,35,0.4)'
                                             : 'var(--c-border)',
-                                    background: marginRatioValue !== null && marginRatioValue < 130 ? 'linear-gradient(135deg, var(--c-sidebar) 0%, color-mix(in srgb, var(--c-danger) 6%, transparent) 100%)'
-                                        : marginRatioValue !== null && marginRatioValue < 160 ? 'linear-gradient(135deg, var(--c-sidebar) 0%, color-mix(in srgb, var(--c-warning) 5%, transparent) 100%)'
+                                    background: marginRatioValue !== null && marginRatioValue < marginRules.maintenanceRatio ? 'linear-gradient(135deg, var(--c-sidebar) 0%, color-mix(in srgb, var(--c-danger) 6%, transparent) 100%)'
+                                        : marginRatioValue !== null && marginRatioValue < marginRules.safeRatio ? 'linear-gradient(135deg, var(--c-sidebar) 0%, color-mix(in srgb, var(--c-warning) 5%, transparent) 100%)'
                                             : 'var(--c-sidebar)'
                                 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
@@ -1032,10 +1050,10 @@ export default function Dashboard() {
                                                     {marginRatioValue !== null && (
                                                         <span style={{
                                                             fontSize: '12px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px',
-                                                            backgroundColor: marginRatioValue >= 160 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : marginRatioValue >= 130 ? 'color-mix(in srgb, var(--c-warning) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)',
+                                                            backgroundColor: marginRatioValue >= marginRules.safeRatio ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : marginRatioValue >= marginRules.maintenanceRatio ? 'color-mix(in srgb, var(--c-warning) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)',
                                                             color: marginRatioColor
                                                         }}>
-                                                            {marginRatioValue >= 160 ? '✓ 安全' : marginRatioValue >= 130 ? '⚠ 留意' : '⚠ 危險'}
+                                                            {marginRatioValue >= marginRules.safeRatio ? '✓ 安全' : marginRatioValue >= marginRules.maintenanceRatio ? '⚠ 留意' : '⚠ 危險'}
                                                         </span>
                                                     )}
                                                 </div>
@@ -1066,9 +1084,9 @@ export default function Dashboard() {
                                     {marginRatioValue !== null && (
                                         <div style={{ marginTop: '20px' }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', lineHeight: '15px', color: 'var(--c-muted)', marginBottom: '6px' }}>
-                                                <span>斷頭線 120%</span>
-                                                <span>追繳線 130%</span>
-                                                <span>安全線 160%</span>
+                                                <span>斷頭線 {marginRules.liquidationRatio}%</span>
+                                                <span>追繳線 {marginRules.maintenanceRatio}%</span>
+                                                <span>安全線 {marginRules.safeRatio}%</span>
                                                 <span>目前 {marginRatioValue.toFixed(1)}%</span>
                                             </div>
                                             <div style={{ height: '10px', backgroundColor: 'var(--c-bg)', borderRadius: '5px', overflow: 'hidden', position: 'relative' }}>
@@ -1085,9 +1103,9 @@ export default function Dashboard() {
                                         <div style={{ marginTop: '14px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                                             {marginPositions.map(m => {
                                                 const h = holdings.find(h => h.code === m.code)
-                                                const mv = h ? (h.currentPrice !== null ? h.currentPrice * m.shares : m.marginCost) : m.marginCost
+                                                const mv = h ? (h.currentPrice !== null ? calcGrossAmount(h.currentPrice, m.shares) : m.marginCost) : m.marginCost
                                                 const ratio = m.marginAmount > 0 ? (mv / m.marginAmount) * 100 : 0
-                                                const rColor = ratio >= 160 ? 'var(--c-positive)' : ratio >= 130 ? 'var(--c-warning)' : 'var(--c-danger)'
+                                                const rColor = ratio >= marginRules.safeRatio ? 'var(--c-positive)' : ratio >= marginRules.maintenanceRatio ? 'var(--c-warning)' : 'var(--c-danger)'
                                                 return (
                                                     <div key={m.code} style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '8px 12px', border: `1px solid ${rColor}28`, minWidth: '120px' }}>
                                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
@@ -1102,9 +1120,9 @@ export default function Dashboard() {
                                     )}
 
                                     {/* 危險警示 */}
-                                    {marginRatioValue !== null && marginRatioValue < 130 && (
+                                    {marginRatioValue !== null && marginRatioValue < marginRules.maintenanceRatio && (
                                         <div style={{ marginTop: '12px', padding: '8px 12px', backgroundColor: 'rgba(255,87,87,0.08)', border: '1px solid rgba(255,87,87,0.25)', borderRadius: '8px', fontSize: '12px', color: 'var(--c-danger)' }}>
-                                            ⚠️ 維持率低於 130%，請留意追繳風險！強制斷頭線為 120%。
+                                            ⚠️ 維持率低於 {marginRules.maintenanceRatio}%，請留意追繳風險！斷頭線為 {marginRules.liquidationRatio}%。
                                         </div>
                                     )}
 
@@ -1152,7 +1170,7 @@ export default function Dashboard() {
                                                             <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>加碼後維持率</div>
                                                             <div style={{ fontSize: '18px', fontWeight: 700, color: simRatioColor }}>{simResult.newMarginRatio.toFixed(1)}%</div>
                                                             <div style={{ fontSize: '11px', marginTop: '3px', color: simRatioColor, fontWeight: 600 }}>
-                                                                {simResult.newMarginRatio >= 160 ? '✓ 安全' : simResult.newMarginRatio >= 130 ? '⚠ 留意' : '⚠ 危險'}
+                                                                {simResult.newMarginRatio >= marginRules.safeRatio ? '✓ 安全' : simResult.newMarginRatio >= marginRules.maintenanceRatio ? '⚠ 留意' : '⚠ 危險'}
                                                             </div>
                                                         </div>
                                                         <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '10px 12px' }}>
@@ -1170,13 +1188,13 @@ export default function Dashboard() {
                                                             <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>${simResult.addedEquity.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
                                                         </div>
                                                         <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '10px 12px' }}>
-                                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>距追繳線(130%)緩衝</div>
+                                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>距追繳線({marginRules.maintenanceRatio}%)緩衝</div>
                                                             <div style={{ fontSize: '14px', fontWeight: 600, color: simResult.bufferTo130 >= 0 ? 'var(--c-positive)' : 'var(--c-danger)' }}>
                                                                 {simResult.bufferTo130 >= 0 ? '+' : ''}${simResult.bufferTo130.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
                                                             </div>
                                                         </div>
                                                         <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '10px 12px' }}>
-                                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>距斷頭線(120%)緩衝</div>
+                                                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>距斷頭線({marginRules.liquidationRatio}%)緩衝</div>
                                                             <div style={{ fontSize: '14px', fontWeight: 600, color: simResult.bufferTo120 >= 0 ? 'var(--c-positive)' : 'var(--c-danger)' }}>
                                                                 {simResult.bufferTo120 >= 0 ? '+' : ''}${simResult.bufferTo120.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
                                                             </div>
@@ -1193,12 +1211,6 @@ export default function Dashboard() {
                         </div>
                         </section>
                         {/* ── /倉位 + 融資 並排卡片 ── */}
-
-                        {hasPrice && holdingsWithoutPrice.length > 0 && (
-                            <div style={{ marginBottom: '12px', padding: '10px 14px', backgroundColor: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.25)', borderRadius: '8px', fontSize: '12px', color: 'var(--c-warning)' }}>
-                                ⚠️ {holdingsWithoutPrice.length} 檔持倉（{holdingsWithoutPrice.map(h => h.code).join('、')}）尚未更新現價，市值以成本計算，未實現損益僅計算已有現價的持倉。
-                            </div>
-                        )}
 
                         {/* ── 兩個圓餅圖並排 ── */}
                         <section id="dashboard-allocation" className="dashboard-section">

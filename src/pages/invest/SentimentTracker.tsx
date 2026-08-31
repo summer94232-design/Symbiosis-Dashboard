@@ -3,6 +3,7 @@ import { addDoc, getDocs, deleteDoc, updateDoc, orderBy, query } from 'firebase/
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { usePrices } from '../../PriceContext'
+import { useInvestSync } from '../../InvestSyncContext'
 import { toLocalDateString } from '../../lib/date'
 import { Plus, Trash2, RefreshCw, TrendingUp, TrendingDown, Target, Minus, ChevronDown, ChevronRight, Pencil, Check, X } from 'lucide-react'
 
@@ -122,6 +123,7 @@ function calcGroupStats(records: SentimentRecord[]) {
 // ── 主元件 ─────────────────────────────────────────────────────────────────
 
 export default function SentimentTracker() {
+    const { version: syncVersion } = useInvestSync()
     const [records, setRecords] = useState<SentimentRecord[]>([])
     const [loading, setLoading] = useState(true)
     const [priceLoading, setPriceLoading] = useState(false)
@@ -161,7 +163,7 @@ export default function SentimentTracker() {
         setLoading(false)
     }, [])
 
-    useEffect(() => { load() }, [load])
+    useEffect(() => { void load() }, [load, syncVersion])
 
     // ── 群組化（依股票代號分組，組內依時間新→舊） ───────────────────────────
 

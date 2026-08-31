@@ -8,6 +8,8 @@ import { lookupStockName, cacheStockName, saveStockName } from '../../lib/stockD
 import { toLocalDateString } from '../../lib/date'
 import { card, inp, lbl, btn } from '../../ui/styles'
 import { Pencil, Trash2, X, Check } from 'lucide-react'
+import { useInvestSync } from '../../InvestSyncContext'
+import { validateDividendForWrite } from '../../lib/investmentValidation'
 
 interface DividendRecord {
     id?: string
@@ -21,11 +23,13 @@ interface DividendRecord {
 
 const empty: DividendRecord = { date: toLocalDateString(), code: '', name: '', cashDividend: 0, stockDividend: 0, note: '' }
 export default function Dividend() {
+    const { version: syncVersion } = useInvestSync()
     const [records, setRecords] = useState<DividendRecord[]>([])
     const [editingId, setEditingId] = useState<string | null>(null)
     const [form, setForm] = useState<DividendRecord>(empty)
     const [loading, setLoading] = useState(false)
     const [lookingUp, setLookingUp] = useState(false)
+    const [formError, setFormError] = useState('')
     const lookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const load = async () => {
@@ -33,7 +37,7 @@ export default function Dividend() {
         setRecords(await fetchDividends<DividendRecord>('desc'))
     }
 
-    useEffect(() => { load() }, [])
+    useEffect(() => { void load() }, [syncVersion])
 
     // ★ debounce 500ms 再查詢
     const handleCodeChange = (code: string) => {
@@ -52,7 +56,9 @@ export default function Dividend() {
     }
 
     const handleSave = async () => {
-        if (!form.code || !form.date) return
+        const validation = validateDividendForWrite(form)
+        if (!validation.valid) { setFormError(validation.errors.join('；')); return }
+        setFormError('')
         setLoading(true)
         if (editingId) {
             await updateDoc(userDoc(investDB, 'dividends', editingId), { ...form })
@@ -69,9 +75,9 @@ export default function Dividend() {
 
     const handleEdit = (r: DividendRecord) => {
         if (r.code && r.name) cacheStockName(r.code, r.name)
-        setForm(r); setEditingId(r.id!)
+        setForm(r); setEditingId(r.id!); setFormError('')
     }
-    const handleCancel = () => { setForm(empty); setEditingId(null) }
+    const handleCancel = () => { setForm(empty); setEditingId(null); setFormError('') }
     const handleDelete = async (id: string) => {
         if (!confirm('確定要刪除？')) return
         await deleteDoc(userDoc(investDB, 'dividends', id))
@@ -132,6 +138,7 @@ export default function Dividend() {
                         <div><label style={lbl}>股票股利（股）</label><input type="number" style={inp} placeholder="0" value={form.stockDividend || ''} onChange={e => setForm(f => ({ ...f, stockDividend: parseFloat(e.target.value) || 0 }))} /></div>
                         <div><label style={lbl}>備註</label><input style={inp} placeholder="選填" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></div>
                     </div>
+                    {formError && <div style={{ color: 'var(--c-danger)', fontSize: '12px', marginTop: '10px' }}>無法儲存：{formError}</div>}
                     <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
                         {editingId && <button style={btn('var(--c-border)')} onClick={handleCancel}><X size={14} />取消編輯</button>}
                         <button style={btn('var(--c-accent)')} onClick={handleSave} disabled={loading}>

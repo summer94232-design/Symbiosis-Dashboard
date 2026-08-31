@@ -7,6 +7,7 @@ import InfoHint from '../../components/InfoHint'
 import { card, inp } from '../../ui/styles'
 import { pnlColor } from '../../ui/format'
 import { Search, TrendingUp, TrendingDown, Calendar, X } from 'lucide-react'
+import { useInvestSync } from '../../InvestSyncContext'
 
 
 // 快速時間範圍選項
@@ -57,6 +58,7 @@ function getPresetDates(range: RangeOption): { from: string; to: string } {
 }
 
 export default function HistoryPnL() {
+    const { version: syncVersion } = useInvestSync()
     const [records, setRecords] = useState<RealizedRecord[]>([])
     const [dividends, setDividends] = useState<DividendRecord[]>([])
     const [loading, setLoading] = useState(true)
@@ -84,7 +86,7 @@ export default function HistoryPnL() {
         setLoading(false)
     }
 
-    useEffect(() => { void load() }, [])
+    useEffect(() => { void load() }, [syncVersion])
 
     // ── 解析生效中的時間範圍 ──────────────────────────────────────────
     const { from: activeFrom, to: activeTo } = useMemo(() => {
@@ -270,7 +272,7 @@ export default function HistoryPnL() {
                         <div key={label} style={card}>
                             <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '6px', display: 'flex', alignItems: 'center' }}>
                                 {label}
-                                {(label === '累計已實現損益' || label === '區間已實現損益') && <InfoHint text="賣出價 − 賣出當時的移動平均成本（含手續費、配股攤薄）。與年度回顧的 XIRR、資產趨勢的 TWR 口徑不同，數字不同屬正常。" />}
+                                {(label === '累計已實現損益' || label === '區間已實現損益') && <InfoHint text="賣出淨收入扣除成本：自動沖抵／人工指定的當沖使用配對買入成本，其餘使用移動平均成本（含費稅、配股攤薄）。部分當沖會拆為兩筆損益列。與 XIRR、TWR 的報酬率口徑不同。" />}
                                 {label === '平均報酬率' && <InfoHint text="各筆已實現交易報酬率的簡單平均（每筆等權、非金額加權），大額與小額交易權重相同。" />}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -365,7 +367,7 @@ export default function HistoryPnL() {
                                             <tr key={i}>
                                                 <td style={{ color: 'var(--c-muted)', fontSize: '13px' }}>{r.date}</td>
                                                 <td><span style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{r.code}</span></td>
-                                                <td style={{ color: 'var(--c-text)' }}>{r.name}</td>
+                                                <td style={{ color: 'var(--c-text)' }}>{r.name}{r.category === 'dayTrade' && <small style={{ marginLeft: '6px', color: 'var(--c-accent)' }}>當沖</small>}</td>
                                                 <td style={{ color: 'var(--c-muted)' }}>{r.shares.toLocaleString()}</td>
                                                 <td style={{ color: 'var(--c-muted)', fontFamily: 'monospace' }}>{r.avgCost.toFixed(2)}</td>
                                                 <td style={{ color: 'var(--c-text)', fontFamily: 'monospace', fontWeight: 600 }}>{r.sellPrice.toFixed(2)}</td>

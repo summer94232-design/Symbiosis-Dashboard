@@ -4,14 +4,21 @@ export const MIN_FEE = 20        // 整股最低手續費
 export const MIN_FEE_ODD = 1     // 零股最低手續費
 export const TAX_RATE_STOCK = 0.003
 export const TAX_RATE_ETF = 0.001
+export const DEFAULT_MARGIN_INTEREST_RATE = 0.0625
 
 export const isETF = (code: string) => code.replace('.TW', '').startsWith('00')
+
+// 台灣券商的成交金額以「元」為單位，小數部分無條件捨去。
+// 零股在單價含 0.5／0.05 時尤其容易出現 0.5～1 元的帳差。
+export function calcGrossAmount(price: number, shares: number): number {
+    return Math.floor((price || 0) * (shares || 0))
+}
 
 // 計算手續費（6折，無條件捨去）
 // - 整股（shares >= 1000）：最低 20 元
 // - 零股（shares < 1000）：最低 1 元
 export function calcFee(price: number, shares: number): number {
-    const amount = price * shares
+    const amount = calcGrossAmount(price, shares)
     const fee = Math.floor(amount * FEE_RATE * FEE_DISCOUNT)
     const minFee = shares < 1000 ? MIN_FEE_ODD : MIN_FEE
     return Math.max(fee, minFee)
@@ -19,7 +26,7 @@ export function calcFee(price: number, shares: number): number {
 
 // 計算交易稅（賣出才有）
 export function calcTax(price: number, shares: number, code: string): number {
-    const amount = price * shares
+    const amount = calcGrossAmount(price, shares)
     const rate = isETF(code) ? TAX_RATE_ETF : TAX_RATE_STOCK
     return Math.floor(amount * rate)
 }
@@ -40,8 +47,7 @@ export function calcMarginDebt(totalPrice: number, marginRatio: number): number 
  *   融資買入：自備款 + 手續費（= 股票總價 − 融資借款 + 手續費，借款由券商撥付不佔現金）
  *   現股賣出：股票總價 − 手續費 − 交易稅
  *   融資賣出：股票總價 − 手續費 − 交易稅 − 償還融資借款(本金＋利息)
- *             ⚠️ 償還金額含利息、且原始借款已捨去至千元，系統無法自動推算，
- *                故由 marginRepay 帶入（使用者依券商對帳單輸入）。
+ *             系統可先依歷史融資批次估算，再由 marginRepay 接受券商實際金額覆寫。
  */
 export function calcTradeTotal(t: {
     type: 'buy' | 'sell'
@@ -53,7 +59,7 @@ export function calcTradeTotal(t: {
     marginRatio?: number
     marginRepay?: number
 }): number {
-    const gross = (t.price || 0) * (t.shares || 0)
+    const gross = calcGrossAmount(t.price, t.shares)
     const fee = t.fee || 0
     const tax = t.tax || 0
     if (t.type === 'buy') {
@@ -100,10 +106,20 @@ export interface TradeRecord {
     marginRatio?: number   // 融資成數（例：0.6）
     marginAmount?: number  // 融資借款金額（買入時）
     marginRepay?: number   // 融資賣出時償還的借款（本金＋利息，依券商對帳單）
+    marginPrincipal?: number // 融資賣出時歸還的本金（系統估算或人工確認）
+    marginInterest?: number  // 融資賣出時支付的利息（實現損益應扣除）
+    marginInterestRate?: number // 年利率，小數表示（例：0.0625 = 6.25%）
+    marginRepayManual?: boolean // 償還總額是否曾依券商資料手動覆寫
     /** 同日交易排序時間；新資料一律寫入，舊資料沒有時退回 sequence / id */
     createdAt?: string
     /** CSV 等批次來源可提供的穩定原始順序 */
     sequence?: number
+    brokerAccount?: string // 券商帳戶識別；空白代表既有預設帳戶
+    tradingSession?: 'regular' | 'odd' | 'block'
+    dayTradeExcluded?: boolean
+    dayTradePending?: boolean // 先賣後買尚待補登回補，不能視為已沖銷
+    dayTradeMatches?: { buyId: string; shares: number }[] // 僅存於賣出，保留明確配對
+    dayTradeMode?: 'auto' | 'manual' // 未設定預設自動；既有非空明確配對仍優先
 }
 
 export interface DividendRecord {
@@ -134,11 +150,127 @@ export interface RealizedRecord {
     sellPrice: number
     realized: number
     returnRate: number
+    tradeId?: string
+    category?: 'dayTrade' | 'inventory'
+    holdingDays?: number // 非當沖按股數加權持有天數
 }
 
 export interface CalcResult {
     holdings: Record<string, HoldingPosition>
     realized: RealizedRecord[]
+    dailyHoldings?: Record<string, Record<string, HoldingPosition>>
+}
+
+export interface DayTradePair { buy: TradeRecord; sell: TradeRecord; shares: number }
+export interface DayTradeAnalysis {
+    confirmed: DayTradePair[]
+    automatic: DayTradePair[]
+    candidates: DayTradePair[]
+    uncertain: TradeRecord[]
+    matchedShares: Map<TradeRecord, number>
+    issues: { trade: TradeRecord; message: string }[]
+}
+
+/** 沒有來源市場註記時，只將完整整張視為一般現股；混合股數不猜市場。 */
+export function inferTradingSession(t: Pick<TradeRecord, 'tradingSession' | 'shares'>): 'regular' | 'odd' | 'block' | 'unknown' {
+    if (t.tradingSession) return t.tradingSession
+    if (!Number.isInteger(t.shares) || t.shares <= 0) return 'unknown'
+    if (t.shares < 1000) return 'odd'
+    return t.shares % 1000 === 0 ? 'regular' : 'unknown'
+}
+
+export function usesManualDayTradeMatching(t: TradeRecord): boolean {
+    return t.dayTradeMode === 'manual'
+        || (t.dayTradeMode !== 'auto' && Array.isArray(t.dayTradeMatches) && t.dayTradeMatches.length > 0)
+}
+
+/** 自動沖抵是帳本成本歸屬，不代表已向券商確認資格、申報或優惠稅率。 */
+export function analyzeDayTrades(trades: TradeRecord[], includeCandidates = true): DayTradeAnalysis {
+    const confirmed: DayTradePair[] = [], automatic: DayTradePair[] = [], candidates: DayTradePair[] = []
+    const uncertain: TradeRecord[] = []
+    const issues: DayTradeAnalysis['issues'] = []
+    const matchedShares = new Map<TradeRecord, number>()
+    const ordered = [...trades].filter(Boolean).sort((a, b) => compareTradeRecords(a, b)
+        || a.price - b.price || a.shares - b.shares || a.fee - b.fee || a.tax - b.tax)
+    const ids = new Map<string, TradeRecord>()
+    const duplicateIds = new Set<string>()
+    for (const t of ordered) if (t.id) {
+        if (ids.has(t.id)) duplicateIds.add(t.id)
+        ids.set(t.id, t)
+    }
+    const eligible = (t: TradeRecord) => Boolean((!t.id || !duplicateIds.has(t.id)) && t.date && t.code
+        && !t.isMargin && !t.dayTradeExcluded && t.tradingSession !== 'odd' && t.tradingSession !== 'block'
+        && Number.isFinite(t.price) && t.price > 0 && Number.isInteger(t.shares) && t.shares >= 1000
+        && Number.isFinite(t.fee) && t.fee >= 0 && Number.isFinite(t.tax) && t.tax >= 0)
+    const sameGroup = (a: TradeRecord, b: TradeRecord) => a.date === b.date && a.code === b.code
+        && (a.brokerAccount || '').trim() === (b.brokerAccount || '').trim()
+    const capacity = (t: TradeRecord) => Math.floor(t.shares / 1000) * 1000
+    for (const sell of ordered) {
+        if (sell.dayTradeMode === 'auto') continue
+        if (sell.dayTradeMatches === undefined) continue
+        if (!Array.isArray(sell.dayTradeMatches)) {
+            issues.push({ trade: sell, message: '當沖配對格式錯誤，請重新確認。' }); continue
+        }
+        // 單筆賣出的配對採全有或全無；不默默縮減已確認數量。
+        const local = new Map<TradeRecord, number>()
+        let total = 0, invalid = false
+        for (const link of sell.dayTradeMatches) {
+            const buy = link && ids.get(link.buyId)
+            const qty = link?.shares
+            if (!buy || buy.type !== 'buy' || sell.type !== 'sell' || !eligible(buy) || !eligible(sell)
+                || !sameGroup(buy, sell) || !Number.isInteger(qty) || qty <= 0 || qty % 1000 !== 0) {
+                invalid = true; break
+            }
+            local.set(buy, (local.get(buy) || 0) + qty)
+            total += qty
+            if ((local.get(buy) || 0) + (matchedShares.get(buy) || 0) > capacity(buy)) invalid = true
+        }
+        if (total > capacity(sell)) invalid = true
+        if (invalid) {
+            issues.push({ trade: sell, message: '當沖配對失效：請核對買入紀錄、日期、帳戶、交易類別與股數，再重新確認。' })
+            continue
+        }
+        for (const [buy, shares] of local) {
+            confirmed.push({ buy, sell, shares })
+            matchedShares.set(buy, (matchedShares.get(buy) || 0) + shares)
+        }
+        matchedShares.set(sell, total)
+    }
+    const invalid = new Set(issues.map(issue => issue.trade))
+    const buys = ordered.filter(t => t.type === 'buy' && eligible(t))
+    // 先保留人工指定配對，再使用剩餘股數自動配對；不受輸入先買或先賣影響。
+    for (const sell of ordered.filter(t => t.type === 'sell' && eligible(t))) {
+        if (invalid.has(sell)) continue
+        const matchingBuys = buys.filter(buy => sameGroup(buy, sell))
+        if (matchingBuys.length && !usesManualDayTradeMatching(sell)
+            && (inferTradingSession(sell) === 'unknown' || matchingBuys.some(buy => inferTradingSession(buy) === 'unknown'))) {
+            uncertain.push(sell)
+        }
+        if (usesManualDayTradeMatching(sell) || inferTradingSession(sell) !== 'regular') continue
+        let remaining = capacity(sell) - (matchedShares.get(sell) || 0)
+        for (const buy of matchingBuys.filter(t => inferTradingSession(t) === 'regular')) {
+            const shares = Math.min(remaining, capacity(buy) - (matchedShares.get(buy) || 0))
+            if (shares <= 0) continue
+            automatic.push({ buy, sell, shares })
+            matchedShares.set(buy, (matchedShares.get(buy) || 0) + shares)
+            matchedShares.set(sell, (matchedShares.get(sell) || 0) + shares)
+            remaining -= shares
+        }
+    }
+    if (!includeCandidates) return { confirmed, automatic, candidates, uncertain, matchedShares, issues }
+    const reserved = new Map(matchedShares)
+    for (const sell of ordered.filter(t => t.type === 'sell' && eligible(t))) {
+        if (issues.some(issue => issue.trade === sell)) continue
+        let remaining = capacity(sell) - (reserved.get(sell) || 0)
+        for (const buy of ordered.filter(t => t.type === 'buy' && eligible(t) && sameGroup(t, sell))) {
+            const shares = Math.min(remaining, capacity(buy) - (reserved.get(buy) || 0))
+            if (shares <= 0) continue
+            candidates.push({ buy, sell, shares })
+            reserved.set(buy, (reserved.get(buy) || 0) + shares)
+            remaining -= shares
+        }
+    }
+    return { confirmed, automatic, candidates, uncertain, matchedShares, issues }
 }
 
 // 內部事件型別：把買賣交易與配股統一成「時間軸事件」一起依日期處理
@@ -177,16 +309,136 @@ export function calcSharesBeforeTrade(
     trades: TradeRecord[],
     dividends: DividendRecord[] = [],
 ): number {
-    const priorTrades = trades.filter(t => {
-        if (target.id && t.id === target.id) return false
-        return compareTradeRecords(t, target) < 0
-    })
+    const allTrades = [...trades.filter(t => t !== target && (!target.id || t.id !== target.id)), target]
     // 同日規則為所有交易先於配股，所以只有更早日期的股票股利能加入可賣股數。
     const priorDividends = dividends.filter(d => d.date < target.date)
-    return calcPositions(priorTrades, priorDividends).holdings[target.code]?.shares ?? 0
+    const held = calcPositions(allTrades, priorDividends, { beforeTrade: target }).holdings[target.code]?.shares ?? 0
+    return held + (analyzeDayTrades(allTrades, false).matchedShares.get(target) || 0)
 }
 
-export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[]): CalcResult {
+export interface MarginRepaymentEstimate {
+    principal: number
+    interest: number
+    total: number
+    matchedShares: number
+    unmatchedShares: number
+}
+
+interface OpenMarginLot {
+    shares: number
+    debt: number
+    date: string
+    annualRate: number
+}
+
+// 證交所 115 年行事曆中「不辦理結算交割」的工作日。
+// 2026-02-12、02-13 雖無交易但仍辦理結算，故不列入。
+const TWSE_SETTLEMENT_HOLIDAYS = new Set([
+    '2026-01-01',
+    '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20',
+    '2026-02-27',
+    '2026-04-03', '2026-04-06',
+    '2026-05-01', '2026-06-19',
+    '2026-09-25', '2026-09-28',
+    '2026-10-09', '2026-10-26',
+    '2026-12-25',
+])
+
+function addTwseSettlementDays(isoDate: string, count: number): Date | null {
+    const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    if (!match) return null
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
+    if (Number.isNaN(date.getTime())) return null
+    let added = 0
+    while (added < count) {
+        date.setUTCDate(date.getUTCDate() + 1)
+        const day = date.getUTCDay()
+        const dateKey = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
+        if (day !== 0 && day !== 6 && !TWSE_SETTLEMENT_HOLIDAYS.has(dateKey)) added += 1
+    }
+    return date
+}
+
+function settlementDays(fromDate: string, toDate: string): number {
+    const from = addTwseSettlementDays(fromDate, 2)
+    const to = addTwseSettlementDays(toDate, 2)
+    if (!from || !to) return 0
+    return Math.max(0, Math.round((to.getTime() - from.getTime()) / 86_400_000))
+}
+
+/**
+ * 依該代號尚未償還的融資買進批次（FIFO）估算本金與利息。
+ * 交割日以 T+2 證交所結算日推算；週末與已登錄的休市日都會排除，
+ * 因此表單保留「償還總額」人工覆寫。
+ */
+export function estimateMarginRepayment(
+    target: TradeRecord,
+    trades: TradeRecord[],
+): MarginRepaymentEstimate {
+    if (target.type !== 'sell' || !target.isMargin || !target.code || target.shares <= 0) {
+        return { principal: 0, interest: 0, total: 0, matchedShares: 0, unmatchedShares: Math.max(target.shares || 0, 0) }
+    }
+
+    const lots: OpenMarginLot[] = []
+    const prior = trades
+        .filter(t => t && t.isMargin && t.code === target.code && (!target.id || t.id !== target.id) && compareTradeRecords(t, target) < 0)
+        .sort(compareTradeRecords)
+
+    const consume = (sharesToConsume: number, calculateInterest: boolean) => {
+        let remaining = Math.max(sharesToConsume, 0)
+        let principal = 0
+        let interest = 0
+        for (const lot of lots) {
+            if (remaining <= 0) break
+            if (lot.shares <= 0 || lot.debt <= 0) continue
+            const taken = Math.min(remaining, lot.shares)
+            const allocatedDebt = lot.debt * (taken / lot.shares)
+            principal += allocatedDebt
+            if (calculateInterest) {
+                interest += allocatedDebt * lot.annualRate * settlementDays(lot.date, target.date) / 365
+            }
+            lot.shares -= taken
+            lot.debt -= allocatedDebt
+            remaining -= taken
+        }
+        return { principal, interest, remaining }
+    }
+
+    for (const trade of prior) {
+        if (trade.type === 'buy') {
+            lots.push({
+                shares: trade.shares,
+                debt: trade.marginAmount ?? calcMarginDebt(calcGrossAmount(trade.price, trade.shares), trade.marginRatio || 0.6),
+                date: trade.date,
+                annualRate: trade.marginInterestRate || DEFAULT_MARGIN_INTEREST_RATE,
+            })
+        } else {
+            consume(trade.shares, false)
+        }
+    }
+
+    const result = consume(target.shares, true)
+    const principal = Math.round(result.principal)
+    const interest = Math.round(result.interest)
+    const unmatchedShares = Math.round(result.remaining)
+    return {
+        principal,
+        interest,
+        total: principal + interest,
+        matchedShares: Math.max(target.shares - unmatchedShares, 0),
+        unmatchedShares,
+    }
+}
+
+export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[], options: {
+    beforeTrade?: TradeRecord; includeDailyHoldings?: boolean
+} = {}): CalcResult {
+    const dayTrades = analyzeDayTrades(trades, false)
+    const dayCosts = new Map<TradeRecord, number>()
+    for (const pair of [...dayTrades.confirmed, ...dayTrades.automatic]) {
+        dayCosts.set(pair.sell, (dayCosts.get(pair.sell) || 0)
+            + (calcGrossAmount(pair.buy.price, pair.buy.shares) + pair.buy.fee) * pair.shares / pair.buy.shares)
+    }
     // 過濾掉 date 為 undefined/null/空字串的異常資料，避免 localeCompare crash
     const tradeEvents: TimelineEvent[] = trades
         .filter(t => t && t.date && typeof t.date === 'string')
@@ -214,11 +466,43 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
 
     const holdings: Record<string, HoldingPosition> = {}
     const realized: RealizedRecord[] = []
+    const acquisitionTime: Record<string, number> = {}
+    const dailyHoldings: NonNullable<CalcResult['dailyHoldings']> = {}
+    let lastDate = ''
+    const snapshot = () => {
+        if (options.includeDailyHoldings && lastDate) dailyHoldings[lastDate] = Object.fromEntries(
+            Object.entries(holdings).map(([code, pos]) => [code, { ...pos }]))
+    }
+    // 舊資料只存「本金＋利息」總額。券商若把同日同股的多筆融資賣出合併計息，
+    // 單筆總額可能暫時低於估算本金；必須先以整組總額扣除整組本金，再分攤利息。
+    const legacyMarginInterest = new Map<TradeRecord, number>()
+    const legacyGroups = new Map<string, TradeRecord[]>()
+    for (const trade of trades) {
+        if (trade?.type !== 'sell' || !trade.isMargin || trade.marginInterest !== undefined || !(trade.marginRepay && trade.marginRepay > 0)) continue
+        const key = `${trade.date}|${trade.code}`
+        legacyGroups.set(key, [...(legacyGroups.get(key) ?? []), trade])
+    }
+    for (const group of legacyGroups.values()) {
+        const totalRepay = group.reduce((sum, trade) => sum + (trade.marginRepay || 0), 0)
+        const totalPrincipal = group.reduce((sum, trade) => sum + estimateMarginRepayment(trade, trades).principal, 0)
+        const totalInterest = Math.max(Math.round(totalRepay - totalPrincipal), 0)
+        let allocated = 0
+        group.forEach((trade, index) => {
+            const interest = index === group.length - 1
+                ? totalInterest - allocated
+                : Math.round(totalInterest * (trade.marginRepay || 0) / totalRepay)
+            legacyMarginInterest.set(trade, interest)
+            allocated += interest
+        })
+    }
     // 各代號目前的「融資股數」。融資歸還比例 = 賣出股數 / 融資股數，
     // 與 aggregateMarginPositions 同一口徑，避免混合持倉（現股+融資）時兩邊算出不同的 marginAmount。
     const marginShares: Record<string, number> = {}
 
     for (const ev of events) {
+        if (options.beforeTrade && (ev.date > options.beforeTrade.date
+            || (ev.date === options.beforeTrade.date && (ev.kind !== 'trade' || compareTradeRecords(ev.trade, options.beforeTrade) >= 0)))) break
+        if (ev.date !== lastDate) { snapshot(); lastDate = ev.date }
         if (ev.kind === 'stockdiv') {
             // ── 配股：增加股數，攤薄均價，成本不變 ──
             const div = ev.div
@@ -231,7 +515,17 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
         }
 
         const t = ev.trade
-        const { code, name, type, price, shares, fee, tax } = t
+        const { code, name, type, price, fee, tax } = t
+        const matched = dayTrades.matchedShares.get(t) || 0
+        const shares = t.shares - matched
+        const remainingRatio = shares / t.shares
+        if (type === 'sell' && matched > 0) {
+            const cost = dayCosts.get(t) || 0
+            const pnl = (calcGrossAmount(price, t.shares) - fee - tax) * matched / t.shares - cost
+            realized.push({ date: t.date, code, name, shares: matched, avgCost: cost / matched,
+                sellPrice: price, realized: pnl, returnRate: cost > 0 ? pnl / cost : 0,
+                tradeId: t.id, category: 'dayTrade', holdingDays: 0 })
+        }
 
         // 防呆：跳過欄位不完整的紀錄
         if (!code || !type || !Number.isFinite(price) || !Number.isFinite(shares) || price <= 0 || shares <= 0) continue
@@ -242,9 +536,10 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
         const pos = holdings[code]
 
         if (type === 'buy') {
-            const buyCost = price * shares + (fee || 0)
+            const buyCost = (calcGrossAmount(price, t.shares) + (fee || 0)) * remainingRatio
             const newTotalCost = pos.totalCost + buyCost
             const newShares = pos.shares + shares
+            acquisitionTime[code] = ((acquisitionTime[code] || 0) * pos.shares + Date.parse(t.date) * shares) / newShares
             pos.avgCost = newShares > 0 ? newTotalCost / newShares : 0
             pos.totalCost = newTotalCost
             pos.shares = newShares
@@ -252,7 +547,7 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
 
             // 若為融資買入，累加融資借款金額（捨去至千元）與融資股數
             if (t.isMargin) {
-                const stockVal = price * shares
+                const stockVal = calcGrossAmount(price, shares)
                 const mAmt = calcMarginDebt(stockVal, t.marginRatio || 0.6)
                 pos.marginAmount = (pos.marginAmount ?? 0) + mAmt
                 marginShares[code] = (marginShares[code] ?? 0) + shares
@@ -261,13 +556,17 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
             // 超賣不是合法的多頭交易。直接略過，避免舊資料或繞過 UI 的匯入資料
             // 以不存在的均價產生已實現損益、再被歸零而污染後續所有報表。
             if (pos.shares <= 0 || shares > pos.shares) continue
-            const sellRevenue = price * shares - (fee || 0) - (tax || 0)
+            // 融資利息是交易成本；本金只是償還負債，不影響投資損益。
+            const financingInterest = t.isMargin ? Math.max(t.marginInterest ?? legacyMarginInterest.get(t) ?? 0, 0) : 0
+            const sellRevenue = (calcGrossAmount(price, t.shares) - (fee || 0) - (tax || 0)) * remainingRatio - financingInterest
             const costBasis = pos.avgCost * shares
             const pnl = sellRevenue - costBasis
             const returnRate = costBasis > 0 ? pnl / costBasis : 0
             realized.push({
                 date: t.date, code, name: name || pos.name, shares,
-                avgCost: pos.avgCost, sellPrice: price, realized: pnl, returnRate
+                avgCost: pos.avgCost, sellPrice: price, realized: pnl, returnRate,
+                tradeId: t.id, category: 'inventory',
+                holdingDays: Math.max(0, (Date.parse(t.date) - (acquisitionTime[code] || Date.parse(t.date))) / 86400000)
             })
 
             // 若為融資賣出，按「賣出股數 / 融資股數」比例歸還融資借款（與 aggregateMarginPositions 對齊）
@@ -290,7 +589,8 @@ export function calcPositions(trades: TradeRecord[], dividends?: DividendRecord[
         }
     }
 
-    return { holdings, realized }
+    snapshot()
+    return { holdings, realized, ...(options.includeDailyHoldings ? { dailyHoldings } : {}) }
 }
 
 /**
@@ -368,6 +668,237 @@ export function calcPositionAdjustment(
     return { action, currentPct, targetPct, amount, targetMarketValue }
 }
 
+export interface PortfolioAllocationInput {
+    code: string
+    name?: string
+    currentMarketValue: number
+    currentShares: number
+    price: number | null
+    /** 這檔股票占「股票部位」的目標比重，而非占總資產的比重。 */
+    targetWeightPct: number
+}
+
+export interface PortfolioRebalanceRow extends PortfolioAllocationInput {
+    action: 'buy' | 'sell' | 'hold'
+    targetMarketValue: number
+    adjustmentAmount: number
+    estimatedShares: number | null
+    estimatedTradeValue: number
+    estimatedFee: number
+    estimatedTax: number
+    projectedMarketValue: number
+    limitedByMode: boolean
+}
+
+export interface PortfolioRebalanceOptions {
+    mode?: 'full' | 'buy-only' | 'sell-only'
+    lotSize?: 1 | 1000
+    includeFees?: boolean
+}
+
+export interface PortfolioRebalanceResult {
+    equityCapital: number
+    targetPositionPct: number
+    targetStockMarketValue: number
+    allocatedWeightPct: number
+    rows: PortfolioRebalanceRow[]
+    totalBuy: number
+    totalSell: number
+    totalFees: number
+    totalTaxes: number
+    netCashRequired: number
+}
+
+/**
+ * 多檔投資組合再平衡試算。
+ *
+ * 先用「自有資金 × 目標倉位」決定整體股票水位，再依每檔股票占股票部位的
+ * 目標比重拆分。交易股數以參考價四捨五入到整股；沒有有效價格時仍會回傳
+ * 應調整金額，但 estimatedShares 為 null，讓 UI 明確提示補價格。
+ */
+export function calcPortfolioRebalance(
+    equityCapital: number,
+    targetPositionPct: number,
+    inputs: PortfolioAllocationInput[],
+    options: PortfolioRebalanceOptions = {},
+): PortfolioRebalanceResult | null {
+    if (
+        !Number.isFinite(equityCapital)
+        || equityCapital <= 0
+        || !Number.isFinite(targetPositionPct)
+        || targetPositionPct < 0
+    ) return null
+
+    const targetStockMarketValue = equityCapital * targetPositionPct / 100
+    const mode = options.mode ?? 'full'
+    const lotSize = options.lotSize ?? 1
+    const safeInputs = inputs.filter(row => (
+        row
+        && row.code.trim() !== ''
+        && Number.isFinite(row.currentMarketValue)
+        && row.currentMarketValue >= 0
+        && Number.isFinite(row.currentShares)
+        && row.currentShares >= 0
+        && Number.isFinite(row.targetWeightPct)
+        && row.targetWeightPct >= 0
+    ))
+    const allocatedWeightPct = safeInputs.reduce((sum, row) => sum + row.targetWeightPct, 0)
+
+    const rows = safeInputs.map(row => {
+        const targetMarketValue = targetStockMarketValue * row.targetWeightPct / 100
+        const difference = targetMarketValue - row.currentMarketValue
+        const adjustmentAmount = Math.abs(difference)
+        const desiredAction: PortfolioRebalanceRow['action'] = adjustmentAmount < 0.005
+            ? 'hold'
+            : difference > 0 ? 'buy' : 'sell'
+        const limitedByMode = (mode === 'buy-only' && desiredAction === 'sell')
+            || (mode === 'sell-only' && desiredAction === 'buy')
+        const action: PortfolioRebalanceRow['action'] = limitedByMode ? 'hold' : desiredAction
+        const validPrice = typeof row.price === 'number' && Number.isFinite(row.price) && row.price > 0
+        const estimatedShares = action === 'hold' || !validPrice
+            ? action === 'hold' ? 0 : null
+            : Math.max(lotSize, Math.round(adjustmentAmount / row.price! / lotSize) * lotSize)
+        const estimatedTradeValue = estimatedShares === null
+            ? adjustmentAmount
+            : estimatedShares * (validPrice ? row.price! : 0)
+        const estimatedFee = options.includeFees && action !== 'hold' && estimatedShares !== null && validPrice
+            ? calcFee(row.price!, estimatedShares)
+            : 0
+        const estimatedTax = options.includeFees && action === 'sell' && estimatedShares !== null && validPrice
+            ? calcTax(row.price!, estimatedShares, row.code)
+            : 0
+        const signedShares = estimatedShares === null
+            ? 0
+            : (action === 'buy' ? estimatedShares : action === 'sell' ? -estimatedShares : 0)
+        const projectedMarketValue = estimatedShares === null
+            ? targetMarketValue
+            : Math.max(0, row.currentMarketValue + signedShares * row.price!)
+
+        return {
+            ...row,
+            action,
+            targetMarketValue,
+            adjustmentAmount,
+            estimatedShares,
+            estimatedTradeValue,
+            estimatedFee,
+            estimatedTax,
+            projectedMarketValue,
+            limitedByMode,
+        }
+    })
+
+    const totalBuy = rows.filter(row => row.action === 'buy').reduce((sum, row) => sum + row.estimatedTradeValue, 0)
+    const totalSell = rows.filter(row => row.action === 'sell').reduce((sum, row) => sum + row.estimatedTradeValue, 0)
+    const totalFees = rows.reduce((sum, row) => sum + row.estimatedFee, 0)
+    const totalTaxes = rows.reduce((sum, row) => sum + row.estimatedTax, 0)
+
+    return {
+        equityCapital,
+        targetPositionPct,
+        targetStockMarketValue,
+        allocatedWeightPct,
+        rows,
+        totalBuy,
+        totalSell,
+        totalFees,
+        totalTaxes,
+        netCashRequired: totalBuy - totalSell + totalFees + totalTaxes,
+    }
+}
+
+export interface PortfolioRiskRow {
+    code: string
+    group?: string
+    projectedMarketValue: number
+}
+
+export interface PortfolioRiskLimits {
+    maxSingleWeightPct: number
+    maxGroupWeightPct: number
+    minCashPct: number
+    maxMarginPct: number
+    minEtfWeightPct: number
+    maxStressLoss: number
+}
+
+export interface PortfolioRiskIssue {
+    id: string
+    severity: 'warning' | 'danger'
+    message: string
+}
+
+export interface PortfolioRiskResult {
+    projectedMarketValue: number
+    projectedNetAssets: number
+    cashPct: number
+    marginPct: number
+    etfWeightPct: number
+    groupWeights: Array<{ group: string; weightPct: number; marketValue: number }>
+    stressDropPct: number
+    stressLoss: number
+    stressedMarketValue: number
+    stressedNetAssets: number
+    stressedPositionPct: number | null
+    issues: PortfolioRiskIssue[]
+}
+
+/** 組合試算後的集中度、資金與壓力風險檢查。 */
+export function calcPortfolioRisk(
+    rows: PortfolioRiskRow[],
+    cashAfter: number,
+    marginDebt: number,
+    stressDropPct: number,
+    limits: PortfolioRiskLimits,
+): PortfolioRiskResult {
+    const validRows = rows.filter(row => Number.isFinite(row.projectedMarketValue) && row.projectedMarketValue >= 0)
+    const projectedMarketValue = validRows.reduce((sum, row) => sum + row.projectedMarketValue, 0)
+    const projectedNetAssets = projectedMarketValue + cashAfter - marginDebt
+    const cashPct = projectedNetAssets > 0 ? cashAfter / projectedNetAssets * 100 : 0
+    const marginPct = projectedNetAssets > 0 ? marginDebt / projectedNetAssets * 100 : marginDebt > 0 ? Infinity : 0
+    const etfValue = validRows.filter(row => isETF(row.code)).reduce((sum, row) => sum + row.projectedMarketValue, 0)
+    const etfWeightPct = projectedMarketValue > 0 ? etfValue / projectedMarketValue * 100 : 0
+
+    const groupMap = new Map<string, number>()
+    validRows.forEach(row => {
+        const group = row.group?.trim() || '未分類'
+        groupMap.set(group, (groupMap.get(group) ?? 0) + row.projectedMarketValue)
+    })
+    const groupWeights = [...groupMap.entries()]
+        .map(([group, marketValue]) => ({ group, marketValue, weightPct: projectedMarketValue > 0 ? marketValue / projectedMarketValue * 100 : 0 }))
+        .sort((a, b) => b.marketValue - a.marketValue)
+
+    const safeDrop = Number.isFinite(stressDropPct) ? Math.min(Math.max(stressDropPct, 0), 100) : 0
+    const stressLoss = projectedMarketValue * safeDrop / 100
+    const stressedMarketValue = projectedMarketValue - stressLoss
+    const stressedNetAssets = stressedMarketValue + cashAfter - marginDebt
+    const stressedPositionPct = stressedNetAssets > 0 ? stressedMarketValue / stressedNetAssets * 100 : null
+    const issues: PortfolioRiskIssue[] = []
+
+    validRows.forEach(row => {
+        const weight = projectedMarketValue > 0 ? row.projectedMarketValue / projectedMarketValue * 100 : 0
+        if (limits.maxSingleWeightPct > 0 && weight > limits.maxSingleWeightPct + 0.05) {
+            issues.push({ id: `single-${row.code}`, severity: 'warning', message: `${row.code} 試算後占股票部位 ${weight.toFixed(1)}%，超過單一個股上限 ${limits.maxSingleWeightPct.toFixed(1)}%。` })
+        }
+    })
+    groupWeights.forEach(group => {
+        if (limits.maxGroupWeightPct > 0 && group.weightPct > limits.maxGroupWeightPct + 0.05) {
+            issues.push({ id: `group-${group.group}`, severity: 'warning', message: `${group.group} 占股票部位 ${group.weightPct.toFixed(1)}%，超過產業上限 ${limits.maxGroupWeightPct.toFixed(1)}%。` })
+        }
+    })
+    if (cashPct < limits.minCashPct - 0.05) issues.push({ id: 'cash-floor', severity: cashAfter < 0 ? 'danger' : 'warning', message: `試算後現金水位 ${cashPct.toFixed(1)}%，低於安全水位 ${limits.minCashPct.toFixed(1)}%。` })
+    if (marginPct > limits.maxMarginPct + 0.05) issues.push({ id: 'margin-cap', severity: 'danger', message: `融資負債占淨資產 ${Number.isFinite(marginPct) ? marginPct.toFixed(1) : '∞'}%，超過上限 ${limits.maxMarginPct.toFixed(1)}%。` })
+    if (etfWeightPct < limits.minEtfWeightPct - 0.05) issues.push({ id: 'etf-floor', severity: 'warning', message: `ETF 占股票部位 ${etfWeightPct.toFixed(1)}%，低於設定下限 ${limits.minEtfWeightPct.toFixed(1)}%。` })
+    if (limits.maxStressLoss > 0 && stressLoss > limits.maxStressLoss) issues.push({ id: 'stress-loss', severity: 'danger', message: `下跌 ${safeDrop.toFixed(1)}% 時預估損失 ${Math.round(stressLoss).toLocaleString()} 元，超過可承受上限 ${Math.round(limits.maxStressLoss).toLocaleString()} 元。` })
+    if (stressedNetAssets <= 0) issues.push({ id: 'negative-equity', severity: 'danger', message: `壓力情境下淨資產降至 ${Math.round(stressedNetAssets).toLocaleString()} 元，應降低槓桿或股票水位。` })
+
+    return {
+        projectedMarketValue, projectedNetAssets, cashPct, marginPct, etfWeightPct,
+        groupWeights, stressDropPct: safeDrop, stressLoss, stressedMarketValue,
+        stressedNetAssets, stressedPositionPct, issues,
+    }
+}
+
 export interface MarginPositionAgg {
     code: string
     name: string
@@ -388,7 +919,7 @@ export function aggregateMarginPositions(trades: TradeRecord[]): MarginPositionA
         }
         const pos = map[t.code]
         if (t.type === 'buy') {
-            const stockVal = t.price * t.shares
+            const stockVal = calcGrossAmount(t.price, t.shares)
             pos.shares += t.shares
             pos.marginAmount += calcMarginDebt(stockVal, t.marginRatio || 0.6)
             pos.marginCost += stockVal
@@ -406,6 +937,40 @@ export function aggregateMarginPositions(trades: TradeRecord[]): MarginPositionA
 
 export function aggregateMarginDebt(trades: TradeRecord[]): number {
     return aggregateMarginPositions(trades).reduce((s, m) => s + m.marginAmount, 0)
+}
+
+export interface ReconciledAssetSnapshot {
+    date: string
+    totalAssets: number
+    marketValue: number
+    cash: number
+    marginDebt?: number
+}
+
+/**
+ * Rebuild the auditable cash/debt breakdown of stored historical snapshots.
+ *
+ * `totalAssets` is deliberately preserved because it is the point-in-time NAV
+ * used by the performance chart. Backdated ledger edits can be replayed
+ * exactly for cash and margin debt, but historical per-stock closing prices are
+ * not stored. Market value therefore becomes the balancing component so the
+ * corrected breakdown cannot create a fake investment return.
+ */
+export function reconcileSnapshotBreakdowns<T extends ReconciledAssetSnapshot>(
+    snapshots: T[],
+    trades: TradeRecord[],
+    dividends: DividendRecord[],
+    cashflows: { date: string; type: string; amount: number }[],
+): T[] {
+    return snapshots.map(snapshot => {
+        const datedTrades = trades.filter(row => row.date <= snapshot.date)
+        const datedDividends = dividends.filter(row => row.date <= snapshot.date)
+        const datedCashflows = cashflows.filter(row => row.date <= snapshot.date)
+        const cash = Math.round(calcAvailableCash(datedCashflows, datedTrades, datedDividends))
+        const marginDebt = Math.round(aggregateMarginDebt(datedTrades))
+        const marketValue = Math.round(snapshot.totalAssets - cash + marginDebt)
+        return { ...snapshot, cash, marginDebt, marketValue }
+    })
 }
 
 // ── 融資加碼試算 ──────────────────────────────────────────────────────────────
@@ -429,6 +994,18 @@ export interface MarginSimResult {
     bufferTo120: number
 }
 
+export interface MarginRiskThresholds {
+    safeRatio: number
+    maintenanceRatio: number
+    liquidationRatio: number
+}
+
+export const DEFAULT_MARGIN_RISK_THRESHOLDS: MarginRiskThresholds = {
+    safeRatio: 160,
+    maintenanceRatio: 130,
+    liquidationRatio: 120,
+}
+
 /**
  * simulateMarginBuy
  * @param currentMarketValue  現有融資股票市值合計
@@ -445,7 +1022,8 @@ export function simulateMarginBuy(
     currentDebt: number,
     buyPrice: number,
     buyShares: number,
-    marginRatio: number = 0.6
+    marginRatio: number = 0.6,
+    thresholds: MarginRiskThresholds = DEFAULT_MARGIN_RISK_THRESHOLDS,
 ): MarginSimResult {
     const totalPrice = buyPrice * buyShares
     const addedDebt = calcMarginDebt(totalPrice, marginRatio)  // 捨去至千元
@@ -458,8 +1036,8 @@ export function simulateMarginBuy(
 
     // bufferTo130 = newMarketValue - (newDebt × 1.30)
     // 正數代表市值還有這麼多空間才會觸線
-    const bufferTo130 = newMarketValue - newDebt * 1.30
-    const bufferTo120 = newMarketValue - newDebt * 1.20
+    const bufferTo130 = newMarketValue - newDebt * (thresholds.maintenanceRatio / 100)
+    const bufferTo120 = newMarketValue - newDebt * (thresholds.liquidationRatio / 100)
 
     return { newMarginRatio, newMarketValue, newDebt, addedDebt, addedEquity, bufferTo130, bufferTo120 }
 }
@@ -500,13 +1078,11 @@ export interface MarginStressResult {
     perStock: MarginStressPerStock[]
 }
 
-const MAINTENANCE_CALL = 1.30   // 追繳線 130%
-const LIQUIDATION_LINE = 1.20   // 斷頭線 120%
-
 export function calcMarginStress(
     stocks: MarginStressStock[],
     totalDebt: number,
     dropPcts: number[] = [0.10, 0.15, 0.20],
+    thresholds: MarginRiskThresholds = DEFAULT_MARGIN_RISK_THRESHOLDS,
 ): MarginStressResult {
     const totalMarketValue = stocks.reduce((s, x) => s + (x.marketValue || 0), 0)
 
@@ -517,17 +1093,19 @@ export function calcMarginStress(
     const currentRatio = (totalMarketValue / totalDebt) * 100
 
     // 整戶均勻跌：反解觸線跌幅 d* = 1 − 線 × 借款 / 市值
-    const dropTo130 = 1 - (MAINTENANCE_CALL * totalDebt) / totalMarketValue
-    const dropTo120 = 1 - (LIQUIDATION_LINE * totalDebt) / totalMarketValue
+    const maintenanceCall = thresholds.maintenanceRatio / 100
+    const liquidationLine = thresholds.liquidationRatio / 100
+    const dropTo130 = 1 - (maintenanceCall * totalDebt) / totalMarketValue
+    const dropTo120 = 1 - (liquidationLine * totalDebt) / totalMarketValue
 
     const scenarios: MarginStressScenario[] = dropPcts.map(d => {
         const ratio = currentRatio * (1 - d)
-        return { drop: d, ratio, gapTo130: ratio - MAINTENANCE_CALL * 100 }
+        return { drop: d, ratio, gapTo130: ratio - thresholds.maintenanceRatio }
     })
 
     // 單檔獨自跌：整戶市值少掉 (Vᵢ × dᵢ)，令整戶維持率 = 追繳線
     //   → dᵢ = (整戶市值 − 追繳線 × 借款) / Vᵢ。分子為共用緩衝，分母越大（越集中）能撐的跌幅越小。
-    const buffer = totalMarketValue - MAINTENANCE_CALL * totalDebt
+    const buffer = totalMarketValue - maintenanceCall * totalDebt
     const perStock: MarginStressPerStock[] = stocks.map(x => {
         const mv = x.marketValue || 0
         let dropTo130Single: number | null = mv > 0 ? buffer / mv : null

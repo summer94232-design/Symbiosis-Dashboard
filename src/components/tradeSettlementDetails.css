@@ -1,0 +1,95 @@
+.trade-settlement {
+    min-width: 0;
+    align-self: start;
+    container-type: inline-size;
+}
+
+.trade-settlement__summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    line-height: 1.5;
+    text-align: left;
+    cursor: pointer;
+}
+
+.trade-settlement__summary:hover {
+    border-color: var(--c-muted) !important;
+}
+
+.trade-settlement__summary:focus-visible {
+    outline: 2px solid var(--c-accent) !important;
+    outline-offset: 2px;
+}
+
+.trade-settlement__amount {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.trade-settlement__fees {
+    margin-left: auto;
+    color: var(--c-muted);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.trade-settlement__toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    color: var(--c-muted);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.trade-settlement__toggle svg {
+    flex-shrink: 0;
+}
+
+.trade-settlement__summary[aria-expanded="true"] .trade-settlement__toggle svg {
+    transform: rotate(180deg);
+}
+
+.trade-settlement__fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 12px;
+    padding-top: 12px;
+}
+
+.trade-settlement__fields[hidden] {
+    display: none;
+}
+
+.trade-settlement__note {
+    font-size: 10px;
+}
+
+.trade-settlement__help {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: var(--c-muted);
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+@container (max-width: 420px) {
+    .trade-settlement__fees { display: none; }
+}
+
+@container (max-width: 280px) {
+    .trade-settlement__fields { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 767px) {
+    .trade-settlement__summary {
+        min-height: 44px;
+    }
+    .trade-settlement__amount {
+        font-size: 16px;
+    }
+}

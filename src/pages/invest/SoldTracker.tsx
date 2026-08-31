@@ -25,6 +25,7 @@ import { getHistoricalCandles } from '../../lib/fugle'
 import { fetchTrades } from '../../lib/investData'
 import { toLocalDateString } from '../../lib/date'
 import { usePrices } from '../../PriceContext'
+import { useInvestSync } from '../../InvestSyncContext'
 import {
     RefreshCw, TrendingDown, ChevronDown, ChevronRight,
     BarChart2, Bell, Settings2, X, AlertTriangle, Info
@@ -609,6 +610,7 @@ const DEFAULT_ALERT_CONFIG: AlertConfig = {
 }
 
 export default function SoldTracker() {
+    const { version: syncVersion } = useInvestSync()
     const [allSold, setAllSold] = useState<SoldRecord[]>([])
     const [loading, setLoading] = useState(true)
     const [priceLoading, setPriceLoading] = useState(false)
@@ -676,7 +678,7 @@ export default function SoldTracker() {
         }
     }, [])
 
-    useEffect(() => { load() }, [load])
+    useEffect(() => { void load() }, [load, syncVersion])
 
     // ── 更新現價 ──────────────────────────────────────────────────────────
 

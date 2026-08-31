@@ -3,6 +3,7 @@ import { getDocs, setDoc, deleteDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { Trash2, X, Search, ArrowUpRight, ArrowDownLeft, Link2, Network, List } from 'lucide-react'
+import { useInvestSync } from '../../InvestSyncContext'
 
 // ── 型別 ──────────────────────────────────────────────────────────
 type Market = 'TW' | 'US' | 'JP'
@@ -55,6 +56,7 @@ const PAD = 28
 
 // ── 主元件 ────────────────────────────────────────────────────────
 export function ChainView({ nodes }: { nodes: ChainNode[] }) {
+    const { version: syncVersion } = useInvestSync()
     const [links, setLinks] = useState<ChainLink[]>([])
     const [loading, setLoading] = useState(true)
     const [focusCode, setFocusCode] = useState<string | null>(null)
@@ -76,7 +78,7 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
         setLinks(snap.docs.map(d => ({ id: d.id, ...d.data() } as ChainLink)))
         setLoading(false)
     }
-    useEffect(() => { load() }, [])
+    useEffect(() => { void load() }, [syncVersion])
 
     const nameOf = useMemo(() => {
         const m = new Map<string, string>()

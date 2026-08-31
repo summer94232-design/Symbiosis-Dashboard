@@ -72,6 +72,7 @@
         min-width: 320px;
         overflow: hidden;
         overscroll-behavior: none;
+        background-color: var(--c-sidebar);
     }
 
     *,
@@ -202,7 +203,7 @@
     align-items: stretch;
     justify-content: space-around;
     padding: 5px max(6px, env(safe-area-inset-right))
-        max(5px, env(safe-area-inset-bottom))
+        calc(5px + env(safe-area-inset-bottom))
         max(6px, env(safe-area-inset-left));
     border-top: 1px solid var(--c-border);
     background: color-mix(in srgb, var(--c-sidebar) 94%, transparent);
@@ -389,6 +390,14 @@
 }
 
 @media (max-width: 767px) {
+    .app-shell {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: auto;
+        min-height: 0;
+    }
+
     .login-screen input {
         min-height: 48px;
         font-size: 16px !important;

@@ -136,7 +136,8 @@ for (const funding of FUNDING_CASES) {
                         const position = result.holdings[instrument.code]
                         const buyCost = buyGross + buyFee
                         const averageCost = buyCost / buyShares
-                        const sellRevenue = sellGross - sellFee - sellTax
+                        // 融資利息屬於實際交易成本；償還本金只減少負債，不影響損益。
+                        const sellRevenue = sellGross - sellFee - sellTax - (funding.isMargin ? 50 : 0)
                         const soldCost = averageCost * sellShares
                         const expectedRealized = sellRevenue - soldCost
                         const remainingShares = buyShares - sellShares

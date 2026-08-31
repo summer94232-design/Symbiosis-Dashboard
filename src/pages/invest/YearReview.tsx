@@ -1,10 +1,11 @@
 // YearReview.tsx
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useInvestSync } from '../../InvestSyncContext'
 import { getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userDocNested } from '../../lib/userDB'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { calcAvailableCash, type TradeRecord } from '../../lib/calc'
+import { calcAvailableCash, calcPositions, type DividendRecord, type TradeRecord } from '../../lib/calc'
 import { fetchTrades, fetchDividends, fetchCashflow, fetchAssetSnapshots } from '../../lib/investData'
 // ✅ 1-2：共用 UI 樣式與格式化（inp 因本頁刻意無 width:100%，保留本地定義）
 import { card } from '../../ui/styles'
@@ -30,6 +31,7 @@ interface YearlyPerf {
 }
 
 interface RealizedTrade {
+    category?: 'dayTrade' | 'inventory'
     date: string
     code: string
     name: string
@@ -147,6 +149,7 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
 }
 
 export default function YearReview() {
+    const { version: syncVersion } = useInvestSync()
     const [tab, setTab] = useState<'review' | 'snapshot' | 'performance'>('review')
 
     const [monthlyData, setMonthlyData] = useState<MonthlyPnL[]>([])
@@ -164,11 +167,16 @@ export default function YearReview() {
     const [perfLoading, setPerfLoading] = useState(false)
     const [perfConfig, setPerfConfig] = useState<{ startDate: string | null; startValue: number | null }>({ startDate: null, startValue: null })
     const allTradesRef = useRef<TradeRecord[]>([])
-    const allDividendsRef = useRef<{ date: string; cashDividend: number }[]>([])
+    const allDividendsRef = useRef<DividendRecord[]>([])
     // ✅ 新增：出入金快取（snapshot 分頁排除增資影響用），入金=負/出金=正
     const allCashflowsRef = useRef<AccountCashflow[]>([])
     // ── 快取：原始資料載入一次後存在 ref，切換年份只重算 ──
     const rawDataLoadedRef = useRef(false)
+    const loadedVersionRef = useRef(syncVersion)
+    if (loadedVersionRef.current !== syncVersion) {
+        rawDataLoadedRef.current = false
+        loadedVersionRef.current = syncVersion
+    }
     const savedPricesRef = useRef<Record<string, number | string>>({})
 
     const [xirr, setXirr] = useState<number | null>(null)
@@ -202,7 +210,7 @@ export default function YearReview() {
     // 儲存每一天的持倉快照（日期 → {code: {shares, avgCost}}）供區間估算用
     const posSnapshotRef = useRef<{
         dates: string[]
-        snapshots: Record<string, Record<string, { shares: number; avgCost: number }>>
+        snapshots: Record<string, Record<string, { shares: number; avgCost: number; marginAmount?: number }>>
         savedPrices: Record<string, number | string>
     }>({ dates: [], snapshots: {}, savedPrices: {} })
 
@@ -216,7 +224,7 @@ export default function YearReview() {
         snapshots: Record<string, number>,
         _trades: TradeRecord[],
         cashflows: AccountCashflow[],
-        _dividends: { date: string; cashDividend: number }[]
+        _dividends: DividendRecord[]
     ) => {
         const perf: YearlyPerf[] = []
         allYears.forEach(year => {
@@ -255,31 +263,16 @@ export default function YearReview() {
     }, [])
 
     // ── 根據已快取的 trades/dividends 重算指定年份的月度資料（不讀 Firestore）──
-    const calcMonthlyForYear = useCallback((year: number, trades: TradeRecord[], dividends: { date: string; cashDividend: number }[]) => {
-        const pos: Record<string, { shares: number; avgCost: number; totalCost: number }> = {}
+    const calcMonthlyForYear = useCallback((year: number, trades: TradeRecord[], dividends: DividendRecord[]) => {
         const monthlyRealized: Record<string, number> = {}
         const monthlyCost: Record<string, number> = {}
         const monthlyDividend: Record<string, number> = {}
 
-        for (const t of trades) {
-            const { code, type, price, shares, fee, tax, date } = t
-            if (!pos[code]) pos[code] = { shares: 0, avgCost: 0, totalCost: 0 }
-            const p = pos[code]
-            if (type === 'buy') {
-                const bc = price * shares + fee
-                p.totalCost += bc; p.shares += shares
-                p.avgCost = p.shares > 0 ? p.totalCost / p.shares : 0
-            } else {
-                const cb = p.avgCost * shares
-                const pnl = price * shares - fee - tax - cb
-                if (date.slice(0, 4) === String(year)) {
-                    const mo = date.slice(0, 7)
-                    monthlyRealized[mo] = (monthlyRealized[mo] || 0) + pnl
-                    monthlyCost[mo] = (monthlyCost[mo] || 0) + cb
-                }
-                p.shares -= shares; p.totalCost = p.avgCost * p.shares
-                if (p.shares <= 0) { p.shares = 0; p.totalCost = 0; p.avgCost = 0 }
-            }
+        for (const r of calcPositions(trades, dividends).realized) {
+            if (r.date.slice(0, 4) !== String(year)) continue
+            const mo = r.date.slice(0, 7)
+            monthlyRealized[mo] = (monthlyRealized[mo] || 0) + r.realized
+            monthlyCost[mo] = (monthlyCost[mo] || 0) + r.avgCost * r.shares
         }
 
         dividends.forEach(d => {
@@ -305,7 +298,6 @@ export default function YearReview() {
         setLoading(true)
         try {
             let trades: TradeRecord[]
-            interface DividendRecord { date: string; cashDividend: number }
             let dividends: DividendRecord[]
             let snapshots: Record<string, number>
             let cashflows: AccountCashflow[]
@@ -402,55 +394,13 @@ export default function YearReview() {
         if (perfConfig.startValue && perfConfig.startDate && effectiveStart === perfConfig.startDate) {
             startValue = perfConfig.startValue
         } else {
-            const posStart: Record<string, { shares: number; avgCost: number; totalCost: number }> = {}
-            for (const t of trades) {
-                if (t.date > effectiveStart) break
-                const { code, type, price, shares, fee } = t
-                if (!posStart[code]) posStart[code] = { shares: 0, avgCost: 0, totalCost: 0 }
-                const p = posStart[code]
-                if (type === 'buy') {
-                    const bc = price * shares + (fee || 0)
-                    p.totalCost += bc; p.shares += shares
-                    p.avgCost = p.shares > 0 ? p.totalCost / p.shares : 0
-                } else {
-                    p.shares -= shares; p.totalCost = p.avgCost * p.shares
-                    if (p.shares <= 0) { p.shares = 0; p.totalCost = 0; p.avgCost = 0 }
-                }
-            }
+            const posStart = calcPositions(trades.filter(t => t.date <= effectiveStart), dividends.filter(d => d.date <= effectiveStart)).holdings
             startValue = Object.values(posStart).reduce((s, p) => s + p.totalCost, 0)
         }
 
-        // 跑完 customEnd 前所有交易，得到期末持倉（FIFO）
-        const posEnd: Record<string, { shares: number; avgCost: number; totalCost: number; lots: { shares: number; cost: number }[] }> = {}
-        let realizedPnL = 0
-        for (const t of trades) {
-            if (t.date > customEnd) break
-            const { code, type, price, shares, fee, tax } = t
-            if (!posEnd[code]) posEnd[code] = { shares: 0, avgCost: 0, totalCost: 0, lots: [] }
-            const p = posEnd[code]
-            if (type === 'buy') {
-                const bc = price * shares + (fee || 0)
-                p.totalCost += bc; p.shares += shares
-                p.avgCost = p.shares > 0 ? p.totalCost / p.shares : 0
-                p.lots.push({ shares, cost: bc })
-            } else {
-                let remaining = shares, totalCb = 0
-                while (remaining > 0 && p.lots.length > 0) {
-                    const lot = p.lots[0]
-                    const uc = lot.cost / lot.shares
-                    if (lot.shares <= remaining) {
-                        totalCb += lot.cost; remaining -= lot.shares; p.lots.shift()
-                    } else {
-                        totalCb += remaining * uc; lot.shares -= remaining; lot.cost -= remaining * uc; remaining = 0
-                    }
-                }
-                if (t.date > effectiveStart) {
-                    realizedPnL += price * shares - (fee || 0) - (tax || 0) - totalCb
-                }
-                p.shares -= shares; p.totalCost = p.avgCost * p.shares
-                if (p.shares <= 0) { p.shares = 0; p.totalCost = 0; p.avgCost = 0; p.lots = [] }
-            }
-        }
+        const endResult = calcPositions(trades.filter(t => t.date <= customEnd), dividends.filter(d => d.date <= customEnd))
+        const posEnd = endResult.holdings
+        const realizedPnL = endResult.realized.filter(r => r.date > effectiveStart).reduce((sum, r) => sum + r.realized, 0)
 
         const endPortfolioValue = Object.entries(posEnd).reduce((s, [code, p]) => {
             if (p.shares <= 0) return s
@@ -510,15 +460,15 @@ export default function YearReview() {
         const inRangeCfs = allCfs.filter(cf => cf.date >= rangeStart && cf.date <= rangeEnd)
 
         // 估算期初持倉市值（作為負現金流，代表「在這個時間點投入」）
-        const beforeSnap = snapDates.filter(d => d <= rangeStart).sort()
+        const beforeSnap = snapDates.filter(d => d < rangeStart).sort()
         const startSnapDate = beforeSnap[beforeSnap.length - 1]
         let startPortfolioValue = 0
         if (startSnapDate) {
             const snap = posSnaps[startSnapDate]
-            Object.entries(snap).forEach(([code, { shares, avgCost }]) => {
+            Object.entries(snap).forEach(([code, { shares, avgCost, marginAmount }]) => {
                 if (shares <= 0) return
                 const cp = savedPrices[code]
-                startPortfolioValue += typeof cp === 'number' ? cp * shares : avgCost * shares
+                startPortfolioValue += (typeof cp === 'number' ? cp * shares : avgCost * shares) - (marginAmount || 0)
             })
         }
 
@@ -528,10 +478,10 @@ export default function YearReview() {
         let endPortfolioValue = 0
         if (endSnapDate) {
             const snap = posSnaps[endSnapDate]
-            Object.entries(snap).forEach(([code, { shares, avgCost }]) => {
+            Object.entries(snap).forEach(([code, { shares, avgCost, marginAmount }]) => {
                 if (shares <= 0) return
                 const cp = savedPrices[code]
-                endPortfolioValue += typeof cp === 'number' ? cp * shares : avgCost * shares
+                endPortfolioValue += (typeof cp === 'number' ? cp * shares : avgCost * shares) - (marginAmount || 0)
             })
         }
 
@@ -560,75 +510,29 @@ export default function YearReview() {
             interface CashflowRecord { date: string; type: 'in' | 'out'; amount: number }
             const cashflows = await fetchCashflow<CashflowRecord>('asc')
 
-            interface DividendRecord { date: string; cashDividend: number }
             const dividends = await fetchDividends<DividendRecord>('asc')
 
             const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
             const savedPrices: Record<string, number | string> = priceDoc.exists() ? priceDoc.data() : {}
 
-            const posDetail: Record<string, {
-                shares: number; avgCost: number; totalCost: number
-                lots: { date: string; shares: number; cost: number }[]
-            }> = {}
-            const realized: RealizedTrade[] = []
+            const calculation = calcPositions(allTrades, dividends, { includeDailyHoldings: true })
+            const posDetail = calculation.holdings
+            const realized: RealizedTrade[] = calculation.realized.map(r => ({
+                date: r.date, code: r.code, name: r.name, pnl: r.realized,
+                costBasis: r.avgCost * r.shares, holdingDays: r.holdingDays || 0,
+                returnRate: r.returnRate * 100, category: r.category,
+            }))
             let runningEquity = 0
-            const equityCurve: number[] = []
+            const equityCurve = realized.map(r => { runningEquity += r.pnl; return runningEquity })
+            const posSnapshots = calculation.dailyHoldings || {}
+            const snapDates = Object.keys(posSnapshots)
 
-            // ── 建立持倉快照（每一筆交易後記錄一次）──
-            const snapDates: string[] = []
-            const posSnapshots: Record<string, Record<string, { shares: number; avgCost: number }>> = {}
-
-            // 收集原始現金流供區間計算
-            // 正負號 = XIRR 口徑：入金記負(投入)、出金記正(回收)，與本檔 snapshot 分頁一致
+            // 持倉區間 XIRR 採買入、賣出與股利收付；帳戶入金不能再列一次，避免重複投入。
             const rawCfs: RawCashflow[] = []
-            cashflows.forEach(cf => {
-                rawCfs.push({ date: cf.date, amount: cf.type === 'in' ? -cf.amount : cf.amount })
-            })
 
+            // 現金流維持原始成交收付；配對僅改變成本歸屬。
             for (const t of allTrades) {
-                const { code, name, type, price, shares, fee, tax, date } = t
-                if (!posDetail[code]) posDetail[code] = { shares: 0, avgCost: 0, totalCost: 0, lots: [] }
-                const p = posDetail[code]
-                if (type === 'buy') {
-                    const bc = price * shares + fee
-                    p.totalCost += bc; p.shares += shares; p.avgCost = p.totalCost / p.shares
-                    p.lots.push({ date, shares, cost: bc })
-                } else {
-                    let remaining = shares, totalCb = 0, firstBuyDate = date
-                    while (remaining > 0 && p.lots.length > 0) {
-                        const lot = p.lots[0]
-                        const uc = lot.cost / lot.shares
-                        if (lot.shares <= remaining) {
-                            totalCb += lot.cost
-                            if (firstBuyDate === date) firstBuyDate = lot.date
-                            remaining -= lot.shares; p.lots.shift()
-                        } else {
-                            const portion = remaining * uc
-                            totalCb += portion
-                            if (firstBuyDate === date) firstBuyDate = lot.date
-                            lot.shares -= remaining; lot.cost -= portion; remaining = 0
-                        }
-                    }
-                    const pnl = price * shares - fee - tax - totalCb
-                    const holdDays = Math.max(0, Math.round(
-                        (new Date(date).getTime() - new Date(firstBuyDate).getTime()) / 86400000
-                    ))
-                    realized.push({ date, code, name, pnl, costBasis: totalCb, holdingDays: holdDays, returnRate: totalCb > 0 ? (pnl / totalCb) * 100 : 0 })
-                    runningEquity += pnl; equityCurve.push(runningEquity)
-                    p.shares -= shares; p.totalCost = p.avgCost * p.shares
-                    if (p.shares <= 0) { p.shares = 0; p.totalCost = 0; p.avgCost = 0; p.lots = [] }
-
-                    // 賣出的收益加入原始現金流
-                    rawCfs.push({ date, amount: price * shares - fee - tax })
-                }
-
-                // 每筆交易後儲存持倉快照
-                const snap: Record<string, { shares: number; avgCost: number }> = {}
-                Object.entries(posDetail).forEach(([c, pd]) => {
-                    snap[c] = { shares: pd.shares, avgCost: pd.avgCost }
-                })
-                if (!snapDates.includes(date)) snapDates.push(date)
-                posSnapshots[date] = snap
+                rawCfs.push({ date: t.date, amount: t.type === 'buy' ? -t.total : t.total })
             }
 
             // 股利也加入原始現金流
@@ -686,7 +590,8 @@ export default function YearReview() {
             const mkXirr = (ev: number) => calcXIRR(
                 [...xirrBase, { date: today, amount: ev }].sort((a, b) => a.date.localeCompare(b.date))
             )
-            setXirr(mkXirr(endMV + endCash)); setXirrCost(mkXirr(endCost + endCash))
+            const endDebt = Object.values(posDetail).reduce((sum, p) => sum + (p.marginAmount || 0), 0)
+            setXirr(mkXirr(endMV + endCash - endDebt)); setXirrCost(mkXirr(endCost + endCash - endDebt))
 
             const allYrs = [...new Set(realized.map(r => parseInt(r.date.slice(0, 4))))].sort()
             const divByYear: Record<number, number> = {}
@@ -708,21 +613,8 @@ export default function YearReview() {
             }))
 
             const heat: Record<string, number> = {}
-            const posH: Record<string, { shares: number; avgCost: number; totalCost: number }> = {}
-            for (const t of allTrades) {
-                const { code, type, price, shares, fee, tax, date } = t
-                if (!posH[code]) posH[code] = { shares: 0, avgCost: 0, totalCost: 0 }
-                const p = posH[code]
-                if (type === 'buy') {
-                    const bc = price * shares + fee
-                    p.totalCost += bc; p.shares += shares; p.avgCost = p.totalCost / p.shares
-                } else {
-                    const cb = p.avgCost * shares
-                    const pnl = price * shares - fee - tax - cb
-                    heat[date.slice(0, 7)] = (heat[date.slice(0, 7)] || 0) + pnl
-                    p.shares -= shares; p.totalCost = p.avgCost * p.shares
-                    if (p.shares <= 0) { p.shares = 0; p.totalCost = 0; p.avgCost = 0 }
-                }
+            for (const r of calculation.realized) {
+                heat[r.date.slice(0, 7)] = (heat[r.date.slice(0, 7)] || 0) + r.realized
             }
             dividends.forEach(d => { heat[d.date.slice(0, 7)] = (heat[d.date.slice(0, 7)] || 0) + d.cashDividend })
             setHeatmapData(heat)
@@ -738,17 +630,14 @@ export default function YearReview() {
         }
         if (!cancelled) void run()
         return () => { cancelled = true }
-    }, [load])
+    }, [load, syncVersion])
 
-    // ✅ tab 切換時載入進階績效
-    const prevTab = useRef<string>('')
+    // 配對變更後重算，避免績效分頁保留舊成本。
     useEffect(() => {
-        if (tab !== 'performance' || prevTab.current === 'performance') return
-        prevTab.current = tab
+        if (tab !== 'performance') return
         const timer = setTimeout(() => { void loadPerformance() }, 0)
         return () => clearTimeout(timer)
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [tab])
+    }, [tab, syncVersion, loadPerformance])
 
     // ✅ 3-3：衍生值包 useMemo，避免月份滑桿/輸入互動時整批重算
     const filtered = useMemo(() => monthlyData.slice(startMonth - 1, endMonth), [monthlyData, startMonth, endMonth])
@@ -1290,9 +1179,9 @@ export default function YearReview() {
                                                         {realizedTrades.slice(0, 50).map((r, i) => (
                                                             <tr key={i} style={{ borderBottom: '1px solid var(--c-border)' }}>
                                                                 <td style={{ padding: '12px', color: 'var(--c-muted)' }}>{r.date}</td>
-                                                                <td style={{ padding: '12px', color: 'var(--c-accent)', fontWeight: 700 }}>{r.code}</td>
+                                                                <td style={{ padding: '12px', color: 'var(--c-accent)', fontWeight: 700 }}>{r.code}{r.category === 'dayTrade' ? '（當沖）' : ''}</td>
                                                                 <td style={{ padding: '12px', color: 'var(--c-text)' }}>{r.name}</td>
-                                                                <td style={{ padding: '12px', color: 'var(--c-muted)' }}>{r.holdingDays} 天</td>
+                                                                <td style={{ padding: '12px', color: 'var(--c-muted)' }}>{r.holdingDays.toFixed(1)} 天</td>
                                                                 <td style={{ padding: '12px', color: pnlColor(r.pnl), fontWeight: 600 }}>{fmtMoney(r.pnl)}</td>
                                                                 <td style={{ padding: '12px' }}>
                                                                     <span style={{ backgroundColor: r.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(r.returnRate), padding: '3px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>

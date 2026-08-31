@@ -12,6 +12,7 @@ import {
     FileText, LayoutGrid, Table2, Tag, ChevronDown, ChevronRight, Activity, BarChart2, Landmark
 } from 'lucide-react'
 import { usePrices } from '../../PriceContext'
+import { useInvestSync } from '../../InvestSyncContext'
 
 interface WatchItem {
     code: string
@@ -348,6 +349,7 @@ function TableRow({ item, ma, marketCap, onEdit, onDelete }: {
 
 // ── 主元件 ────────────────────────────────────────────────────────
 export default function Watchlist() {
+    const { version: syncVersion } = useInvestSync()
     const { prices, lastUpdated, priceLoading, updatePrices: ctxUpdatePrices } = usePrices()
     const { shares: sharesData, sharesLoading, updateShares } = useMarketCap()
 
@@ -403,7 +405,7 @@ export default function Watchlist() {
         setLoading(false)
     }
 
-    useEffect(() => { load() }, [])
+    useEffect(() => { void load() }, [syncVersion])
 
     useEffect(() => {
         if (Object.keys(prices).length === 0) return

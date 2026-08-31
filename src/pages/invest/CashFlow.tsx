@@ -5,6 +5,8 @@ import { userCol, userDoc } from '../../lib/userDB'
 import { fetchCashflow, invalidateCashflow } from '../../lib/investData'
 import { toLocalDateString } from '../../lib/date'
 import { Pencil, Trash2, X, Check } from 'lucide-react'
+import { useInvestSync } from '../../InvestSyncContext'
+import { validateCashflowForWrite } from '../../lib/investmentValidation'
 
 interface CashRecord {
     id?: string
@@ -21,20 +23,24 @@ const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', di
 const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 export default function CashFlow() {
+    const { version: syncVersion } = useInvestSync()
     const [records, setRecords] = useState<CashRecord[]>([])
     const [editingId, setEditingId] = useState<string | null>(null)
     const [form, setForm] = useState<CashRecord>(empty)
     const [loading, setLoading] = useState(false)
+    const [formError, setFormError] = useState('')
 
     const load = async () => {
         // ✅ 1-1：改走共用快取層（lib/investData）
         setRecords(await fetchCashflow<CashRecord>('desc'))
     }
 
-    useEffect(() => { load() }, [])
+    useEffect(() => { void load() }, [syncVersion])
 
     const handleSave = async () => {
-        if (!form.amount) return
+        const validation = validateCashflowForWrite(form)
+        if (!validation.valid) { setFormError(validation.errors.join('；')); return }
+        setFormError('')
         setLoading(true)
         if (editingId) {
             await updateDoc(userDoc(investDB, 'cashflow', editingId), { ...form })
@@ -45,8 +51,8 @@ export default function CashFlow() {
         setEditingId(null); setForm(empty); setLoading(false); load()
     }
 
-    const handleEdit = (r: CashRecord) => { setForm(r); setEditingId(r.id!) }
-    const handleCancel = () => { setForm(empty); setEditingId(null) }
+    const handleEdit = (r: CashRecord) => { setForm(r); setEditingId(r.id!); setFormError('') }
+    const handleCancel = () => { setForm(empty); setEditingId(null); setFormError('') }
     const handleDelete = async (id: string) => {
         if (!confirm('確定要刪除？')) return
         await deleteDoc(userDoc(investDB, 'cashflow', id))
@@ -105,6 +111,7 @@ export default function CashFlow() {
                         <div><label style={lbl}>金額</label><input type="number" style={inp} placeholder="0" value={form.amount || ''} onChange={e => setForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))} /></div>
                         <div><label style={lbl}>備註</label><input style={inp} placeholder="選填" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></div>
                     </div>
+                    {formError && <div style={{ color: 'var(--c-danger)', fontSize: '12px', marginTop: '10px' }}>無法儲存：{formError}</div>}
                     <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
                         {editingId && <button style={btn('var(--c-border)')} onClick={handleCancel}><X size={14} />取消編輯</button>}
                         <button style={btn('var(--c-accent)')} onClick={handleSave} disabled={loading}>

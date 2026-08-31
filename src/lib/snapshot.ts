@@ -29,6 +29,7 @@ import { calcPositions, calcAvailableCash, aggregateMarginDebt, type TradeRecord
 import { fetchTrades, fetchDividends, fetchCashflow, invalidateAssetSnapshots } from './investData'
 import { toLocalDateString } from './date'
 import { canRunAutoSnapshot, type AutoSnapshotTrigger } from './snapshotPolicy'
+import { validateSnapshotForWrite } from './investmentValidation'
 
 // ── 共用市值計算（原 AssetTrend 內部函式抽出）──────────────────────────────
 
@@ -271,6 +272,8 @@ export async function maybeAutoSnapshotToday(options?: {
             }
 
             // 5. 寫入（doc id = 日期；覆寫模式會以最新值更新今日快照，口徑與手動完全一致）
+            const validation = validateSnapshotForWrite(snapshot)
+            if (!validation.valid) throw new Error(`快照資料驗證失敗：${validation.errors.join('；')}`)
             await setDoc(userDoc(investDB, 'assetSnapshots', today), { ...snapshot, auto: true })
             invalidateAssetSnapshots()
             coveredDate = today

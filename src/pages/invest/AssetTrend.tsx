@@ -2,13 +2,15 @@ import { useState, useEffect, useMemo } from 'react'
 import { setDoc, deleteDoc, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userDoc, userDocNested } from '../../lib/userDB'
-import { calcPositions, calcAvailableCash, aggregateMarginDebt, type TradeRecord, type DividendRecord } from '../../lib/calc'
-import { fetchTrades, fetchDividends, fetchCashflow, fetchAssetSnapshots, invalidateAssetSnapshots } from '../../lib/investData'
-import { calcMarketValue } from '../../lib/snapshot'
+import { fetchCashflow, fetchAssetSnapshots, fetchDividends, fetchTrades, invalidateAssetSnapshots } from '../../lib/investData'
+import { loadPortfolioSnapshot } from '../../lib/portfolioSnapshot'
+import { reconcileSnapshotBreakdowns, type DividendRecord, type TradeRecord } from '../../lib/calc'
 import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts'
 import { Save, Pencil, Trash2, Plus, X, Check, Zap, AlertTriangle, TrendingUp } from 'lucide-react'
+import { useInvestSync } from '../../InvestSyncContext'
+import { validateSnapshotForWrite } from '../../lib/investmentValidation'
 
 // ── 型別 ──────────────────────────────────────────────────────────────────
 
@@ -73,6 +75,7 @@ const ReturnTooltip = ({ active, payload, label }: any) => {
 // ── 主元件 ────────────────────────────────────────────────────────────────
 
 export default function AssetTrend() {
+    const { version: syncVersion } = useInvestSync()
     const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([])
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
@@ -83,6 +86,7 @@ export default function AssetTrend() {
     const [form, setForm] = useState<SnapshotRecord>(emptySnap)
     const [formLoading, setFormLoading] = useState(false)
     const [missingPriceCodes, setMissingPriceCodes] = useState<string[]>([])
+    const [formError, setFormError] = useState('')
 
     // ── Benchmark 相關 state ──────────────────────────────────────────────
     // chartMode: 'absolute' = 金額模式；'return' = 報酬率對比模式
@@ -102,11 +106,17 @@ export default function AssetTrend() {
 
     const loadSnapshots = async () => {
         setLoading(true)
-        setSnapshots(await fetchAssetSnapshots<SnapshotRecord>('asc'))
+        const [storedSnapshots, trades, dividends, cashRecords] = await Promise.all([
+            fetchAssetSnapshots<SnapshotRecord>('asc'),
+            fetchTrades<TradeRecord>('asc'),
+            fetchDividends<DividendRecord>('asc'),
+            fetchCashflow<{ date: string; type: 'in' | 'out'; amount: number }>('asc'),
+        ])
+        setSnapshots(reconcileSnapshotBreakdowns(storedSnapshots, trades, dividends, cashRecords))
         setLoading(false)
     }
 
-    useEffect(() => { loadSnapshots() }, [])
+    useEffect(() => { void loadSnapshots() }, [syncVersion])
 
     // ✅ 新增：載入出入金紀錄（只需一次）
     //
@@ -127,7 +137,7 @@ export default function AssetTrend() {
                 setCashflows(records.map(c => ({ date: c.date, amount: c.type === 'in' ? c.amount : -c.amount })))
             })
             .catch(err => console.error('[cashflow] load failed:', err))
-    }, [])
+    }, [syncVersion])
 
     // ── 抓取加權指數歷史資料（Fugle API）─────────────────────────────────
     //
@@ -193,32 +203,15 @@ export default function AssetTrend() {
         setMissingPriceCodes([])
         try {
             // ✅ 1-1：改走共用快取層（lib/investData）
-            const [trades, cashRecords, dividends] = await Promise.all([
-                fetchTrades<TradeRecord>('asc'),
-                fetchCashflow<{ type: string; amount: number }>('asc'),
-                fetchDividends<DividendRecord>('asc'),
-            ])
-
-            const { holdings: positions } = calcPositions(trades, dividends)
-            const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
-            const savedPrices = (priceDoc.exists() ? priceDoc.data() : {}) as Record<string, number>
-
-            const { marketValue, missing } = calcMarketValue(positions, savedPrices)
-            setMissingPriceCodes(missing)
-
-            // ✅ 方案 A：可用現金含現金股利（快照的 cash 自此口徑起含股利）
-            const cash = calcAvailableCash(cashRecords, trades, dividends)
-
-            // ✅ 計算融資借款並從總資產扣除，呈現真實淨值
-            const marginDebt = aggregateMarginDebt(trades)
-            const totalAssets = marketValue + cash - marginDebt
+            const snapshot = await loadPortfolioSnapshot()
+            setMissingPriceCodes(snapshot.missingPriceCodes)
 
             setForm(f => ({
                 ...f,
-                totalAssets: Math.round(totalAssets),
-                marketValue: Math.round(marketValue),
-                cash: Math.round(cash),
-                marginDebt: Math.round(marginDebt),
+                totalAssets: Math.round(snapshot.netAssets),
+                marketValue: Math.round(snapshot.marketValue),
+                cash: Math.round(snapshot.cash),
+                marginDebt: Math.round(snapshot.marginDebt),
             }))
         } catch (err) { console.error(err) }
         setAutoLoading(false)
@@ -252,35 +245,20 @@ export default function AssetTrend() {
         setMissingPriceCodes([])
         try {
             // ✅ 1-1：改走共用快取層（lib/investData）
-            const [trades, cashRecords, dividends] = await Promise.all([
-                fetchTrades<TradeRecord>('asc'),
-                fetchCashflow<{ type: string; amount: number }>('asc'),
-                fetchDividends<DividendRecord>('asc'),
-            ])
-
-            const { holdings: positions } = calcPositions(trades, dividends)
-            const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
-            const savedPrices = (priceDoc.exists() ? priceDoc.data() : {}) as Record<string, number>
-
-            const { marketValue, missing } = calcMarketValue(positions, savedPrices)
-            setMissingPriceCodes(missing)
-
-            // ✅ 方案 A：可用現金含現金股利（快照的 cash 自此口徑起含股利）
-            const cash = calcAvailableCash(cashRecords, trades, dividends)
-
-            // ✅ 計算融資借款並從總資產扣除，呈現真實淨值
-            const marginDebt = aggregateMarginDebt(trades)
-            const totalAssets = marketValue + cash - marginDebt
+            const snapshot = await loadPortfolioSnapshot()
+            setMissingPriceCodes(snapshot.missingPriceCodes)
             const today = toLocalDateString()
-
-            await setDoc(userDoc(investDB, 'assetSnapshots', today), {
+            const payload = {
                 date: today,
-                totalAssets: Math.round(totalAssets),
-                marketValue: Math.round(marketValue),
-                cash: Math.round(cash),
-                marginDebt: Math.round(marginDebt),
+                totalAssets: Math.round(snapshot.netAssets),
+                marketValue: Math.round(snapshot.marketValue),
+                cash: Math.round(snapshot.cash),
+                marginDebt: Math.round(snapshot.marginDebt),
                 dividendAdjusted: true,  // 新口徑快照（cash 已含股利），遷移時略過
-            })
+            }
+            const validation = validateSnapshotForWrite(payload)
+            if (!validation.valid) throw new Error(validation.errors.join('；'))
+            await setDoc(userDoc(investDB, 'assetSnapshots', today), payload)
             invalidateAssetSnapshots()
             await loadSnapshots()
         } catch (err) { console.error(err) }
@@ -288,7 +266,9 @@ export default function AssetTrend() {
     }
 
     const handleSave = async () => {
-        if (!form.date) return
+        const validation = validateSnapshotForWrite(form)
+        if (!validation.valid) { setFormError(validation.errors.join('；')); return }
+        setFormError('')
         setFormLoading(true)
         await setDoc(userDoc(investDB, 'assetSnapshots', form.date), { ...form })
         invalidateAssetSnapshots()
@@ -297,12 +277,12 @@ export default function AssetTrend() {
         setFormLoading(false); loadSnapshots()
     }
 
-    const handleEdit = (s: SnapshotRecord) => { setForm({ ...s }); setEditingDate(s.date); setShowForm(true) }
+    const handleEdit = (s: SnapshotRecord) => { setForm({ ...s }); setEditingDate(s.date); setShowForm(true); setFormError('') }
     const handleDelete = async (date: string) => {
         if (!confirm(`確定要刪除 ${date} 的紀錄？`)) return
         await deleteDoc(userDoc(investDB, 'assetSnapshots', date)); invalidateAssetSnapshots(); loadSnapshots()
     }
-    const handleCancel = () => { setShowForm(false); setEditingDate(null); setForm(emptySnap); setMissingPriceCodes([]) }
+    const handleCancel = () => { setShowForm(false); setEditingDate(null); setForm(emptySnap); setMissingPriceCodes([]); setFormError('') }
 
     // ── 時間範圍篩選 ──────────────────────────────────────────────────────
 
@@ -730,6 +710,7 @@ export default function AssetTrend() {
                                 />
                             </div>
                         </div>
+                        {formError && <div style={{ color: 'var(--c-danger)', fontSize: '12px', marginTop: '10px' }}>無法儲存：{formError}</div>}
                         <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
                             <button style={btn('var(--c-border)')} onClick={handleCancel}><X size={14} />取消</button>
                             <button style={btn('var(--c-accent)')} onClick={handleSave} disabled={formLoading}>

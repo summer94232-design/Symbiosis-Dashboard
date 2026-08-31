@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { updateDoc, setDoc } from 'firebase/firestore'
 import { kmsDB } from '../../lib/firebase'
 import { userDoc, userDocNested } from '../../lib/userDB'
-import { fetchKmsNoteSummaries, fetchKmsTagOrder, fetchKmsTagStats, invalidateKmsNotes, invalidateKmsTagOrder } from '../../lib/kmsData'
+import { buildKmsTagStatsFromSummaries, fetchKmsNoteSummaries, fetchKmsTagOrder, fetchKmsTagStats, hasUsableKmsTagStats, invalidateKmsNotes, invalidateKmsTagOrder } from '../../lib/kmsData'
 import { Pencil, Check, X, Tag, FolderOpen, ChevronRight, ChevronUp, ChevronDown, GripVertical } from 'lucide-react'
 import { buildKmsSearchTerms, buildKmsTagPaths } from '../../lib/kmsSearch'
 
@@ -37,11 +37,10 @@ export default function KMSTags() {
             fetchKmsTagOrder(),
         ])
 
-        let tagCount: Record<string, number> = stats?.counts || {}
-        if (!stats) {
+        let tagCount: Record<string, number> = hasUsableKmsTagStats(stats) ? stats.counts : {}
+        if (!hasUsableKmsTagStats(stats)) {
             const summaries = await fetchKmsNoteSummaries<{ id: string; hashtags?: string[] }>()
-            tagCount = {}
-            summaries.forEach(note => note.hashtags?.forEach(tag => { tagCount[tag] = (tagCount[tag] || 0) + 1 }))
+            tagCount = buildKmsTagStatsFromSummaries(summaries).counts
         }
 
         const parents: Record<string, TagInfo> = {}

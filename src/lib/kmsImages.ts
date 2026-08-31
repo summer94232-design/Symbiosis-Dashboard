@@ -7,13 +7,13 @@ import { userDoc } from './userDB'
 export interface NoteImageAsset {
   id: string
   storagePath: string
-  thumbnailPath: string
+  thumbnailPath?: string
   downloadUrl: string
-  thumbnailUrl: string
+  thumbnailUrl?: string
   width: number
   height: number
   size: number
-  thumbnailSize: number
+  thumbnailSize?: number
   mimeType: string
   originalName: string
 }
@@ -37,8 +37,6 @@ const MAX_SOURCE_BYTES = 40 * 1024 * 1024
 const MAX_SOURCE_PIXELS = 50_000_000
 const MAIN_MAX_EDGE = 2048
 const MAIN_TARGET_BYTES = 1.5 * 1024 * 1024
-const THUMB_MAX_EDGE = 480
-const THUMB_TARGET_BYTES = 180 * 1024
 const UPLOAD_DRAFT_KEY = 'kms:image-upload-drafts'
 const UPLOAD_DRAFT_COLLECTION = 'imageUploadDrafts'
 const STALE_UPLOAD_HOURS = 24
@@ -48,7 +46,7 @@ interface ImageUploadDraft {
   assetId: string
   noteId: string
   storagePath: string
-  thumbnailPath: string
+  thumbnailPath?: string
   createdAt: string
 }
 
@@ -265,40 +263,31 @@ export async function prepareAndUploadNoteImage(
     }
 
     onProgress(0.08)
-    const [main, thumbnail] = await Promise.all([
-      encodeImage(decoded.source, decoded.width, decoded.height, MAIN_MAX_EDGE, MAIN_TARGET_BYTES),
-      encodeImage(decoded.source, decoded.width, decoded.height, THUMB_MAX_EDGE, THUMB_TARGET_BYTES),
-    ])
+    const main = await encodeImage(decoded.source, decoded.width, decoded.height, MAIN_MAX_EDGE, MAIN_TARGET_BYTES)
     onProgress(0.18)
 
     const id = crypto.randomUUID()
     const basePath = `users/${uid}/notes/${noteId}`
     const storagePath = `${basePath}/images/${id}.${main.extension}`
-    const thumbnailPath = `${basePath}/thumbnails/${id}.${thumbnail.extension}`
 
     await registerUploadDraft({
       assetId: id,
       noteId,
       storagePath,
-      thumbnailPath,
       createdAt: new Date().toISOString(),
     })
 
     try {
-      const downloadUrl = await uploadBlob(storagePath, main.blob, progress => onProgress(0.18 + progress * 0.68))
-      const thumbnailUrl = await uploadBlob(thumbnailPath, thumbnail.blob, progress => onProgress(0.86 + progress * 0.14))
+      const downloadUrl = await uploadBlob(storagePath, main.blob, progress => onProgress(0.18 + progress * 0.82))
       onProgress(1)
 
       return {
         id,
         storagePath,
-        thumbnailPath,
         downloadUrl,
-        thumbnailUrl,
         width: main.width,
         height: main.height,
         size: main.blob.size,
-        thumbnailSize: thumbnail.blob.size,
         mimeType: main.blob.type,
         originalName: file.name,
       }
@@ -306,7 +295,6 @@ export async function prepareAndUploadNoteImage(
       // 第二個檔案失敗時同步回收可能已完成的第一個檔案，避免留下孤兒資產。
       await Promise.allSettled([
         deleteObject(ref(kmsStorage, storagePath)),
-        deleteObject(ref(kmsStorage, thumbnailPath)),
       ])
       await removeUploadDrafts([id])
       throw error
@@ -344,7 +332,7 @@ export async function cleanupStaleNoteImageDrafts(): Promise<number> {
   let removed = 0
 
   for (const draft of staleDrafts) {
-    if (!draft.assetId || !draft.noteId || !draft.storagePath || !draft.thumbnailPath) {
+    if (!draft.assetId || !draft.noteId || !draft.storagePath) {
       await removeUploadDrafts([draft.assetId])
       removed += 1
       continue
@@ -361,14 +349,16 @@ export async function cleanupStaleNoteImageDrafts(): Promise<number> {
     })
 
     if (!referenced) {
-      await Promise.all([draft.storagePath, draft.thumbnailPath].map(async path => {
+      await Promise.all([draft.storagePath, draft.thumbnailPath]
+        .filter((path): path is string => Boolean(path))
+        .map(async path => {
         try {
           await deleteObject(ref(kmsStorage, path))
         } catch (error) {
           const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : ''
           if (code !== 'storage/object-not-found') throw error
         }
-      }))
+        }))
     }
     await removeUploadDrafts([draft.assetId])
     removed += 1

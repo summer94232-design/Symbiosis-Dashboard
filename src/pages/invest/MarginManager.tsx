@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
-import { getDocs, orderBy, query } from 'firebase/firestore'
-import { investDB } from '../../lib/firebase'
-import { userCol, userDocNested } from '../../lib/userDB'
-import { getDoc } from 'firebase/firestore'
-import { simulateMarginBuy, calcMarginStress, aggregateMarginPositions, type TradeRecord } from '../../lib/calc'
+import { simulateMarginBuy, calcMarginStress } from '../../lib/calc'
+import { loadPortfolioSnapshot } from '../../lib/portfolioSnapshot'
+import { useInvestSync } from '../../InvestSyncContext'
 import { TrendingDown, Plus, Trash2, Calculator, AlertTriangle, Flame } from 'lucide-react'
+import { DEFAULT_MARGIN_RULES, loadMarginRules } from '../../lib/marginSettings'
+import MarginRulesPanel from '../../components/MarginRulesPanel'
 
 const card: React.CSSProperties = {
     backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px'
@@ -27,15 +27,15 @@ interface SimRow {
     ratio: string
 }
 
-const ratioColor = (v: number) =>
-    v >= 160 ? 'var(--c-positive)' : v >= 130 ? 'var(--c-warning)' : 'var(--c-danger)'
-
-const ratioLabel = (v: number) =>
-    v >= 160 ? '✓ 安全' : v >= 130 ? '⚠ 留意' : '⚠ 危險'
-
 export default function MarginManager() {
+    const { version: syncVersion } = useInvestSync()
     const [positions, setPositions] = useState<MarginPosition[]>([])
     const [loading, setLoading] = useState(true)
+    const [marginRules, setMarginRules] = useState(DEFAULT_MARGIN_RULES)
+    const ratioColor = (v: number) => v >= marginRules.safeRatio ? 'var(--c-positive)' : v >= marginRules.maintenanceRatio ? 'var(--c-warning)' : 'var(--c-danger)'
+    const ratioLabel = (v: number) => v >= marginRules.safeRatio ? '✓ 安全' : v >= marginRules.maintenanceRatio ? '⚠ 留意' : '⚠ 危險'
+
+    useEffect(() => { void loadMarginRules().then(setMarginRules) }, [])
 
     // 試算列（支援多筆同時試算）
     const [simRows, setSimRows] = useState<SimRow[]>([
@@ -50,12 +50,7 @@ export default function MarginManager() {
         const load = async () => {
             setLoading(true)
             try {
-                const [tradesSnap, priceDoc] = await Promise.all([
-                    getDocs(query(userCol(investDB, 'trades'), orderBy('date', 'asc'))),
-                    getDoc(userDocNested(investDB, 'settings', 'lastPrices')),
-                ])
-                const trades = tradesSnap.docs.map(d => d.data() as TradeRecord)
-                const savedPrices: Record<string, number | string> = priceDoc.exists() ? priceDoc.data() : {}
+                const snapshot = await loadPortfolioSnapshot()
 
                 // ✅ 借款彙總一律走 calc.ts 的 aggregateMarginPositions（唯一真實來源），
                 //    與 Dashboard / 資產趨勢同口徑：
@@ -63,8 +58,8 @@ export default function MarginManager() {
                 //    - 歸還比例 = 賣出股數 / 融資股數
                 //    - 賣超／全數出清時借款自動歸零，不會出現負值或負無窮維持率
                 //    - shares > 0 且 marginAmount > 0 的過濾已在 calc.ts 內完成
-                const active: MarginPosition[] = aggregateMarginPositions(trades).map(m => {
-                    const raw = savedPrices[m.code]
+                const active: MarginPosition[] = snapshot.marginPositions.map(m => {
+                    const raw = snapshot.prices[m.code]
                     return { ...m, currentPrice: typeof raw === 'number' && raw > 0 ? raw : null }
                 })
                 setPositions(active)
@@ -72,7 +67,7 @@ export default function MarginManager() {
             finally { setLoading(false) }
         }
         void load()
-    }, [])
+    }, [syncVersion])
 
     // ── 整戶維持率計算（現況）────────────────────────────────────────────────
     const totalDebt = positions.reduce((s, m) => s + m.marginAmount, 0)
@@ -91,6 +86,7 @@ export default function MarginManager() {
         })),
         totalDebt,
         [0.05, 0.10, 0.15, 0.20, 0.25],
+        marginRules,
     )
     const dropByCode: Record<string, number | null> = Object.fromEntries(stress.perStock.map(p => [p.code, p.dropTo130]))
     const riskiestCode = stress.perStock
@@ -110,7 +106,7 @@ export default function MarginManager() {
     const rowResults = simRows.map(r => {
         const p = parseFloat(r.price), s = parseInt(r.shares, 10), ratio = parseFloat(r.ratio)
         if (!(p > 0 && s > 0 && ratio > 0 && ratio <= 1)) return null
-        const res = simulateMarginBuy(accMV, accDebt, p, s, ratio)
+        const res = simulateMarginBuy(accMV, accDebt, p, s, ratio, marginRules)
         accMV = res.newMarketValue
         accDebt = res.newDebt
         return res
@@ -152,6 +148,8 @@ export default function MarginManager() {
                     <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '4px 0 0' }}>整戶融資維持率監控 · 加碼試算</p>
                 </div>
 
+                <MarginRulesPanel rules={marginRules} onSaved={setMarginRules} />
+
                 {loading ? (
                     <div style={{ textAlign: 'center', padding: '80px', color: 'var(--c-muted)' }}>載入中...</div>
                 ) : (
@@ -160,14 +158,14 @@ export default function MarginManager() {
                         <div style={{
                             ...card,
                             marginBottom: '16px',
-                            borderColor: currentRatio !== null && currentRatio < 130
+                            borderColor: currentRatio !== null && currentRatio < marginRules.maintenanceRatio
                                 ? 'color-mix(in srgb, var(--c-danger) 50%, transparent)'
-                                : currentRatio !== null && currentRatio < 160
+                                : currentRatio !== null && currentRatio < marginRules.safeRatio
                                     ? 'color-mix(in srgb, var(--c-warning) 40%, transparent)'
                                     : 'var(--c-border)',
-                            background: currentRatio !== null && currentRatio < 130
+                            background: currentRatio !== null && currentRatio < marginRules.maintenanceRatio
                                 ? 'linear-gradient(135deg, var(--c-card) 0%, color-mix(in srgb, var(--c-danger) 6%, transparent) 100%)'
-                                : currentRatio !== null && currentRatio < 160
+                                : currentRatio !== null && currentRatio < marginRules.safeRatio
                                     ? 'linear-gradient(135deg, var(--c-card) 0%, color-mix(in srgb, var(--c-warning) 5%, transparent) 100%)'
                                     : 'var(--c-card)'
                         }}>
@@ -211,13 +209,13 @@ export default function MarginManager() {
                                     {currentRatio !== null && (
                                         <>
                                             <div>
-                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>距追繳線(130%)緩衝</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>距追繳線({marginRules.maintenanceRatio}%)緩衝</div>
                                                 <div style={{ fontSize: '15px', fontWeight: 600, color: totalMV - totalDebt * 1.30 >= 0 ? 'var(--c-positive)' : 'var(--c-danger)' }}>
                                                     ${(totalMV - totalDebt * 1.30).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
                                                 </div>
                                             </div>
                                             <div>
-                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>距斷頭線(120%)緩衝</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '4px' }}>距斷頭線({marginRules.liquidationRatio}%)緩衝</div>
                                                 <div style={{ fontSize: '15px', fontWeight: 600, color: totalMV - totalDebt * 1.20 >= 0 ? 'var(--c-positive)' : 'var(--c-danger)' }}>
                                                     ${(totalMV - totalDebt * 1.20).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
                                                 </div>
@@ -231,7 +229,7 @@ export default function MarginManager() {
                             {currentRatio !== null && (
                                 <div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--c-muted)', marginBottom: '4px' }}>
-                                        <span>斷頭線 120%</span><span>追繳線 130%</span><span>安全線 160%</span><span>目前 {currentRatio.toFixed(1)}%</span>
+                                        <span>斷頭線 {marginRules.liquidationRatio}%</span><span>追繳線 {marginRules.maintenanceRatio}%</span><span>安全線 {marginRules.safeRatio}%</span><span>目前 {currentRatio.toFixed(1)}%</span>
                                     </div>
                                     <div style={{ height: '6px', backgroundColor: 'var(--c-bg)', borderRadius: '3px', overflow: 'hidden', position: 'relative' }}>
                                         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, color-mix(in srgb, var(--c-danger) 30%, transparent) 0%, color-mix(in srgb, var(--c-danger) 30%, transparent) 20%, color-mix(in srgb, var(--c-warning) 30%, transparent) 20%, color-mix(in srgb, var(--c-warning) 30%, transparent) 40%, color-mix(in srgb, var(--c-positive) 20%, transparent) 40%, color-mix(in srgb, var(--c-positive) 20%, transparent) 100%)' }} />
@@ -247,9 +245,9 @@ export default function MarginManager() {
                                 </div>
                             )}
 
-                            {currentRatio !== null && currentRatio < 130 && (
+                            {currentRatio !== null && currentRatio < marginRules.maintenanceRatio && (
                                 <div style={{ marginTop: '12px', padding: '8px 12px', backgroundColor: 'color-mix(in srgb, var(--c-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--c-danger) 25%, transparent)', borderRadius: '8px', fontSize: '12px', color: 'var(--c-danger)' }}>
-                                    ⚠️ 維持率低於 130%，請留意追繳風險！強制斷頭線為 120%。
+                                    ⚠️ 維持率低於 {marginRules.maintenanceRatio}%，請留意追繳風險！斷頭線為 {marginRules.liquidationRatio}%。
                                 </div>
                             )}
                         </div>
@@ -376,13 +374,13 @@ export default function MarginManager() {
                                                 <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>${totalAddedEquity.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>
                                             </div>
                                             <div>
-                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '2px' }}>距追繳線(130%)緩衝</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '2px' }}>距追繳線({marginRules.maintenanceRatio}%)緩衝</div>
                                                 <div style={{ fontSize: '14px', fontWeight: 600, color: accMV - accDebt * 1.30 >= 0 ? 'var(--c-positive)' : 'var(--c-danger)' }}>
                                                     ${(accMV - accDebt * 1.30).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
                                                 </div>
                                             </div>
                                             <div>
-                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '2px' }}>距斷頭線(120%)緩衝</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '2px' }}>距斷頭線({marginRules.liquidationRatio}%)緩衝</div>
                                                 <div style={{ fontSize: '14px', fontWeight: 600, color: accMV - accDebt * 1.20 >= 0 ? 'var(--c-positive)' : 'var(--c-danger)' }}>
                                                     ${(accMV - accDebt * 1.20).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
                                                 </div>
@@ -392,7 +390,7 @@ export default function MarginManager() {
                                         {/* 試算後進度條 */}
                                         <div style={{ marginTop: '12px' }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--c-muted)', marginBottom: '4px' }}>
-                                                <span>斷頭 120%</span><span>追繳 130%</span><span>安全 160%</span><span>試算後 {finalRatio.toFixed(1)}%</span>
+                                                <span>斷頭 {marginRules.liquidationRatio}%</span><span>追繳 {marginRules.maintenanceRatio}%</span><span>安全 {marginRules.safeRatio}%</span><span>試算後 {finalRatio.toFixed(1)}%</span>
                                             </div>
                                             <div style={{ height: '6px', backgroundColor: 'var(--c-card)', borderRadius: '3px', overflow: 'hidden', position: 'relative' }}>
                                                 <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, color-mix(in srgb, var(--c-danger) 30%, transparent) 0%, color-mix(in srgb, var(--c-danger) 30%, transparent) 20%, color-mix(in srgb, var(--c-warning) 30%, transparent) 20%, color-mix(in srgb, var(--c-warning) 30%, transparent) 40%, color-mix(in srgb, var(--c-positive) 20%, transparent) 40%, color-mix(in srgb, var(--c-positive) 20%, transparent) 100%)' }} />
@@ -402,7 +400,7 @@ export default function MarginManager() {
                                                 <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${Math.min(finalRatio / 250 * 100, 100)}%`, backgroundColor: ratioColor(finalRatio), borderRadius: '3px', transition: 'width 0.4s ease' }} />
                                             </div>
                                             {currentRatio !== null && (
-                                                <div style={{ fontSize: '10px', color: 'var(--c-muted)', marginTop: '4px' }}>淡色：現況 {currentRatio.toFixed(1)}%　亮色：試算後</div>
+                                                <div style={{ fontSize: '10px', color: 'var(--c-muted)', marginTop: '4px' }}>淡色：現況 {currentRatio.toFixed(1)}% · 亮色：試算後</div>
                                             )}
                                         </div>
                                     </div>

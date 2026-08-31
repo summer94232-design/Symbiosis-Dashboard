@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /**
  * PriceContext.tsx
  * 全域現價管理 Context — v1.0
@@ -11,12 +12,13 @@
  * - Firebase 寫入仍保持 merge:true，各頁面互不覆蓋
  */
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
-import { setDoc } from 'firebase/firestore'
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
+import { onSnapshot, setDoc, type Unsubscribe } from 'firebase/firestore'
 import { investDB } from './lib/firebase'
 import { userDocNested } from './lib/userDB'
 import { getMultipleQuotes } from './lib/fugle'
 import { maybeAutoSnapshotToday, type AutoSnapshotResult } from './lib/snapshot'
+import { investAuth } from './lib/auth'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -45,7 +47,7 @@ interface PriceContextValue {
      * 從 Firebase lastPrices 快取初始化（不打 Fugle API）。
      * 各頁面 load() 讀完 Firebase 後呼叫此方法。
      */
-    loadCachedPrices: (savedPrices: Record<string, any>, savedAt: string) => void
+    loadCachedPrices: (savedPrices: Record<string, unknown>, savedAt: string) => void
 }
 
 // ── Context ────────────────────────────────────────────────────
@@ -82,7 +84,7 @@ export function PriceProvider({ children }: { children: ReactNode }) {
     const [lastUpdated, setLastUpdated] = useState('')
     const [priceLoading, setPriceLoading] = useState(false)
 
-    const loadCachedPrices = useCallback((savedPrices: Record<string, any>, savedAt: string) => {
+    const loadCachedPrices = useCallback((savedPrices: Record<string, unknown>, savedAt: string) => {
         const parsed: PriceMap = {}
         Object.entries(savedPrices).forEach(([k, v]) => {
             if (k !== '_updatedAt' && typeof v === 'number' && v > 0) {
@@ -92,6 +94,26 @@ export function PriceProvider({ children }: { children: ReactNode }) {
         setPrices(prev => ({ ...prev, ...parsed }))
         if (savedAt) setLastUpdated(prev => (parseUpdatedAt(savedAt) > parseUpdatedAt(prev) ? savedAt : prev))
     }, [])
+
+    // 跨分頁／跨裝置同步 settings/lastPrices；切換帳號時清除上一位使用者的報價。
+    useEffect(() => {
+        let priceUnsub: Unsubscribe | null = null
+        const authUnsub = investAuth.onAuthStateChanged(user => {
+            priceUnsub?.()
+            setPrices({})
+            setLastUpdated('')
+            if (!user) return
+            priceUnsub = onSnapshot(userDocNested(investDB, 'settings', 'lastPrices'), snapshot => {
+                if (!snapshot.exists()) return
+                const data = snapshot.data()
+                loadCachedPrices(data, typeof data._updatedAt === 'string' ? data._updatedAt : '')
+            }, error => console.error('[PriceContext] price sync error:', error))
+        })
+        return () => {
+            authUnsub()
+            priceUnsub?.()
+        }
+    }, [loadCachedPrices])
 
     const updatePrices = useCallback(async (codes: string[], options?: PriceUpdateOptions): Promise<PriceMap> => {
         if (codes.length === 0) return {}

@@ -9,6 +9,13 @@ import {
 } from './investorMeetingMerge'
 export type { InvestorMeetingInput, InvestorMeetingRecord } from './investorMeetingMerge'
 
+export interface YahooInvestorMeetingSyncResult {
+  fetched: number
+  changedGroups: number
+}
+
+let yahooSyncInFlight: Promise<YahooInvestorMeetingSyncResult> | null = null
+
 interface InvestorMeetingOverride {
   stockCode: string
   stockName?: string
@@ -85,24 +92,58 @@ export async function addInvestorMeetingDates(inputs: InvestorMeetingInput[]): P
     const addedDates = [...new Set([...validDates(current?.addedDates), ...input.dates])].sort()
     const addedSet = new Set(input.dates)
     const removedDates = validDates(current?.removedDates).filter(date => !addedSet.has(date))
+    const stockName = input.stockName || input.stockCode
+    if (current
+      && JSON.stringify(addedDates) === JSON.stringify(validDates(current.addedDates))
+      && JSON.stringify(removedDates) === JSON.stringify(validDates(current.removedDates))
+      && current.stockCode === input.stockCode
+      && (current.stockName || current.stockCode) === stockName) return null
     return {
       ref,
       data: {
         stockCode: input.stockCode,
-        stockName: input.stockName || input.stockCode,
+        stockName,
         yearMonth: input.yearMonth,
         addedDates,
         removedDates,
         updatedAt: now,
       },
     }
-  })
+  }).filter((write): write is NonNullable<typeof write> => write !== null)
   for (let start = 0; start < writes.length; start += 400) {
     const batch = writeBatch(investDB)
     writes.slice(start, start + 400).forEach(write => batch.set(write.ref, write.data))
     await batch.commit()
   }
   return writes.length
+}
+
+/** Yahoo 手動同步的共用入口；儀表板與行事曆同時觸發時只會執行一次。 */
+export function syncYahooInvestorMeetings(): Promise<YahooInvestorMeetingSyncResult> {
+  if (yahooSyncInFlight) return yahooSyncInFlight
+  yahooSyncInFlight = (async () => {
+    const response = await fetch('/.netlify/functions/yahoo-calendar-proxy')
+    if (!response.ok) throw new Error(`proxy HTTP ${response.status}`)
+    const json = await response.json() as { error?: string; events?: Array<{ code: string; name: string; date: string }> }
+    if (json.error) throw new Error(json.error)
+    const list = Array.isArray(json.events) ? json.events : []
+    const groups = new Map<string, InvestorMeetingInput & { dates: string[] }>()
+    for (const event of list) {
+      if (!event.code || !/^\d{4}-\d{2}-\d{2}$/.test(event.date)) continue
+      const yearMonth = event.date.slice(0, 7)
+      const id = `${event.code}-${yearMonth}`
+      const current = groups.get(id)
+      groups.set(id, {
+        stockCode: event.code,
+        stockName: event.name || event.code,
+        yearMonth,
+        dates: [...new Set([...(current?.dates ?? []), event.date])].sort(),
+      })
+    }
+    const changedGroups = await addInvestorMeetingDates([...groups.values()])
+    return { fetched: list.length, changedGroups }
+  })().finally(() => { yahooSyncInFlight = null })
+  return yahooSyncInFlight
 }
 
 /** Hides a global date or removes a personal date without modifying the global collection. */

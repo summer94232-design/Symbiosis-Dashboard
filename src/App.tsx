@@ -1,14 +1,15 @@
 import { useState, useEffect, lazy, Suspense, memo, useRef } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
-import { LayoutDashboard, ArrowLeftRight, TrendingUp, TrendingDown, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard, Folder, Wrench, Target, Map, Users, Loader } from 'lucide-react'
-import { getDoc } from 'firebase/firestore'
-import { investDB } from './lib/firebase'
+import { LayoutDashboard, ArrowLeftRight, TrendingUp, TrendingDown, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard, Folder, Wrench, Target, Map, Users, Loader, PieChart, FileSearch } from 'lucide-react'
+import { getDoc, onSnapshot } from 'firebase/firestore'
+import { investDB, kmsDB } from './lib/firebase'
 import { userDocNested } from './lib/userDB'
-import { fetchKmsNoteSummaries, fetchKmsTagOrder, fetchKmsTagStats, KMS_UNTAGGED_KEY } from './lib/kmsData'
+import { buildKmsTagStatsFromSummaries, fetchKmsNoteSummaries, fetchKmsTagOrder, fetchKmsTagStats, hasUsableKmsTagStats, KMS_UNTAGGED_KEY } from './lib/kmsData'
 import { signOutAll, switchAccount, investAuth } from './lib/auth'
-import { loadAccounts, removeAccount, type SavedAccount } from './lib/accountStore'
+import { ACCOUNT_STORE_CHANGED_EVENT, loadAccounts, removeAccount, updateAccountDisplayName, type SavedAccount } from './lib/accountStore'
 import { PriceProvider } from './PriceContext'
 import { MarketCapProvider } from './MarketCapContext'
+import { InvestSyncProvider, InvestSyncStatus } from './InvestSyncContext'
 
 const Dashboard = lazy(() => import('./pages/invest/Dashboard'))
 const Trades = lazy(() => import('./pages/invest/Trades'))
@@ -20,7 +21,9 @@ const YearReview = lazy(() => import('./pages/invest/YearReview'))
 const HistoryPnL = lazy(() => import('./pages/invest/HistoryPnL'))
 const Watchlist = lazy(() => import('./pages/invest/Watchlist'))
 const MarginManager = lazy(() => import('./pages/invest/MarginManager'))
+const PortfolioPlanner = lazy(() => import('./pages/invest/PortfolioPlanner'))
 const InvestSettings = lazy(() => import('./pages/invest/InvestSettings'))
+const BrokerReconciliation = lazy(() => import('./pages/invest/BrokerReconciliation'))
 const SentimentTracker = lazy(() => import('./pages/invest/SentimentTracker'))
 const IndustryMap = lazy(() => import('./pages/invest/IndustryMap'))
 const SoldTracker = lazy(() => import('./pages/invest/SoldTracker'))
@@ -44,6 +47,7 @@ const investNav = [
 ]
 
 const investManageNav = [
+    { to: '/invest/reconciliation', icon: FileSearch, label: '對帳核對' },
     { to: '/invest/history', icon: History, label: '歷史損益' },
     { to: '/invest/cashflow', icon: DollarSign, label: '出入金' },
     { to: '/invest/dividend', icon: Scissors, label: '除權息' },
@@ -52,6 +56,7 @@ const investManageNav = [
 ]
 
 const investToolsNav = [
+    { to: '/invest/portfolio-planner', icon: PieChart, label: '組合水位試算' },
     { to: '/invest/margin', icon: CreditCard, label: '融資管理' },
     { to: '/invest/sentiment', icon: Target, label: '觀點追蹤' },
     { to: '/invest/brief', icon: Newspaper, label: '每日重點' },
@@ -218,6 +223,12 @@ function AccountSwitcherInline({ displayName }: { displayName: string }) {
     useEffect(() => {
         if (open) { setAccounts(loadAccounts()); setError('') }
     }, [open])
+
+    useEffect(() => {
+        const refresh = () => setAccounts(loadAccounts())
+        window.addEventListener(ACCOUNT_STORE_CHANGED_EVENT, refresh)
+        return () => window.removeEventListener(ACCOUNT_STORE_CHANGED_EVENT, refresh)
+    }, [])
 
     useEffect(() => {
         const handler = (e: MouseEvent) => {
@@ -427,7 +438,7 @@ const Sidebar = memo(({
                                     ))}
                                 </div>
                             )}
-                            {kmsExpanded && untaggedCount > 0 && (
+                            {kmsExpanded && (
                                 <button
                                     onClick={() => setSelectedTag(KMS_UNTAGGED_KEY)}
                                     style={{
@@ -555,11 +566,16 @@ export default function App() {
     // ── 使用者顯示名稱（讀取供 Sidebar 顯示，編輯入口在設定與備份頁）──
     const [displayName, setDisplayName] = useState('')
 
-    useEffect(() => {
-        getDoc(userDocNested(investDB, 'settings', 'profile'))
-            .then(snap => { if (snap.exists()) setDisplayName(snap.data().displayName ?? '') })
-            .catch(() => { })
-    }, [])
+    useEffect(() => onSnapshot(
+        userDocNested(investDB, 'settings', 'profile'),
+        snap => {
+            const name = snap.exists() ? String(snap.data().displayName ?? '').trim() : ''
+            setDisplayName(name)
+            const email = investAuth.currentUser?.email
+            if (email && name) updateAccountDisplayName(email, name)
+        },
+        () => setDisplayName(''),
+    ), [])
 
     useEffect(() => {
         const handle = () => setIsMobile(window.innerWidth < 768)
@@ -581,14 +597,15 @@ export default function App() {
                 fetchKmsTagOrder(),
             ])
             let tags: string[]
-            if (stats) {
+            if (hasUsableKmsTagStats(stats)) {
                 tags = Object.keys(stats.counts)
                 setUntaggedCount(stats.untagged)
             } else {
                 // 後端 metadata 尚未首次重建時的相容 fallback；建立後不再全表讀取。
                 const summaries = await fetchKmsNoteSummaries<{ hashtags?: string[] }>()
-                tags = [...new Set(summaries.flatMap(note => note.hashtags || []))]
-                setUntaggedCount(summaries.filter(note => (note.hashtags?.length ?? 0) === 0).length)
+                const fallbackStats = buildKmsTagStatsFromSummaries(summaries)
+                tags = Object.keys(fallbackStats.counts)
+                setUntaggedCount(fallbackStats.untagged)
             }
             const rawTree = buildTree(tags.sort())
             const parentOrder = tagOrder.parentOrder
@@ -597,6 +614,18 @@ export default function App() {
         }
         loadTags()
     }, [isKMS, kmsDataVersion])
+
+    useEffect(() => {
+        if (!isKMS) return
+        let initialSnapshot = true
+        return onSnapshot(userDocNested(kmsDB, 'metadata', 'tagStats'), () => {
+            if (initialSnapshot) {
+                initialSnapshot = false
+                return
+            }
+            setKmsDataVersion(version => version + 1)
+        }, error => console.error('標籤統計即時更新失敗', error))
+    }, [isKMS])
 
     const toggleNode = (path: string) => {
         setExpandedNodes(prev => {
@@ -624,7 +653,8 @@ export default function App() {
 
     return (
         <PriceProvider>
-            <MarketCapProvider>
+            <InvestSyncProvider>
+              <MarketCapProvider>
                 <div className="app-shell" style={{ display: 'flex', backgroundColor: 'var(--c-bg)', overflow: 'hidden' }}>
                     {!isMobile && <Sidebar {...sidebarProps} />}
                     {isMobile && sidebarOpen && (
@@ -641,6 +671,7 @@ export default function App() {
                             </header>
                         )}
                         <main className="app-main" style={{ flex: 1, overflowY: 'auto', color: 'var(--c-text)' }}>
+                            {currentSystem === 'invest' && <InvestSyncStatus />}
                             <Suspense fallback={<PageLoader />}>
                                 <Routes>
                                     <Route path="/" element={<Navigate to="/invest" replace />} />
@@ -655,10 +686,12 @@ export default function App() {
                                     <Route path="/invest/review" element={<YearReview />} />
                                     <Route path="/invest/brief" element={<DailyBrief />} />
                                     <Route path="/invest/margin" element={<MarginManager />} />
+                                    <Route path="/invest/portfolio-planner" element={<PortfolioPlanner />} />
                                     <Route path="/invest/sentiment" element={<SentimentTracker />} />
                                     <Route path="/invest/industry" element={<IndustryMap />} />
                                     <Route path="/invest/sold-tracker" element={<SoldTracker />} />
                                     <Route path="/invest/settings" element={<InvestSettings />} />
+                                    <Route path="/invest/reconciliation" element={<BrokerReconciliation />} />
                                     <Route path="/kms" element={<KMSHome selectedTag={selectedTag} setSelectedTag={setSelectedTag} onNotesChanged={() => setKmsDataVersion(v => v + 1)} />} />
                                     <Route path="/kms/tags" element={<KMSTags />} />
                                     <Route path="/kms/export" element={<KMSExport />} />
@@ -673,7 +706,8 @@ export default function App() {
                         {isMobile && <MobileBottomNav currentSystem={currentSystem} openMenu={() => setSidebarOpen(true)} />}
                     </div>
                 </div>
-            </MarketCapProvider>
+              </MarketCapProvider>
+            </InvestSyncProvider>
         </PriceProvider>
     )
 }

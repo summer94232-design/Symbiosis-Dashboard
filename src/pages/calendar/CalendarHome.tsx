@@ -8,7 +8,7 @@ import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT
 import { Plus, X, ChevronLeft, ChevronRight, ExternalLink, Upload, Pencil, RefreshCw, UploadCloud } from 'lucide-react'
 import { getGoogleCalendarAuth, performGoogleCalendarSync, type SyncSummary } from '../../lib/googleCalendar'
 import { fetchCalendarEvents, fetchTasks, invalidateCalendarEvents } from '../../lib/plannerData'
-import { addInvestorMeetingDates, fetchInvestorMeetings, removeInvestorMeetingDate } from '../../lib/investorMeetings'
+import { addInvestorMeetingDates, fetchInvestorMeetings, removeInvestorMeetingDate, syncYahooInvestorMeetings } from '../../lib/investorMeetings'
 
 const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
 const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
@@ -148,38 +148,14 @@ export default function CalendarHome() {
         setInvestorInfo(null)
 
         try {
-            const res = await fetch('/.netlify/functions/yahoo-calendar-proxy')
-            if (!res.ok) throw new Error(`proxy HTTP ${res.status}`)
-
-            const json = await res.json()
-            if (json.error) throw new Error(json.error)
-
-            const list: { code: string; name: string; date: string }[] = Array.isArray(json.events) ? json.events : []
-            if (list.length === 0) {
+            const result = await syncYahooInvestorMeetings()
+            if (result.fetched === 0) {
                 setInvestorInfo('未從 Yahoo 取得任何法說會資料（可能該時段無排程）')
                 setLoadingYahoo(false)
                 return
             }
-
-            // Yahoo 手動更新只寫入目前使用者的 override，不再改動全域共享資料。
-            const groups = new Map<string, { stockCode: string; stockName: string; yearMonth: string; dates: Set<string> }>()
-            for (const ev of list) {
-                if (!/^\d{4}-\d{2}-\d{2}$/.test(ev.date)) continue
-                const ym = ev.date.slice(0, 7)          // YYYY-MM
-                const docId = `${ev.code}-${ym}`
-                if (!groups.has(docId)) {
-                    groups.set(docId, { stockCode: ev.code, stockName: ev.name || ev.code, yearMonth: ym, dates: new Set() })
-                }
-                groups.get(docId)!.dates.add(ev.date)
-            }
-
-            const changed = await addInvestorMeetingDates([...groups.values()].map(group => ({
-                ...group,
-                dates: [...group.dates],
-            })))
-
             await loadInvestorFromFirestore(year, month)
-            setInvestorInfo(`✅ Yahoo 法說會更新完成：抓到 ${list.length} 筆，已寫入 ${changed} 組個人資料；全域資料未被修改`)
+            setInvestorInfo(`✅ Yahoo 法說會更新完成：抓到 ${result.fetched} 筆，${result.changedGroups > 0 ? `更新 ${result.changedGroups} 組個人資料` : '沒有新異動'}；全域資料未被修改`)
         } catch (err) {
             console.error('loadYahooCalendar 失敗：', err)
             setInvestorError(`Yahoo 法說會更新失敗：${err instanceof Error ? err.message : '未知錯誤'}`)

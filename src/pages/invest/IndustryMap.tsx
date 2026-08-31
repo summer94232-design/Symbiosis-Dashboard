@@ -7,6 +7,7 @@ import { ChainView } from './IndustryChainView'
 import { usePrices } from '../../PriceContext'
 import { useMarketCap } from '../../MarketCapContext'
 import { calcMarketCap, formatMarketCap } from '../../lib/marketCap'
+import { useInvestSync } from '../../InvestSyncContext'
 
 // ── 型別 ──────────────────────────────────────────────────────────
 type Market = 'TW' | 'US' | 'JP'
@@ -536,6 +537,7 @@ type ViewMode = 'stock' | 'theme' | 'graph' | 'chain'
 type SortKey = 'code' | 'name' | 'themes'
 
 export default function IndustryMap() {
+    const { version: syncVersion } = useInvestSync()
     const { prices, updatePrices: ctxUpdatePrices, priceLoading } = usePrices()
     const { shares: sharesData, sharesLoading, updateShares } = useMarketCap()
     const [entries, setEntries] = useState<StockEntry[]>([])
@@ -561,7 +563,7 @@ export default function IndustryMap() {
         setLoading(false)
     }
 
-    useEffect(() => { load() }, [])
+    useEffect(() => { void load() }, [syncVersion])
 
     const allThemes = useMemo(() => {
         const s = new Set<string>()

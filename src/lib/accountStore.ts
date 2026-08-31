@@ -7,6 +7,7 @@
  */
 
 const STORAGE_KEY = 'saved_accounts'
+export const ACCOUNT_STORE_CHANGED_EVENT = 'saved-accounts-changed'
 // 固定的衍生鹽（混淆用，非高安全場景夠用）
 const SALT = 'personal-dashboard-v1'
 
@@ -80,18 +81,43 @@ export function loadAccounts(): SavedAccount[] {
     }
 }
 
+function notifyAccountStoreChanged(): void {
+    window.dispatchEvent(new CustomEvent(ACCOUNT_STORE_CHANGED_EVENT))
+}
+
 // ── 儲存（或更新）一組帳號 ───────────────────────────────────
 export async function saveAccount(email: string, password: string, displayName?: string): Promise<void> {
     const { cipher, iv } = await encrypt(password)
-    const accounts = loadAccounts().filter(a => a.email !== email) // 同 email 覆蓋
+    const normalizedEmail = email.trim().toLowerCase()
+    const existing = loadAccounts().find(a => a.email.trim().toLowerCase() === normalizedEmail)
+    const accounts = loadAccounts().filter(a => a.email.trim().toLowerCase() !== normalizedEmail) // 同 email 覆蓋
     accounts.push({
-        email,
-        displayName: displayName ?? email.split('@')[0],
+        email: normalizedEmail,
+        // 沒有明確傳入新名稱時保留既有自訂名稱，避免重新登入後退回 Email 前綴。
+        displayName: displayName?.trim() || existing?.displayName || normalizedEmail.split('@')[0],
         encryptedPassword: cipher,
         iv,
         savedAt: Date.now(),
     })
     localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts))
+    notifyAccountStoreChanged()
+}
+
+/** 將目前帳號在雲端 profile 的顯示名稱同步到本機帳號切換清單。 */
+export function updateAccountDisplayName(email: string, displayName: string): void {
+    const normalizedEmail = email.trim().toLowerCase()
+    const name = displayName.trim()
+    if (!normalizedEmail || !name) return
+    const accounts = loadAccounts()
+    let changed = false
+    const next = accounts.map(account => {
+        if (account.email.trim().toLowerCase() !== normalizedEmail || account.displayName === name) return account
+        changed = true
+        return { ...account, displayName: name }
+    })
+    if (!changed) return
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+    notifyAccountStoreChanged()
 }
 
 // ── 取得某帳號的明文密碼 ──────────────────────────────────────
@@ -107,6 +133,8 @@ export async function getPassword(email: string): Promise<string | null> {
 
 // ── 移除帳號 ──────────────────────────────────────────────────
 export function removeAccount(email: string): void {
-    const accounts = loadAccounts().filter(a => a.email !== email)
+    const normalizedEmail = email.trim().toLowerCase()
+    const accounts = loadAccounts().filter(a => a.email.trim().toLowerCase() !== normalizedEmail)
     localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts))
+    notifyAccountStoreChanged()
 }

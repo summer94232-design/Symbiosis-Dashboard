@@ -166,5 +166,5 @@
 
 @media (max-width: 700px) {
   .rich-editor-tool { min-width: 40px; height: 40px; }
-  .rich-editor-content { min-height: 220px; padding-inline: 12px; }
+  .rich-editor-content { min-height: 220px; padding-inline: 12px; font-size: 16px; }
 }
