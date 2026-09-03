@@ -6,11 +6,11 @@ import { fetchCashflow, fetchAssetSnapshots, fetchDividends, fetchTrades, invali
 import { loadPortfolioSnapshot } from '../../lib/portfolioSnapshot'
 import { reconcileSnapshotBreakdowns, type DividendRecord, type TradeRecord } from '../../lib/calc'
 import { toLocalDateString } from '../../lib/date'
-import InfoHint from '../../components/InfoHint'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts'
 import { Save, Pencil, Trash2, Plus, X, Check, Zap, AlertTriangle, TrendingUp } from 'lucide-react'
 import { useInvestSync } from '../../InvestSyncContext'
 import { validateSnapshotForWrite } from '../../lib/investmentValidation'
+import { calculateReturnGap } from '../../lib/returnComparison'
 
 // ── 型別 ──────────────────────────────────────────────────────────────────
 
@@ -56,17 +56,52 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
 
 // ── Tooltip：報酬率模式 ────────────────────────────────────────────────────
 
-const ReturnTooltip = ({ active, payload, label }: any) => {
+interface ReturnTooltipPayloadItem {
+    name: string
+    value?: number | null
+    color: string
+    dataKey?: string
+}
+
+interface ReturnTooltipProps {
+    active?: boolean
+    payload?: ReturnTooltipPayloadItem[]
+    label?: string
+}
+
+const ReturnTooltip = ({ active, payload, label }: ReturnTooltipProps) => {
     if (!active || !payload?.length) return null
+    const assetReturn = payload.find(item => item.dataKey === 'assetReturn')?.value
+    const taiexReturn = payload.find(item => item.dataKey === 'taiexReturn')?.value
+    const returnGap = calculateReturnGap(assetReturn, taiexReturn)
+    const tooltipLabel = (item: ReturnTooltipPayloadItem) => {
+        if (item.dataKey === 'assetReturn') return '我的資產'
+        if (item.dataKey === 'taiexReturn') return '加權指數'
+        return item.name
+    }
+
     return (
         <div style={{ backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '12px 16px' }}>
             <p style={{ color: 'var(--c-muted)', fontSize: '12px', margin: '0 0 8px' }}>{label}</p>
-            {payload.map((p: any) =>
+            {payload.map((p) =>
                 p.value != null && (
                     <p key={p.name} style={{ color: p.color, fontSize: '14px', fontWeight: 600, margin: '2px 0' }}>
-                        {p.name}：{p.value >= 0 ? '+' : ''}{Number(p.value).toFixed(2)}%
+                        {tooltipLabel(p)}：{p.value >= 0 ? '+' : ''}{Number(p.value).toFixed(2)}%
                     </p>
                 )
+            )}
+            {returnGap != null && (
+                <p
+                    title="資產報酬率減去加權指數報酬率"
+                    style={{
+                        color: returnGap > 0 ? 'var(--c-positive)' : returnGap < 0 ? 'var(--c-danger)' : 'var(--c-muted)',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        margin: '2px 0',
+                    }}
+                >
+                    同期報酬：{returnGap >= 0 ? '+' : ''}{returnGap.toFixed(2)}%
+                </p>
             )}
         </div>
     )
@@ -171,9 +206,10 @@ export default function AssetTrend() {
                 }
             }
             setTaiexData(map)
-        } catch (err: any) {
-            console.error('[IX0001] fetch failed:', err)
-            setTaiexError(`加權指數載入失敗：${err?.message ?? err}`)
+        } catch (reason: unknown) {
+            console.error('[IX0001] fetch failed:', reason)
+            const message = reason instanceof Error ? reason.message : String(reason)
+            setTaiexError(`加權指數載入失敗：${message}`)
         }
         setTaiexLoading(false)
     }
@@ -385,7 +421,7 @@ export default function AssetTrend() {
         if (!returnChartData.length) return null
         const last = returnChartData[returnChartData.length - 1]
         if (last.taiexReturn == null) return null
-        return parseFloat((last.assetReturn - last.taiexReturn).toFixed(2))
+        return calculateReturnGap(last.assetReturn, last.taiexReturn)
     }, [returnChartData])
 
     // ✅ 區間內是否有出入金（用於提示文案）

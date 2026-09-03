@@ -39,11 +39,19 @@ const snapshotPolicy = await importTypeScriptModule('../src/lib/snapshotPolicy.t
 const brokerReconciliation = await importTypeScriptModule('../src/lib/brokerReconciliation.ts')
 const brokerMonthlyReconciliation = await importTypeScriptModule('../src/lib/brokerMonthlyReconciliation.ts')
 const investmentValidation = await importInvestmentValidationModule()
+const returnComparison = await importTypeScriptModule('../src/lib/returnComparison.ts')
 
 const trade = (overrides) => ({
     id: '', date: '2026-07-23', type: 'buy', code: '2330', name: '台積電',
     price: 100, shares: 100, fee: 0, tax: 0, total: 10000,
     ...overrides,
+})
+
+test('同期報酬為資產報酬率減去加權指數報酬率', () => {
+    assert.equal(returnComparison.calculateReturnGap(103.65, 64.09), 39.56)
+    assert.equal(returnComparison.calculateReturnGap(12.34, 18.9), -6.56)
+    assert.equal(returnComparison.calculateReturnGap(0, 0), 0)
+    assert.equal(returnComparison.calculateReturnGap(10, null), null)
 })
 
 test('自訂融資門檻會同步影響加碼緩衝與壓力測試', () => {
