@@ -3,7 +3,7 @@ import { captureUserSession } from './userDB'
 
 /** A token is sent only to this application's protected functions. Never retry a metered request automatically. */
 export async function authenticatedFetch(path: string, session = captureUserSession(), init: RequestInit = {}, returnHttpErrors = false): Promise<Response> {
-    if (!/^\/\.netlify\/functions\/(news-proxy|foreign-quote|market-cap-proxy|yahoo-calendar-proxy|mops-proxy|fubon-snapshot|annual-calendars|dividend-announcements|quote-budget|fugle-proxy|ai-assistant)(\?|$)/.test(path)) throw new Error('不允許的 API 目的地')
+    if (!/^\/\.netlify\/functions\/(news-proxy|foreign-quote|market-cap-proxy|yahoo-calendar-proxy|mops-proxy|fubon-snapshot|annual-calendars|dividend-announcements|quote-budget|fugle-proxy|ai-assistant|market-reports)(\?|$)/.test(path)) throw new Error('不允許的 API 目的地')
     session.assertActive()
     const user = investAuth.currentUser
     if (!user) throw new Error('請先登入')

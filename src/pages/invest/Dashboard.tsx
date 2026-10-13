@@ -17,6 +17,7 @@ import { formatAutoSnapshotFeedback, maybeAutoSnapshotToday, type AutoSnapshotRe
 import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
 import DividendFeedStatus from '../../components/DividendFeedStatus'
+import MarketReportCard from '../../components/MarketReportCard'
 import ActionNotice, { type ActionNoticeState } from '../../components/ActionNotice'
 import { fetchCalendarEventsInRange, fetchOpenTasks } from '../../lib/plannerData'
 import { eventOverlapsRange, type EventTiming } from '../../lib/calendarTiming'
@@ -691,6 +692,7 @@ export default function Dashboard() {
                     </div>
                 </div>
 
+                <MarketReportCard />
                 <DividendFeedStatus />
                 {holdings.length > 0 && valuationNoticeVisible && (
                     <div role={holdingsWithoutPrice.length ? 'alert' : 'status'} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px', padding: '8px 10px 8px 12px', borderRadius: '9px', border: `1px solid ${holdingsWithoutPrice.length ? 'color-mix(in srgb, var(--c-warning) 35%, transparent)' : 'color-mix(in srgb, var(--c-positive) 30%, transparent)'}`, background: holdingsWithoutPrice.length ? 'color-mix(in srgb, var(--c-warning) 7%, transparent)' : 'color-mix(in srgb, var(--c-positive) 6%, transparent)', color: holdingsWithoutPrice.length ? 'var(--c-warning)' : 'var(--c-positive)', fontSize: '12px' }}>

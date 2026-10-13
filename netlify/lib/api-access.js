@@ -15,6 +15,7 @@ export const POLICIES = {
     mops: { minute: 20, day: 500, globalDay: 1000 },
     calendarSeries: { minute: 30, day: 300, globalDay: 1000 },
     calendarGoogle: { minute: 60, day: 1000, globalDay: 3000 },
+    marketReports: { minute: 12, day: 500, globalDay: 1500 },
     annualCalendars: { minute: 6, day: 100, globalDay: 300 },
     quoteBudget: { minute: 60, day: 1000, globalDay: 2000 },
     fugle: { minute: 120, day: 5000, globalDay: 10000 },
@@ -188,9 +189,9 @@ export async function authorizeApi(event, route, units = 1, method = 'GET') {
 
 const entries = new Map()
 /** Bounded warm-instance cache; quotas above remain shared across instances. */
-export async function cachedApi(key, ttlMs, loader) {
+export async function cachedApi(key, ttlMs, loader, forceRefresh = false) {
     const existing = entries.get(key)
-    if (existing && existing.expires > Date.now()) return existing.promise
+    if (!forceRefresh && existing && existing.expires > Date.now()) return existing.promise
     const record = { expires: Date.now() + ttlMs, promise: null }
     record.promise = Promise.resolve().then(loader).catch(error => { if (entries.get(key) === record) entries.delete(key); throw error })
     entries.delete(key)
