@@ -18,7 +18,7 @@ import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
 import DividendFeedStatus from '../../components/DividendFeedStatus'
 import ActionNotice, { type ActionNoticeState } from '../../components/ActionNotice'
-import { fetchCalendarEvents, fetchTasks } from '../../lib/plannerData'
+import { fetchCalendarEventsInRange, fetchOpenTasks } from '../../lib/plannerData'
 import { eventOverlapsRange, type EventTiming } from '../../lib/calendarTiming'
 import { syncYahooInvestorMeetings } from '../../lib/investorMeetings'
 import { DEFAULT_MARGIN_RULES, loadMarginRules } from '../../lib/marginSettings'
@@ -313,8 +313,8 @@ export default function Dashboard() {
             const todayStr_ = toLocalDateString()
             const future14Str = toLocalDateString(new Date(Date.now() + 14 * 86400000))
             const [eventRows, taskRows] = await Promise.all([
-                fetchCalendarEvents<CalendarEvent>(),
-                fetchTasks<Task>(),
+                fetchCalendarEventsInRange<CalendarEvent>(todayStr_, future14Str),
+                fetchOpenTasks<Task>(),
             ])
             // 行事曆事件
             const calEvents: CalendarEvent[] = eventRows

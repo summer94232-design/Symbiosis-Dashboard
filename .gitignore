@@ -42,3 +42,6 @@ local-secrets/
 service-account*.json
 firebase-admin*.json
 *-firebase-adminsdk-*.json
+
+# Local verification logs and debug output (keep out of Git)
+log/

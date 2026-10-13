@@ -22,6 +22,14 @@ Run the necessary tests for each change after identifying its full impact. Cover
 
 The user uses one brokerage account (Yuanta Securities). Do not add multi-broker support or make it a prerequisite for current work unless the user changes this requirement.
 
+## Saved account passwords
+
+User decision (2026-10-13): keep the existing saved-account password storage and seamless account switching (`src/lib/accountStore.ts`, `signInAndSave`/`switchAccount` in `src/lib/auth.ts`). Do not remove or weaken this feature, and do not propose removing it in reviews or roadmaps unless the user raises it again.
+
+## Git commits
+
+After each completed update/fix batch passes its local verification, commit it and push it to the GitHub remote (`origin`). Review staged files first; never commit `.env`, credentials, service accounts, `local-secrets/`, logs, debug output or other local artifacts. Pushing to Git is not deployment approval: production deployments still follow the deployment approval rule above, so confirm a push will not trigger an automatic Netlify or Firebase deployment.
+
 ## Cash-flow timing
 
 The user's default performance assumption is deposits after market close on the actual transfer date, often to fund settlement after buying stocks. Do not backdate deposits to the trade date or assume they occur before the open. Ordinary asset trends and estimated performance use recorded daily snapshots, including legacy, manual and intraday values; do not require closing confirmation or show its controls/status labels. Newly captured quotes must be valid and dated that day. Keep manual exact TWR optional and retain its saved data. Do not relabel intraday or unverified legacy snapshots as verified closing valuations.

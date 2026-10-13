@@ -17,8 +17,8 @@ test('daily brief retains event type and includes ongoing multi-day events', asy
     let todayEvents
     const mod = compile(loader, {
         ...timing, ...dates, ...calendar, active: true, todayStr: '2026-09-10', captureUserSession: () => session,
-        fetchCalendarEvents: async () => [ongoing, { ...ongoing, id: 'single', date: '2026-09-10', start: undefined, end: undefined }],
-        fetchTasks: async () => [], setDataError: error => assert.equal(error, ''), setDataLoading() {},
+        fetchCalendarEventsInRange: async () => [ongoing, { ...ongoing, id: 'single', date: '2026-09-10', start: undefined, end: undefined }],
+        fetchOpenTasks: async () => [], setDataError: error => assert.equal(error, ''), setDataLoading() {},
         setTodayEvents: rows => { todayEvents = rows }, setUpcomingEvents() {}, setTodayTasks() {}, setOverdueTasks() {},
     }, 'export { loadData }')
     await mod.loadData()
@@ -32,8 +32,8 @@ test('dashboard includes ongoing events but excludes events ending at today midn
     let events
     const mod = compile(loader, {
         ...timing, toLocalDateString: () => '2026-09-10', setSideLoading() {}, setTasks() {},
-        fetchCalendarEvents: async () => [ongoing, { ...ongoing, id: 'ended', end: { dateTime: '2026-09-10T00:00:00+08:00' } }],
-        fetchTasks: async () => [], setUpcomingEvents: rows => { events = rows },
+        fetchCalendarEventsInRange: async () => [ongoing, { ...ongoing, id: 'ended', end: { dateTime: '2026-09-10T00:00:00+08:00' } }],
+        fetchOpenTasks: async () => [], setUpcomingEvents: rows => { events = rows },
     }, 'export { loadSideCards }')
     await mod.loadSideCards()
     assert.deepEqual(events.map(event => event.id), ['ongoing'])

@@ -17,13 +17,13 @@
 
 ### 1. 身分與密鑰安全
 
-- 移除 `accountStore` 密碼保存、解密與無密碼切換；清除既有 `saved_accounts`。
+- [使用者決定保留，2026-10-13] `accountStore` 密碼保存與無密碼切換維持現狀，不再列為待辦。
 - 統一 Auth 身分來源，或建立可信的跨 Firebase UID mapping 與 KMS 資料遷移。
 - 建立 Firestore／Storage rules、indexes、emulator tests；規則隨程式版控。
 - Fugle、Gemini、News 等帶額度服務移到驗證過的後端 proxy；加入每 UID／IP 限流與快取，輪替舊金鑰。
 - Google OAuth 加上後端 state／PKCE 流程、Firebase ID token 驗證、後端加密 token vault 與最小 scope。
 
-驗收：瀏覽器 storage 與 bundle 中沒有密碼或私人 API key；兩個帳號互相讀寫皆被規則拒絕；KMS 合法帳號在 UID 不同時仍按設計運作。
+驗收：瀏覽器 storage 與 bundle 中沒有私人 API key（使用者保留的帳號密碼保存除外）；兩個帳號互相讀寫皆被規則拒絕；KMS 合法帳號在 UID 不同時仍按設計運作。
 
 ### 2. 財務計算正確性
 
@@ -59,8 +59,7 @@
 
 ### 5. 伺服器端篩選與分頁
 
-- Dashboard：`calendarEvents` query 限今日到 +14 天；tasks query 限 `done == false`，必要時再按 dueDate 篩選。
-- Daily Brief：只讀當日／相關日期事件與未完成任務。
+- [已完成本機，2026-10-13] Dashboard 與 Daily Brief 改用範圍查詢：`calendarEvents` 只讀開始日在「今日前 180 天」到「今日 +14 天」的事件（保留進行中的跨日事件），tasks 只讀 `done == false`；若完整清單已在快取中則直接篩選，不另外讀取。不需新增複合索引。
 - KMS／sentiments／watchlist／snapshots：cursor pagination + `limit(30~100)`。
 - 字典：全面採 `documentId()` prefix query；不要為一個輸入框下載整張 stockDict。
 - Google 同步的 6–7 個 `yearMonth` 查詢合併為 `in` query，或後端一次取得。
@@ -142,7 +141,7 @@
 
 ## 建議執行順序
 
-1. 第 1 週：停用密碼保存、輪替金鑰、補 rules 與 emulator tests。
+1. 第 1 週：輪替金鑰、補 rules 與 emulator tests（密碼保存依使用者決定保留）。
 2. 第 2 週：交易排序／超賣／財務 golden tests。
 3. 第 3 週：KMS 關聯原子化、Google token 後端化、全域法說會唯後端寫入。
 4. 第 4 週：KMS store、in-flight dedupe、Dashboard／Daily Brief 範圍 query。

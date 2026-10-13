@@ -3,7 +3,7 @@ import { captureUserSession } from '../../lib/userDB'
 import AnnualDataNotice from '../../components/AnnualDataNotice'
 import { useInvestSync } from '../../InvestSyncContext'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { fetchCalendarEvents, fetchTasks } from '../../lib/plannerData'
+import { fetchCalendarEventsInRange, fetchOpenTasks } from '../../lib/plannerData'
 import { getDailyNews } from '../../lib/gemini'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS } from '../../lib/calendarData'
 import { toLocalDateString } from '../../lib/date'
@@ -70,9 +70,10 @@ export default function DailyBrief() {
         const loadData = async () => {
             try {
                 const session = captureUserSession()
+                const next14Str = toLocalDateString(new Date(Date.now() + 14 * 86400000))
                 const [personalRows, taskRows] = await Promise.all([
-                    fetchCalendarEvents<EventItem>(),
-                    fetchTasks<TaskItem>(),
+                    fetchCalendarEventsInRange<EventItem>(todayStr, next14Str),
+                    fetchOpenTasks<TaskItem>(),
                 ])
 
                 if (!active) return
@@ -85,7 +86,6 @@ export default function DailyBrief() {
                 }))
 
                 const futuresThisMonth = getFuturesSettlementDates(Number(todayStr.slice(0, 4)), Number(todayStr.slice(5, 7)))
-                const next14Str = toLocalDateString(new Date(Date.now() + 14 * 86400000))
 
                 const allEvents: EventItem[] = [
                     ...FOMC_DATES,
