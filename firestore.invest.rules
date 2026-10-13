@@ -10,9 +10,23 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == userId;
     }
 
-    // Every personal collection, including investorMeetingOverrides, is UID-isolated.
-    match /users/{userId}/{document=**} {
-      allow read, write: if ownsPath(userId);
+    function advancesLedger(userId) {
+      let path = /databases/$(database)/documents/users/$(userId)/ledgerControl/revision;
+      let previous = exists(path) ? get(path).data.revision : 0;
+      let next = getAfter(path).data;
+      return next.revision is int && next.revision == previous + 1;
+    }
+
+    // Inventory-changing writes must atomically advance the shared revision.
+    // An old open client cannot bypass the new concurrency guard.
+    match /users/{userId}/{collectionId}/{document=**} {
+      allow read: if ownsPath(userId);
+      allow write: if ownsPath(userId) && collectionId != 'ledgerControl'
+        && (!(collectionId in ['trades', 'dividends']) || advancesLedger(userId));
+    }
+    match /users/{userId}/ledgerControl/revision {
+      allow write: if ownsPath(userId) && advancesLedger(userId)
+        && request.resource.data.keys().hasOnly(['revision', 'updatedAt']);
     }
 
     // Shared investor meetings are readable by signed-in users but writable only

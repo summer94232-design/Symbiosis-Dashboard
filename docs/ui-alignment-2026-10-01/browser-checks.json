@@ -1,0 +1,264 @@
+{
+  "sync393": {
+    "closed": {
+      "arrowOffset": 0,
+      "dotOffset": 0,
+      "height": 28,
+      "right": 377.599983215332
+    },
+    "open": {
+      "arrowOffset": 0,
+      "dotOffset": 0,
+      "height": 28,
+      "open": true,
+      "right": 377.599983215332
+    }
+  },
+  "otherWidths": [
+    {
+      "width": 320,
+      "height": 640,
+      "before": {
+        "arrow": -0.0000019073486328125,
+        "dot": 0,
+        "right": 303.99999237060547
+      },
+      "after": {
+        "arrow": 0,
+        "dot": 0,
+        "open": true,
+        "right": 303.99999237060547
+      }
+    },
+    {
+      "width": 844,
+      "height": 390,
+      "before": {
+        "arrow": -0.000002384185791015625,
+        "dot": 0,
+        "right": 818.8400039672852
+      },
+      "after": {
+        "arrow": -0.000002384185791015625,
+        "dot": 0,
+        "open": true,
+        "right": 818.8400039672852
+      }
+    },
+    {
+      "width": 1280,
+      "height": 800,
+      "before": {
+        "arrow": -0.000002384185791015625,
+        "dot": 0,
+        "right": 1247.9999771118164
+      },
+      "after": {
+        "arrow": 0,
+        "dot": 0,
+        "open": true,
+        "right": 1247.9999771118164
+      }
+    }
+  ],
+  "pages": [
+    {
+      "page": "dashboard",
+      "width": 320,
+      "clientWidth": 314,
+      "disclosures": 1,
+      "iconButtons": 5,
+      "misaligned": [],
+      "scrollWidth": 314
+    },
+    {
+      "page": "settings",
+      "width": 320,
+      "clientWidth": 314,
+      "disclosures": 3,
+      "iconButtons": 10,
+      "misaligned": [],
+      "scrollWidth": 314
+    },
+    {
+      "page": "review",
+      "width": 320,
+      "clientWidth": 314,
+      "disclosures": 1,
+      "iconButtons": 0,
+      "misaligned": [],
+      "scrollWidth": 314
+    },
+    {
+      "page": "planner",
+      "width": 320,
+      "clientWidth": 314,
+      "disclosures": 2,
+      "iconButtons": 7,
+      "misaligned": [],
+      "scrollWidth": 314
+    },
+    {
+      "page": "industry",
+      "width": 320,
+      "clientWidth": 320,
+      "disclosures": 2,
+      "iconButtons": 0,
+      "misaligned": [],
+      "scrollWidth": 320
+    },
+    {
+      "page": "export",
+      "width": 320,
+      "clientWidth": 314,
+      "disclosures": 2,
+      "iconButtons": 3,
+      "misaligned": [],
+      "scrollWidth": 314
+    },
+    {
+      "page": "graph",
+      "width": 320,
+      "clientWidth": 320,
+      "disclosures": 2,
+      "iconButtons": 0,
+      "misaligned": [],
+      "scrollWidth": 320
+    },
+    {
+      "page": "broker",
+      "width": 320,
+      "clientWidth": 314,
+      "disclosures": 1,
+      "iconButtons": 2,
+      "misaligned": [],
+      "scrollWidth": 314
+    },
+    {
+      "page": "cash",
+      "width": 320,
+      "clientWidth": 314,
+      "disclosures": 2,
+      "iconButtons": 3,
+      "misaligned": [],
+      "scrollWidth": 314
+    },
+    {
+      "page": "margin",
+      "width": 320,
+      "clientWidth": 314,
+      "disclosures": 2,
+      "iconButtons": 2,
+      "misaligned": [],
+      "scrollWidth": 351
+    },
+    {
+      "page": "dividend",
+      "width": 320,
+      "clientWidth": 314,
+      "disclosures": 2,
+      "iconButtons": 1,
+      "misaligned": [],
+      "scrollWidth": 314
+    },
+    {
+      "page": "dashboard",
+      "width": 844,
+      "clientWidth": 838,
+      "disclosures": 1,
+      "iconButtons": 5,
+      "misaligned": [],
+      "scrollWidth": 838
+    },
+    {
+      "page": "settings",
+      "width": 844,
+      "clientWidth": 838,
+      "disclosures": 3,
+      "iconButtons": 10,
+      "misaligned": [],
+      "scrollWidth": 838
+    },
+    {
+      "page": "review",
+      "width": 844,
+      "clientWidth": 838,
+      "disclosures": 1,
+      "iconButtons": 0,
+      "misaligned": [],
+      "scrollWidth": 838
+    },
+    {
+      "page": "planner",
+      "width": 844,
+      "clientWidth": 838,
+      "disclosures": 2,
+      "iconButtons": 7,
+      "misaligned": [],
+      "scrollWidth": 838
+    },
+    {
+      "page": "industry",
+      "width": 844,
+      "clientWidth": 844,
+      "disclosures": 2,
+      "iconButtons": 0,
+      "misaligned": [],
+      "scrollWidth": 844
+    },
+    {
+      "page": "export",
+      "width": 844,
+      "clientWidth": 838,
+      "disclosures": 2,
+      "iconButtons": 3,
+      "misaligned": [],
+      "scrollWidth": 838
+    },
+    {
+      "page": "graph",
+      "width": 844,
+      "clientWidth": 838,
+      "disclosures": 2,
+      "iconButtons": 0,
+      "misaligned": [],
+      "scrollWidth": 838
+    },
+    {
+      "page": "broker",
+      "width": 844,
+      "clientWidth": 838,
+      "disclosures": 1,
+      "iconButtons": 2,
+      "misaligned": [],
+      "scrollWidth": 838
+    },
+    {
+      "page": "cash",
+      "width": 844,
+      "clientWidth": 838,
+      "disclosures": 2,
+      "iconButtons": 3,
+      "misaligned": [],
+      "scrollWidth": 838
+    },
+    {
+      "page": "margin",
+      "width": 844,
+      "clientWidth": 838,
+      "disclosures": 2,
+      "iconButtons": 2,
+      "misaligned": [],
+      "scrollWidth": 838
+    },
+    {
+      "page": "dividend",
+      "width": 844,
+      "clientWidth": 838,
+      "disclosures": 2,
+      "iconButtons": 1,
+      "misaligned": [],
+      "scrollWidth": 838
+    }
+  ]
+}

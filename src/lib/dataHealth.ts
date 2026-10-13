@@ -1,4 +1,4 @@
-import { analyzeDayTrades, type TradeRecord } from './calc'
+import { analyzeDayTrades, compareTradeRecords, type TradeRecord } from './calc'
 
 export type HealthSeverity = 'critical' | 'warning' | 'info'
 
@@ -64,11 +64,7 @@ function parsePriceUpdatedAt(value: string): number {
 }
 
 function tradeOrder(a: Record<string, unknown>, b: Record<string, unknown>): number {
-  const date = String(a.date || '').localeCompare(String(b.date || ''))
-  if (date) return date
-  const created = String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
-  if (created) return created
-  return String(a.id || '').localeCompare(String(b.id || ''))
+  return compareTradeRecords(a as unknown as TradeRecord, b as unknown as TradeRecord)
 }
 
 export function analyzeDataHealth(input: HealthInput): HealthReport {
@@ -88,11 +84,13 @@ export function analyzeDataHealth(input: HealthInput): HealthReport {
   const oversells: Record<string, unknown>[] = []
   const timeline = [
     ...input.trades.filter(t => !badTrades.includes(t)).map(row => ({ kind: 'trade' as const, date: String(row.date), row })),
-    ...input.dividends.filter(row => validDate(row.date) && String(row.code || '').trim() && positive(row.stockDividend)).map(row => ({ kind: 'stockdiv' as const, date: String(row.date), row })),
+    ...input.dividends.filter(row => row.status !== 'announced' && validDate(row.stockDistributionDate || row.date) && String(row.code || '').trim() && positive(row.stockDividend)).map(row => ({ kind: 'stockdiv' as const, date: String(row.stockDistributionDate || row.date), row })),
   ].sort((a, b) => {
     const date = a.date.localeCompare(b.date)
     if (date) return date
-    if (a.kind !== b.kind) return a.kind === 'trade' ? -1 : 1
+    const priority = (event: typeof a) => event.kind === 'stockdiv' && event.row.stockDistributionDate ? 0 : event.kind === 'trade' ? 1 : 2
+    const order = priority(a) - priority(b)
+    if (order) return order
     return a.kind === 'trade' && b.kind === 'trade' ? tradeOrder(a.row, b.row) : String(a.row.id || '').localeCompare(String(b.row.id || ''))
   })
   timeline.forEach(event => {

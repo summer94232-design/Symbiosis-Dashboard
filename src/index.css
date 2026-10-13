@@ -1,5 +1,59 @@
 @import "tailwindcss";
 
+:root {
+    --c-button-accent: var(--c-accent);
+    --c-on-accent: #fff;
+    --c-button-positive: var(--c-positive);
+    --c-button-danger: var(--c-danger);
+    --c-button-warning: var(--c-warning);
+    --c-button-purple: var(--c-purple);
+    --ui-control-radius: 8px;
+    --ui-card-padding: 18px;
+}
+
+/* Compact shared controls; no extra font scaling or continuous animation. */
+button:focus-visible, a:focus-visible, summary:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible, [role="button"]:focus-visible {
+    outline: 2px solid var(--c-accent) !important;
+    outline-offset: 2px;
+}
+button:disabled { cursor: default; }
+.ui-button.ui-button-primary { background-color: var(--c-button-accent); color: var(--c-on-accent); }
+.ui-button-danger { background-color: var(--c-button-danger); color: var(--c-on-accent); }
+.ui-dialog {
+    margin: auto; width: min(420px, calc(100vw - 24px)); max-height: calc(100dvh - 24px);
+    padding: 18px; border: 1px solid var(--c-border); border-radius: 12px;
+    background: var(--c-card); color: var(--c-text); box-shadow: 0 12px 40px #0005;
+}
+.ui-dialog::backdrop { background: #0008; }
+.ui-dialog h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.ui-dialog p { margin: 12px 0 16px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ui-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.info-hint.info-hint {
+    display: inline-flex; align-items: center; justify-content: center; position: relative;
+    width: 1em; height: 1em; min-width: 0 !important; min-height: 0 !important;
+    font-size: inherit; line-height: 1; padding: 0; margin-left: 5px; vertical-align: middle;
+    border: 0; background: transparent; color: var(--c-muted); cursor: help; flex-shrink: 0;
+}
+.info-hint::before { content: ''; position: absolute; width: 24px; height: 24px; }
+.info-hint-popup {
+    position: fixed; z-index: 1100; max-width: calc(100vw - 16px); max-height: 105px;
+    overflow-y: auto; padding: 8px 10px; border-radius: 8px; background: var(--c-sidebar);
+    border: 1px solid var(--c-border); color: var(--c-text); font-size: 11px; font-weight: 400;
+    line-height: 1.6; white-space: normal; text-align: left; box-shadow: 0 4px 12px #0004;
+}
+.ui-field-error { margin: 4px 0 0; font-size: 11px; line-height: 1.4; color: var(--c-danger); }
+[aria-invalid="true"] { border-color: var(--c-danger) !important; }
+.ui-loading { padding: 12px 0; color: var(--c-muted); font-size: 12px; }
+.ui-refresh-status { margin: 0 0 8px; font-size: 11px; color: var(--c-muted); }
+.ui-load-error { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; font-size: 12px; color: var(--c-danger); }
+.ui-dialog-actions button { min-height: 44px; }
+.ui-loading-bars { display: grid; gap: 8px; margin-top: 10px; }
+.ui-loading-bars span { height: 30px; border-radius: 6px; background: var(--c-card); border: 1px solid var(--c-border); }
+@media (prefers-reduced-motion: reduce) {
+    .is-spinning, .animate-spin { animation: none !important; }
+}
+
 @theme {
     --color-c-bg: #14182a;
     --color-c-sidebar: #0f1220;
@@ -33,6 +87,7 @@
     }
 
     [data-theme="light"] {
+        --c-on-accent: #fff;
         --c-bg: #f0f2f5;
         --c-sidebar: #e6eaf0;
         --c-card: #f8f9fb;
@@ -280,17 +335,117 @@
     gap: 8px;
 }
 
-.ui-button {
+/* Keep standalone icons and legacy icon actions on the text centre line. */
+svg.lucide {
+    display: inline-block;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+button:has(> svg.lucide) {
     display: inline-flex;
-    min-height: 40px;
     align-items: center;
     justify-content: center;
-    gap: 7px;
-    padding: 8px 14px;
-    border-radius: 9px;
+    gap: 6px;
+}
+
+.disclosure-note__summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 4px 0;
+    cursor: pointer;
+    list-style: none;
+    overflow-wrap: anywhere;
+}
+
+.disclosure-note__summary::-webkit-details-marker {
+    display: none;
+}
+
+.disclosure-note__summary::marker {
+    content: '';
+}
+
+.disclosure-note__summary:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+.disclosure-note__chevron {
+    transition: transform 160ms ease;
+}
+
+.disclosure-note[open] > summary > .disclosure-note__chevron {
+    transform: rotate(90deg);
+}
+
+.disclosure-note__label {
+    min-width: 0;
+}
+
+.disclosure-note__body {
+    padding: 4px 0 6px;
+    overflow-wrap: anywhere;
+}
+
+.invest-sync-status {
+    display: flex;
+    justify-content: flex-end;
+    min-width: 0;
+    padding: 6px clamp(16px, 3vw, 32px) 0;
+    color: var(--c-muted);
+    font-size: 10px;
+}
+
+.invest-sync-status__note > summary {
+    width: fit-content;
+    max-width: 100%;
+    margin-inline-start: auto;
+}
+
+.invest-sync-status__note .disclosure-note__chevron {
+    order: 1;
+    width: 12px;
+    height: 12px;
+}
+
+.invest-sync-status__note .disclosure-note__label,
+.invest-sync-status__label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.invest-sync-status__label {
+    min-height: 28px;
+}
+
+.invest-sync-status__dot {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 7px;
+    border-radius: 50%;
+}
+
+.invest-sync-status__note .disclosure-note__body {
+    text-align: right;
+    padding-top: 0;
+}
+
+.ui-button {
+    display: inline-flex;
+    min-height: 36px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: var(--ui-control-radius);
     font-size: 13px;
     font-weight: 600;
-    line-height: 1;
+    line-height: 1.4;
     cursor: pointer;
     transition: border-color 160ms ease, background-color 160ms ease, opacity 160ms ease, transform 160ms ease;
 }
@@ -389,7 +544,25 @@
     }
 }
 
-@media (max-width: 767px) {
+@media (max-width: 767px), (max-width: 950px) and (pointer: coarse) and (orientation: landscape) {
+    :root {
+        --ui-card-padding: 12px;
+        --ui-page-padding: 10px;
+    }
+
+    .mobile-header {
+        padding-block: max(4px, env(safe-area-inset-top)) 4px;
+    }
+
+    .mobile-bottom-nav {
+        padding-top: 3px;
+        padding-bottom: calc(3px + env(safe-area-inset-bottom));
+    }
+
+    .mobile-bottom-link {
+        min-height: 44px;
+    }
+
     .app-shell {
         position: fixed;
         inset: 0;
@@ -451,6 +624,203 @@
     .app-main a[role="button"],
     .app-main label:has(input[type="file"]) {
         min-height: 44px;
+        min-width: 44px;
+    }
+
+    .app-main button > svg,
+    .app-sidebar.mobile button > svg {
+        flex-shrink: 0;
+    }
+
+    .app-main button:has(> svg:only-child),
+    .app-sidebar.mobile button:has(> svg:only-child) {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .app-sidebar.mobile button {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .task-item {
+        display: grid !important;
+        grid-template-columns: 44px 44px minmax(0, 1fr) 88px;
+        gap: 4px !important;
+        padding: 6px 4px !important;
+    }
+
+    .task-item-actions {
+        grid-column: auto;
+        justify-content: flex-end;
+        gap: 0 !important;
+    }
+
+    .task-item button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .task-form-grid > div {
+        min-width: 0;
+        grid-column: 1 / -1 !important;
+    }
+
+    .history-heading {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .planner-section-head {
+        flex-wrap: wrap;
+    }
+
+    .history-tabs {
+        width: 100% !important;
+        display: grid !important;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .history-tabs button {
+        min-width: 0;
+        padding: 8px 4px !important;
+        white-space: normal !important;
+    }
+
+    .history-custom-dates {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .history-custom-dates input {
+        min-width: 0;
+        max-width: 100%;
+        flex: 1 1 140px;
+    }
+
+    .industry-relation-layout {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .industry-relation-layout > div,
+    .mm-grid > div {
+        min-width: 0;
+    }
+
+    .industry-relation-head {
+        display: none !important;
+    }
+
+    .industry-relation-row {
+        grid-template-columns: minmax(0, 1fr) 90px !important;
+        gap: 10px !important;
+    }
+
+    .industry-relation-row > [data-label] {
+        grid-column: 1 / -1;
+    }
+
+    .industry-relation-row > [data-label]::before {
+        content: attr(data-label);
+        width: 100%;
+        color: var(--c-muted);
+        font-size: 12px;
+    }
+
+    .kms-tags-heading {
+        display: none !important;
+    }
+
+    .kms-tags-card {
+        padding: 6px !important;
+    }
+
+    .kms-tags-page-header {
+        margin-bottom: 12px !important;
+    }
+
+    .kms-tag-row {
+        grid-template-columns: minmax(0, 1fr) auto auto !important;
+        gap: 4px !important;
+        padding: 4px !important;
+        border-bottom: 1px solid var(--c-border);
+    }
+
+    .kms-tag-row > :first-child {
+        display: none !important;
+    }
+
+    .kms-tag-row > :nth-child(2) {
+        min-width: 0;
+        flex-wrap: nowrap;
+        gap: 4px !important;
+        overflow-wrap: anywhere;
+    }
+
+    .kms-tag-row > :nth-child(2) > span {
+        min-width: 0;
+    }
+
+    .kms-tag-row > :nth-child(2) > button:last-child {
+        display: none !important;
+    }
+
+    .kms-tag-row > :nth-child(3) {
+        min-width: 20px;
+        font-size: 12px !important;
+    }
+
+    .kms-tag-row > :last-child {
+        justify-content: flex-end;
+        gap: 0 !important;
+        flex-wrap: nowrap;
+    }
+
+    .kms-tag-rename {
+        width: 44px;
+        padding: 0 !important;
+        justify-content: center;
+        border-color: transparent !important;
+    }
+
+    .kms-tag-rename > span {
+        display: none;
+    }
+
+    .kms-tag-child {
+        margin-left: 12px;
+        border-left: 2px solid var(--c-border);
+    }
+
+    .kms-tag-edit {
+        flex: 1 !important;
+        flex-wrap: nowrap;
+    }
+
+    .kms-tag-edit input {
+        width: 0;
+        flex: 1 !important;
+    }
+
+    .kms-tag-row.is-editing > :nth-child(2) {
+        grid-column: 1 / -1;
+    }
+
+    .kms-tag-row.is-editing > :nth-child(2) > button,
+    .kms-tag-row.is-editing > :nth-child(3),
+    .kms-tag-row.is-editing > :last-child {
+        display: none !important;
+    }
+
+    .app-main .cal-day,
+    .app-main .trade-date-calendar button {
+        min-width: 0;
+    }
+
+    .app-main .mm-grid {
+        grid-template-columns: minmax(0, 1fr) !important;
     }
 
     .app-main div:has(> table) {
@@ -493,24 +863,26 @@
     }
 
     .page-actions {
-        width: 100%;
-        display: grid !important;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: auto;
+        max-width: 100%;
+        display: flex !important;
+        flex-wrap: wrap;
+        gap: 6px;
     }
 
     .page-actions > button,
     .page-actions > label,
     .page-actions > a {
-        width: 100%;
+        width: auto;
         justify-content: center;
     }
 
     .page-actions > div {
-        width: 100%;
+        width: auto;
     }
 
     .page-actions > div > .ui-button {
-        width: 100%;
+        width: auto;
     }
 
     .calendar-actions .calendar-secondary-action {
@@ -562,15 +934,38 @@
     }
 
     .holdings-stats,
-    .dash-stats {
+    .dash-stats,
+    .cash-stats,
+    .div-stats,
+    .history-stats {
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-        gap: 10px !important;
+        gap: 6px !important;
+        margin-bottom: 12px !important;
+    }
+
+    .cash-stats > div,
+    .div-stats > div,
+    .holdings-stats > div,
+    .history-stats > div {
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    .planner-kpi {
+        min-height: 88px !important;
+    }
+
+    .planner-summary,
+    .dash-side-cards,
+    .dash-extra {
+        gap: 8px !important;
+        margin-bottom: 12px !important;
     }
 
     .mobile-holdings-list {
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 4px;
     }
 
     .dashboard-mobile-holdings {
@@ -598,7 +993,7 @@
         grid-template-columns: minmax(0, 1fr) auto 18px;
         align-items: center;
         gap: 8px;
-        padding: 12px;
+        padding: 8px;
         border: 0;
         color: var(--c-text);
         background: transparent;
@@ -652,8 +1047,8 @@
     .mobile-holding-details {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-        padding: 12px;
+        gap: 6px;
+        padding: 8px;
         border-top: 1px solid var(--c-border);
     }
 
@@ -694,8 +1089,8 @@
     }
 
     .dash-stats .dashboard-kpi-card {
-        min-height: 96px;
-        padding: 14px !important;
+        min-height: 76px;
+        padding: 10px !important;
     }
 
     .dash-stats .dashboard-kpi-card:last-child:nth-child(odd) {
@@ -704,12 +1099,13 @@
 
     .page-header {
         align-items: flex-start;
-        margin-bottom: 18px;
+        margin-bottom: 12px;
         flex-wrap: wrap;
+        gap: 8px;
     }
 
     .page-title {
-        font-size: 20px;
+        font-size: 18px;
     }
 
     .page-subtitle {
@@ -840,7 +1236,17 @@
     }
 }
 
-@media (max-height: 500px) and (max-width: 767px) {
+@media (max-width: 359px) {
+    .task-item {
+        grid-template-columns: 44px 44px minmax(0, 1fr);
+    }
+
+    .task-item-actions {
+        grid-column: 2 / -1;
+    }
+}
+
+@media (max-height: 500px) and (max-width: 767px), (max-height: 500px) and (max-width: 950px) and (pointer: coarse) and (orientation: landscape) {
     .mobile-bottom-nav {
         display: none;
     }
@@ -849,3 +1255,51 @@
         bottom: max(8px, env(safe-area-inset-bottom));
     }
 }
+
+/* Financial columns keep the same alignment for their header and values. */
+.app-main table { font-variant-numeric: tabular-nums; }
+.app-main .holdings-table :is(th, td):nth-child(3),
+.app-main .holdings-table :is(th, td):nth-child(4),
+.app-main .holdings-table :is(th, td):nth-child(5),
+.app-main .holdings-table :is(th, td):nth-child(6),
+.app-main .holdings-table :is(th, td):nth-child(7),
+.app-main .holdings-table :is(th, td):nth-child(8),
+.app-main .holdings-table :is(th, td):nth-child(9) { text-align: right; white-space: nowrap; }
+.app-main .h-table :is(th, td):nth-child(3),
+.app-main .h-table :is(th, td):nth-child(4),
+.app-main .h-table :is(th, td):nth-child(5),
+.app-main .h-table :is(th, td):nth-child(6),
+.app-main .h-table :is(th, td):nth-child(7),
+.app-main .h-table :is(th, td):nth-child(8) { text-align: right; white-space: nowrap; }
+.app-main .cash-table :is(th, td):nth-child(3) { text-align: right; white-space: nowrap; }
+.app-main .div-table :is(th, td):nth-child(4),
+.app-main .div-table :is(th, td):nth-child(5) { text-align: right; white-space: nowrap; }
+.app-main .trade-table :is(th, td):nth-child(5),
+.app-main .trade-table :is(th, td):nth-child(6),
+.app-main .trade-table :is(th, td):nth-child(7),
+.app-main .trade-table :is(th, td):nth-child(8),
+.app-main .trade-table :is(th, td):nth-child(9) { text-align: right; white-space: nowrap; }
+.app-main .history-realized :is(th, td):nth-child(4),
+.app-main .history-realized :is(th, td):nth-child(5),
+.app-main .history-realized :is(th, td):nth-child(6),
+.app-main .history-realized :is(th, td):nth-child(7),
+.app-main .history-realized :is(th, td):nth-child(8) { text-align: right; white-space: nowrap; }
+.app-main .history-dividend :is(th, td):nth-child(4),
+.app-main .history-dividend :is(th, td):nth-child(5) { text-align: right; white-space: nowrap; }
+.app-main .history-by-stock :is(th, td):nth-child(3),
+.app-main .history-by-stock :is(th, td):nth-child(4),
+.app-main .history-by-stock :is(th, td):nth-child(5),
+.app-main .history-by-stock :is(th, td):nth-child(6),
+.app-main .history-by-stock :is(th, td):nth-child(7),
+.app-main .history-by-stock :is(th, td):nth-child(8) { text-align: right; white-space: nowrap; }
+.app-main .mm-table :is(th, td):nth-child(2),
+.app-main .mm-table :is(th, td):nth-child(3),
+.app-main .mm-table :is(th, td):nth-child(4),
+.app-main .mm-table :is(th, td):nth-child(5),
+.app-main .mm-table :is(th, td):nth-child(6) { text-align: right; font-variant-numeric: tabular-nums; }
+.app-main .planner-table :is(th, td):nth-child(2),
+.app-main .planner-table :is(th, td):nth-child(3),
+.app-main .planner-table :is(th, td):nth-child(4),
+.app-main .planner-table :is(th, td):nth-child(5),
+.app-main .planner-table :is(th, td):nth-child(6),
+.app-main .planner-table :is(th, td):nth-child(8) { text-align: right; font-variant-numeric: tabular-nums; }

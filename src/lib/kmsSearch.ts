@@ -25,3 +25,29 @@ export function buildKmsSearchTerms(title: string, hashtags: string[] = []): str
   }
   return [...terms]
 }
+
+/** Search only the fields promised by the UI; independent of the bounded legacy index. */
+export function matchesKmsSummary(note: { title?: string; hashtags?: string[]; url?: string }, search: string): boolean {
+  const compact = (value: string) => normalizeKmsSearch(value).replace(/\s+/g, '')
+  const term = compact(search)
+  return !term || [note.title || '', ...(note.hashtags || []), note.url || ''].some(value => compact(value).includes(term))
+}
+
+/** Read text nodes only; editor formatting and image metadata are not searchable prose. */
+export function kmsBodyText(body: { content?: string; contentDoc?: unknown }): string {
+  const parts = [typeof body.content === 'string' ? body.content : '']
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== 'object') return
+    const node = value as { text?: unknown; content?: unknown }
+    if (typeof node.text === 'string') parts.push(node.text)
+    if (Array.isArray(node.content)) node.content.forEach(visit)
+  }
+  visit(body.contentDoc)
+  return parts.join(' ')
+}
+
+export function matchesKmsBody(body: { content?: string; contentDoc?: unknown }, search: string): boolean {
+  const compact = (value: string) => normalizeKmsSearch(value).replace(/\s+/g, '')
+  return compact(kmsBodyText(body)).includes(compact(search))
+}
+

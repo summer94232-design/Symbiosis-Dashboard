@@ -9,7 +9,7 @@
  *
  * 設計原則：
  * - 涵蓋 investDB 全部 collection（含 settings 整個 collection、stockDictFull
- *   完整台股字典）與 kmsDB 的 notes / trash。
+ *   完整台股字典）與 kmsDB 的 notes / trash / noteBodies / settings。
  * - 還原採「同 ID setDoc 覆蓋、無則新增」(upsert)：可重複執行（冪等），
  *   不會產生重複資料；備份中沒有的既有文件保留不動（非鏡像刪除）。
  * - 還原只寫入白名單內的 collection，並逐筆檢查 id 合法性（防止竄改過的
@@ -20,16 +20,20 @@
  *   圖片檔案本身不在備份範圍。
  */
 
-import { getDocs, writeBatch } from 'firebase/firestore'
+import { getDocs, getDocsFromServer, writeBatch } from 'firebase/firestore'
 import type { Firestore } from 'firebase/firestore'
 import { investDB, kmsDB } from './firebase'
-import { userCol, userDoc, getUID } from './userDB'
+import { captureUserSession } from './userDB'
 import { invalidateAllInvestData } from './investData'
+import { analyzeDayTrades, type TradeRecord, type DividendRecord } from './calc'
+import { commitLedgerRestore, type LedgerWrite } from './ledgerWrites'
+import { assertNoNewOversells } from './ledgerIntegrity'
+import { validateTradeForWrite, validateCashflowForWrite, validateDividendForWrite, validateSnapshotForWrite } from './investmentValidation'
 
 // ── 格式定義 ───────────────────────────────────────────────────────────────
 
 export const BACKUP_FORMAT = 'symbiosis-full-backup' as const
-export const BACKUP_VERSION = 1
+export const BACKUP_VERSION = 2
 
 export interface BackupDoc {
     /** Firestore 文件 ID */
@@ -41,6 +45,7 @@ export interface BackupDoc {
 export interface FullBackup {
     format: typeof BACKUP_FORMAT
     version: number
+    media?: { binariesIncluded: false }
     exportedAt: string
     /** 匯出當下的 investAuth uid（還原到不同帳號時供 UI 提示） */
     uid: string
@@ -61,7 +66,7 @@ export const INVEST_COLLECTIONS = [
     'settings',
 ] as const
 
-export const KMS_COLLECTIONS = ['notes', 'trash'] as const
+export const KMS_COLLECTIONS = ['notes', 'trash', 'noteBodies', 'noteImports', 'settings'] as const
 
 const COLLECTION_LABELS: Record<string, string> = {
     trades: '買賣紀錄',
@@ -83,15 +88,17 @@ const COLLECTION_LABELS: Record<string, string> = {
     settings: '系統設定',
     notes: 'KMS 筆記',
     trash: 'KMS 回收桶',
+    noteBodies: 'KMS 正文與附件引用',
+    noteImports: 'KMS 匯入紀錄',
 }
 
 // ── 匯出 ──────────────────────────────────────────────────────────────────
 
-async function dumpCollections(db: Firestore, names: readonly string[]): Promise<Record<string, BackupDoc[]>> {
+async function dumpCollections(db: Firestore, names: readonly string[], session: ReturnType<typeof captureUserSession>): Promise<Record<string, BackupDoc[]>> {
     const result: Record<string, BackupDoc[]> = {}
     // 並行讀取所有 collection
     await Promise.all(names.map(async name => {
-        const snap = await getDocs(userCol(db, name))
+        const snap = await getDocs(session.col(db, name))
         result[name] = snap.docs.map(d => ({ id: d.id, data: d.data() as Record<string, unknown> }))
     }))
     return result
@@ -99,15 +106,18 @@ async function dumpCollections(db: Firestore, names: readonly string[]): Promise
 
 /** 讀取全系統資料，組成備份物件（不下載；下載請接著呼叫 downloadBackup） */
 export async function buildFullBackup(): Promise<FullBackup> {
+    const session = captureUserSession()
     const [invest, kms] = await Promise.all([
-        dumpCollections(investDB, INVEST_COLLECTIONS),
-        dumpCollections(kmsDB, KMS_COLLECTIONS),
+        dumpCollections(investDB, INVEST_COLLECTIONS, session),
+        dumpCollections(kmsDB, KMS_COLLECTIONS, session),
     ])
+    session.assertActive()
     return {
+        media: { binariesIncluded: false },
         format: BACKUP_FORMAT,
         version: BACKUP_VERSION,
         exportedAt: new Date().toISOString(),
-        uid: getUID(),
+        uid: session.uid,
         invest,
         kms,
     }
@@ -168,7 +178,7 @@ export function parseBackup(text: string): FullBackup {
     if (!b || typeof b !== 'object' || b.format !== BACKUP_FORMAT) {
         throw new Error('格式不符：這不是本系統的 JSON 完整備份檔')
     }
-    if (typeof b.version !== 'number' || b.version < 1 || b.version > BACKUP_VERSION) {
+    if (!Number.isInteger(b.version) || typeof b.version !== 'number' || b.version < 1 || b.version > BACKUP_VERSION) {
         throw new Error(`備份版本（${String(b.version)}）不受目前系統支援（支援至 v${BACKUP_VERSION}）`)
     }
     if (!isDocArrayRecord(b.invest)) {
@@ -177,6 +187,7 @@ export function parseBackup(text: string): FullBackup {
     return {
         format: BACKUP_FORMAT,
         version: b.version,
+        media: { binariesIncluded: false },
         exportedAt: typeof b.exportedAt === 'string' ? b.exportedAt : '',
         uid: typeof b.uid === 'string' ? b.uid : '',
         invest: b.invest,
@@ -193,6 +204,160 @@ export interface RestoreResult {
     skipped: number
 }
 
+export interface RestoreCollectionDiff {
+    key: string
+    label: string
+    added: number
+    overwritten: number
+    unchanged: number
+    retained: number
+    skipped: number
+    repeated: number
+}
+
+export interface RestoreAmountDiff {
+    label: string
+    before: number | null
+    after: number | null
+    beforeDate?: string
+    afterDate?: string
+}
+
+export interface RestorePreview {
+    uid: string
+    checkedAt: string
+    collections: RestoreCollectionDiff[]
+    amounts: RestoreAmountDiff[]
+}
+
+// Baselines stay in memory and are never rendered or persisted with credentials/settings.
+const previewBaselines = new WeakMap<RestorePreview, {
+    session: ReturnType<typeof captureUserSession>
+    backup: string
+    current: string
+}>()
+
+interface RestoreJob { db: Firestore; section: 'invest' | 'kms'; col: string; docs: BackupDoc[] }
+
+function restoreJobs(backup: FullBackup): RestoreJob[] {
+    const jobs: RestoreJob[] = []
+    for (const [section, db, names] of [['invest', investDB, INVEST_COLLECTIONS], ['kms', kmsDB, KMS_COLLECTIONS]] as const) {
+        for (const col of names) {
+            const docs = backup[section][col]
+            if (Array.isArray(docs) && docs.length) jobs.push({ db, section, col, docs })
+        }
+    }
+    return jobs
+}
+
+/** Normalize JSON-compatible values, then compare objects without depending on key order. */
+function comparable(value: unknown): string {
+    const sort = (item: unknown): unknown => {
+        if (Array.isArray(item)) return item.map(sort)
+        if (item && typeof item === 'object') return Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)).map(([key, data]) => [key, sort(data)]))
+        return item
+    }
+    return JSON.stringify(sort(JSON.parse(JSON.stringify(value))))
+}
+
+/** Same KMS reconstruction and validation for preview and actual restore. */
+function prepareRestore(backup: FullBackup): FullBackup {
+    // Check array shapes before attempting to iterate legacy bodies.
+    for (const [section, names] of [[backup.invest, INVEST_COLLECTIONS], [backup.kms, KMS_COLLECTIONS]] as const) {
+        for (const col of names) if (section[col] !== undefined && !Array.isArray(section[col])) throw new Error(`${COLLECTION_LABELS[col] || col} 必須是資料陣列`)
+    }
+    const bodies = new Map((backup.kms.noteBodies || []).filter(isValidBackupDoc).map(d => [d.id, d]))
+    for (const col of ['notes', 'trash']) {
+        for (const d of backup.kms[col] || []) {
+            if (!isValidBackupDoc(d) || bodies.has(d.id)) continue
+            if (!d.data.content && !d.data.contentDoc) throw new Error(`KMS 筆記 ${d.id} 缺少正文，已中止還原且尚未寫入。請使用包含 noteBodies 的新版備份。`)
+            bodies.set(d.id, { id: d.id, data: {
+                content: d.data.content || '',
+                ...(d.data.contentDoc ? { contentDoc: d.data.contentDoc } : {}),
+                assets: d.data.assets || [],
+            } })
+        }
+    }
+    const prepared = { ...backup, kms: { ...backup.kms, noteBodies: [...bodies.values()] } }
+    validateRestoreAccounting(prepared)
+    return prepared
+}
+
+type RestoreCurrent = Record<string, BackupDoc[]>
+
+async function readRestoreCurrent(backup: FullBackup, session: ReturnType<typeof captureUserSession>): Promise<RestoreCurrent> {
+    const jobs = restoreJobs(backup)
+    // Ledger checks also need retained trades/dividends when only one is in the file.
+    if (backup.invest.trades?.length || backup.invest.dividends?.length) {
+        for (const col of ['trades', 'dividends']) if (!jobs.some(job => job.section === 'invest' && job.col === col)) jobs.push({ db: investDB, section: 'invest', col, docs: [] })
+    }
+    const entries = await Promise.all(jobs.map(async job => {
+        const snap = await getDocsFromServer(session.col(job.db, job.col))
+        session.assertActive()
+        return [`${job.section}/${job.col}`, snap.docs.map(d => ({ id: d.id, data: d.data() as Record<string, unknown> })).sort((a, b) => a.id.localeCompare(b.id))] as const
+    }))
+    session.assertActive()
+    return Object.fromEntries(entries)
+}
+
+function amountDiffs(col: string, before: BackupDoc[], after: BackupDoc[]): RestoreAmountDiff[] {
+    const sum = (rows: BackupDoc[], field: string, type?: string): number | null => {
+        let total = 0
+        for (const row of rows) {
+            if (type && row.data.type !== type) {
+                if ((col === 'trades' && !['buy', 'sell'].includes(String(row.data.type))) || (col === 'cashflow' && !['in', 'out'].includes(String(row.data.type)))) return null
+                continue
+            }
+            const amount = row.data[field]
+            if (typeof amount !== 'number' || !Number.isFinite(amount)) return null
+            total += amount
+        }
+        return Number.isFinite(total) ? total : null
+    }
+    const metrics: [string, string, string?][] = col === 'trades' ? [['買入付款合計', 'total', 'buy'], ['賣出收款合計', 'total', 'sell']]
+        : col === 'cashflow' ? [['入金合計', 'amount', 'in'], ['出金合計', 'amount', 'out']]
+        : col === 'dividends' ? [['現金股利紀錄合計', 'cashDividend', undefined]] : []
+    if (col !== 'assetSnapshots') return metrics.map(([label, field, type]) => ({ label, before: sum(before, field, type), after: sum(after, field, type) }))
+    const latest = (rows: BackupDoc[]) => {
+        if (rows.some(row => typeof row.data.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(row.data.date))) return { amount: null }
+        const row = [...rows].sort((a, b) => String(b.data.date).localeCompare(String(a.data.date)) || a.id.localeCompare(b.id))[0]
+        return { amount: row && typeof row.data.totalAssets === 'number' && Number.isFinite(row.data.totalAssets) ? row.data.totalAssets : null, date: row?.data.date as string | undefined }
+    }
+    const old = latest(before), next = latest(after)
+    return [{ label: '最新快照總資產', before: old.amount, after: next.amount, beforeDate: old.date, afterDate: next.date }]
+}
+
+/** Read-only: show the effective upsert result using current server data. */
+export async function previewFullRestore(backup: FullBackup): Promise<RestorePreview> {
+    const session = captureUserSession()
+    const prepared = prepareRestore(backup)
+    const current = await readRestoreCurrent(prepared, session)
+    await validateRestoreLedger(prepared, session, current)
+    const collections: RestoreCollectionDiff[] = [], amounts: RestoreAmountDiff[] = []
+    for (const job of restoreJobs(prepared)) {
+        const key = `${job.section}/${job.col}`, before = current[key]
+        const existing = new Map(before.map(row => [row.id, row]))
+        const valid = job.docs.filter(isValidBackupDoc), incoming = new Map(valid.map(row => [row.id, row]))
+        const label = COLLECTION_LABELS[job.col] || job.col
+        const diff: RestoreCollectionDiff = { key, label: `${job.section === 'kms' && !label.startsWith('KMS') ? 'KMS · ' : ''}${label}`,
+            added: 0, overwritten: 0, unchanged: 0, retained: before.filter(row => !incoming.has(row.id)).length,
+            skipped: job.docs.length - valid.length, repeated: valid.length - incoming.size }
+        for (const [id, row] of incoming) {
+            const old = existing.get(id)
+            if (!old) diff.added++
+            else if (comparable(old.data) === comparable(row.data)) diff.unchanged++
+            else diff.overwritten++
+            existing.set(id, row)
+        }
+        collections.push(diff)
+        if (job.section === 'invest') amounts.push(...amountDiffs(job.col, before, [...existing.values()]))
+    }
+    session.assertActive()
+    const preview: RestorePreview = { uid: session.uid, checkedAt: new Date().toISOString(), collections, amounts }
+    previewBaselines.set(preview, { session, backup: comparable(prepared), current: comparable(current) })
+    return preview
+}
+
 /** Firestore 批次寫入上限為 500，保守取 400 */
 const BATCH_SIZE = 400
 
@@ -207,43 +372,121 @@ function isValidBackupDoc(d: unknown): d is BackupDoc {
         && !Array.isArray(doc.data)
 }
 
+/** Validate every accounting row before creating even the first write batch. */
+function validateRestoreAccounting(backup: FullBackup): void {
+    for (const [section, collections] of [[backup.invest, INVEST_COLLECTIONS], [backup.kms, KMS_COLLECTIONS]] as const) {
+        for (const col of collections) {
+            if (section[col] !== undefined && !Array.isArray(section[col])) {
+                throw new Error(`${COLLECTION_LABELS[col] || col} 必須是資料陣列`)
+            }
+        }
+    }
+    for (const col of ['trades', 'cashflow', 'dividends', 'assetSnapshots'] as const) {
+        const ids = new Set<string>()
+        for (const [index, row] of (backup.invest[col] || []).entries()) {
+            const label = `${COLLECTION_LABELS[col]} 第 ${index + 1} 筆`
+            if (!isValidBackupDoc(row)) throw new Error(`${label} 的文件 ID 或資料格式不正確`)
+            if (ids.has(row.id)) throw new Error(`${label} 的文件 ID 重複（${row.id}）`)
+            ids.add(row.id)
+            try {
+                // Old records may omit fee/tax; calculations have always treated those as zero.
+                // Validate that interpretation without changing the saved historical payload.
+                const data = { fee: 0, tax: 0, ...row.data }
+                const validation = col === 'trades' ? validateTradeForWrite(data as unknown as TradeRecord)
+                    : col === 'cashflow' ? validateCashflowForWrite(data as unknown as Parameters<typeof validateCashflowForWrite>[0])
+                    : col === 'dividends' ? validateDividendForWrite(data as unknown as DividendRecord)
+                    : validateSnapshotForWrite(data as unknown as Parameters<typeof validateSnapshotForWrite>[0])
+                if (!validation.valid) throw new Error(validation.errors.join('；'))
+            } catch (error) {
+                throw new Error(`${label}（${row.id}）：${error instanceof Error ? error.message : '內容無效'}`)
+            }
+        }
+    }
+}
+
+/** Check the upsert result, including documents that are absent from this backup. */
+async function validateRestoreLedger(backup: FullBackup, session: ReturnType<typeof captureUserSession>, current?: RestoreCurrent): Promise<void> {
+    if (!backup.invest.trades?.length && !backup.invest.dividends?.length) return
+    const rows: RestoreCurrent = current || Object.fromEntries(await Promise.all(['trades', 'dividends'].map(async col => {
+        const snap = await getDocsFromServer(session.col(investDB, col))
+        return [`invest/${col}`, snap.docs.map(d => ({ id: d.id, data: d.data() as Record<string, unknown> }))]
+    })))
+    session.assertActive()
+    const before = {
+        trades: rows['invest/trades'].map(d => ({ ...d.data, id: d.id }) as TradeRecord),
+        dividends: rows['invest/dividends'].map(d => ({ ...d.data, id: d.id }) as DividendRecord),
+    }
+    const merge = <T extends { id?: string }>(current: T[], incoming: BackupDoc[]): T[] => {
+        const rows = new Map(current.map(row => [row.id, row]))
+        for (const row of incoming) rows.set(row.id, { ...row.data, id: row.id } as T)
+        return [...rows.values()]
+    }
+    const after = {
+        trades: merge(before.trades, backup.invest.trades || []),
+        dividends: merge(before.dividends, backup.invest.dividends || []),
+    }
+    assertNoNewOversells(before, after)
+    const previousIssues = new Set(analyzeDayTrades(before.trades, false).issues.map(issue => issue.trade.id))
+    const invalid = analyzeDayTrades(after.trades, false).issues.find(issue => !previousIssues.has(issue.trade.id))
+    if (invalid) throw new Error(`${invalid.trade.date} ${invalid.trade.code}：${invalid.message}`)
+}
+
 /**
  * 將備份還原到「目前登入帳號」。
  * - 同 ID 覆蓋、無則新增；備份外的既有文件保留不動。
- * - 只寫入白名單 collection；異常文件略過並計數。
+ * - 全份帳務先檢查格式、金額與合併後股數／配對；失敗時尚未寫入。
+ * - 只寫入白名單 collection；非帳務異常文件略過並計數。
  * - 完成後自動清除 investData 共用快取。
  * - ⚠️ 跨批次非交易性：中途失敗時已寫入的批次不會回復（重跑一次即可補齊，冪等）。
+ * - 交易與股利共用帳本版本交易，分批前檢查每個中間狀態，並在提交時重新驗證庫存。
+ * - 傳入差異預覽時，寫入前重查帳號、檔案與相關集合；變更即中止。
  */
 export async function restoreFullBackup(
     backup: FullBackup,
     onProgress?: (done: number, total: number) => void,
+    preview?: RestorePreview,
 ): Promise<RestoreResult> {
-    interface Job { db: Firestore; col: string; docs: BackupDoc[] }
-    const jobs: Job[] = []
-    for (const col of INVEST_COLLECTIONS) {
-        const docs = backup.invest[col]
-        if (Array.isArray(docs) && docs.length > 0) jobs.push({ db: investDB, col, docs })
+    const session = captureUserSession()
+    try {
+        backup = prepareRestore(backup)
+        let current: RestoreCurrent | undefined
+        if (preview) {
+            const baseline = previewBaselines.get(preview)
+            if (!baseline) throw new Error('預覽已失效，請重新選擇備份檔產生差異預覽')
+            baseline.session.assertActive()
+            if (preview.uid !== session.uid || baseline.backup !== comparable(backup)) throw new Error('帳號或備份已變更，請重新選擇備份檔產生差異預覽')
+            current = await readRestoreCurrent(backup, session)
+            if (baseline.current !== comparable(current)) throw new Error('雲端資料已變更，請重新選擇備份檔產生差異預覽')
+        }
+        await validateRestoreLedger(backup, session, current)
+        session.assertActive()
+    } catch (error) {
+        throw new Error(`還原前檢查未通過，尚未寫入任何資料：${error instanceof Error ? error.message : '請確認備份內容後重試'}`)
     }
-    for (const col of KMS_COLLECTIONS) {
-        const docs = backup.kms[col]
-        if (Array.isArray(docs) && docs.length > 0) jobs.push({ db: kmsDB, col, docs })
-    }
+    const jobs = restoreJobs(backup)
 
     const total = jobs.reduce((s, j) => s + j.docs.length, 0)
     let written = 0
     let skipped = 0
 
+    const ledgerWrites: LedgerWrite[] = jobs.filter(job => job.db === investDB && (job.col === 'trades' || job.col === 'dividends'))
+        .flatMap(job => job.docs.map(d => ({ collection: job.col as 'trades' | 'dividends', id: d.id, data: d.data, mode: 'upsert' as const })))
+    if (ledgerWrites.length) await commitLedgerRestore(ledgerWrites, session, count => { written += count; onProgress?.(written + skipped, total) })
     for (const job of jobs) {
+        if (job.db === investDB && (job.col === 'trades' || job.col === 'dividends')) continue
         for (let i = 0; i < job.docs.length; i += BATCH_SIZE) {
+            session.assertActive()
             const chunk = job.docs.slice(i, i + BATCH_SIZE)
             const batch = writeBatch(job.db)
             let inBatch = 0
             for (const d of chunk) {
                 if (!isValidBackupDoc(d)) { skipped++; continue }
-                batch.set(userDoc(job.db, job.col, d.id), d.data)
+                batch.set(session.doc(job.db, job.col, d.id), d.data)
                 inBatch++
             }
+            session.assertActive()
             if (inBatch > 0) await batch.commit()
+            session.assertActive()
             written += inBatch
             onProgress?.(written + skipped, total)
         }

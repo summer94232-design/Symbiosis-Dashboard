@@ -1,17 +1,20 @@
 import { getDocs, orderBy, query } from 'firebase/firestore'
 import { investDB } from './firebase'
 import { cache } from './cache'
-import { getUID, userCol } from './userDB'
+import { captureUserSession } from './userDB'
 
 const TTL_SECONDS = 90
 type PlannerCollection = 'calendarEvents' | 'tasks' | 'taskProjects'
 
 async function fetchPlannerCollection<T>(name: PlannerCollection, orderField: string): Promise<T[]> {
-  const key = `planner:${name}:${getUID()}`
+  const session = captureUserSession()
+  const key = `planner:${name}:${session.uid}`
   const rows = await cache.getOrLoad<Record<string, unknown>[]>(key, async () => {
-    const snap = await getDocs(query(userCol(investDB, name), orderBy(orderField, 'asc')))
+    const snap = await getDocs(query(session.col(investDB, name), orderBy(orderField, 'asc')))
+    session.assertActive()
     return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
   }, TTL_SECONDS)
+  session.assertActive()
   return rows.map(row => ({ ...row })) as T[]
 }
 

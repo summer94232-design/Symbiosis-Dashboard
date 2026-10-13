@@ -1,0 +1,87 @@
+[
+  {
+    "id": "R01",
+    "trigger": "ordinary note without URL",
+    "result": "✅ 匯入完成：成功 0 筆，略過 1 筆",
+    "writes": 0
+  },
+  {
+    "id": "R02",
+    "switchAt": "file-read",
+    "paths": [
+      "users/B/notes/import-1",
+      "users/B/notes/import-2"
+    ],
+    "result": "✅ 匯入完成：成功 2 筆，略過 0 筆"
+  },
+  {
+    "id": "R02",
+    "switchAt": "first-commit",
+    "paths": [
+      "users/A/notes/import-1",
+      "users/B/notes/import-2"
+    ],
+    "result": "✅ 匯入完成：成功 2 筆，略過 0 筆"
+  },
+  {
+    "id": "R03",
+    "expectedContent": "第一行\n第二行",
+    "actualContent": "第一行",
+    "result": "✅ 匯入完成：成功 1 筆，略過 1 筆"
+  },
+  {
+    "id": "R04",
+    "trigger": "first commit succeeds but acknowledgement is lost; retry same file",
+    "firstMessage": "✅ 匯入完成：成功 1 筆，略過 1 筆",
+    "noteCountAfterRetry": 4,
+    "expectedUniqueNotes": 2
+  },
+  {
+    "id": "R05",
+    "trigger": "trade-page CSV import with actual brokerage fee 50",
+    "withTotal": {
+      "success": 0,
+      "failed": 1,
+      "skipped": 0,
+      "duplicated": 0
+    },
+    "withoutTotal": {
+      "fee": 85,
+      "total": 100085
+    }
+  },
+  {
+    "id": "R06",
+    "trigger": "CSV export/import omits designated inventory matches",
+    "originalRealized": [
+      100000
+    ],
+    "restoredRealized": [
+      200000
+    ]
+  },
+  {
+    "id": "R07",
+    "trigger": "remote cancellation conflicts with newer pending local edit",
+    "deletes": [
+      "local"
+    ],
+    "warnings": []
+  },
+  {
+    "id": "R08",
+    "trigger": "two stale views each sell 600 shares from the same 1000-share balance",
+    "persistedSoldShares": 1200,
+    "availableShares": 1000,
+    "serverPreflights": 0
+  },
+  {
+    "id": "R09",
+    "trigger": "passive bond ETF sale during the exemption period, e.g. 2026-10-01",
+    "code": "00679B",
+    "gross": 100000,
+    "actualEstimatedTax": 100,
+    "expectedTax": 0,
+    "officialSource": "https://www.etax.nat.gov.tw/etwmain/tax-info/understanding/tax-q-and-a/national/securities-transaction-tax/taxation-scope/7r3MjNB"
+  }
+]

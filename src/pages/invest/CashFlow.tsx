@@ -1,7 +1,13 @@
-import { useState, useEffect } from 'react'
-import { addDoc, updateDoc, deleteDoc } from 'firebase/firestore'
+import LoadingState from '../../components/LoadingState'
+import { useFieldFeedback } from '../../ui/useFieldFeedback'
+import { card, inp, lbl, btn } from '../../ui/styles'
+import { confirmAction } from '../../ui/dialogs'
+import { useSafeMutation } from '../../lib/useSafeMutation'
+import DisclosureNote from '../../components/DisclosureNote'
+import { useState, useEffect, useRef } from 'react'
+import { doc, writeBatch, deleteDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { captureUserSession } from '../../lib/userDB'
 import { fetchCashflow, invalidateCashflow } from '../../lib/investData'
 import { toLocalDateString } from '../../lib/date'
 import { Pencil, Trash2, X, Check } from 'lucide-react'
@@ -17,47 +23,68 @@ interface CashRecord {
 }
 
 const empty: CashRecord = { date: toLocalDateString(), type: 'in', amount: 0, note: '' }
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }
-const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 export default function CashFlow() {
     const { version: syncVersion } = useInvestSync()
+    const [reading, setReading] = useState(true)
+    const [hasLoaded, setHasLoaded] = useState(false)
     const [records, setRecords] = useState<CashRecord[]>([])
     const [editingId, setEditingId] = useState<string | null>(null)
     const [form, setForm] = useState<CashRecord>(empty)
-    const [loading, setLoading] = useState(false)
+    const mutation = useSafeMutation()
+    const loading = mutation.busy
+    const pendingId = useRef<string | null>(null)
     const [formError, setFormError] = useState('')
+    const feedback = useFieldFeedback()
 
     const load = async () => {
+        setReading(true)
         // ✅ 1-1：改走共用快取層（lib/investData）
-        setRecords(await fetchCashflow<CashRecord>('desc'))
+        try {
+            const session = captureUserSession()
+            const records = await fetchCashflow<CashRecord>('desc')
+            session.assertActive()
+            setRecords(records)
+            setHasLoaded(true)
+        } catch { setFormError('資料重新載入失敗；已儲存的紀錄不需再次新增，請重新整理。') }
+        finally { setReading(false) }
     }
 
     useEffect(() => { void load() }, [syncVersion])
 
     const handleSave = async () => {
         const validation = validateCashflowForWrite(form)
-        if (!validation.valid) { setFormError(validation.errors.join('；')); return }
-        setFormError('')
-        setLoading(true)
-        if (editingId) {
-            await updateDoc(userDoc(investDB, 'cashflow', editingId), { ...form })
-        } else {
-            await addDoc(userCol(investDB, 'cashflow'), { ...form })
-        }
-        invalidateCashflow()   // ✅ 1-1：寫入後清快取
-        setEditingId(null); setForm(empty); setLoading(false); load()
+        if (!validation.valid) { feedback.report(validation.errors); setFormError(validation.errors.filter(message => !/日期|代號|名稱|股利|類型|金額|公告/.test(message)).join('；')); return }
+        feedback.clear()
+        await mutation.run(async session => {
+            setFormError('')
+            const id = editingId || (pendingId.current ||= doc(session.col(investDB, 'cashflow')).id)
+            const batch = writeBatch(investDB)
+            const target = session.doc(investDB, 'cashflow', id)
+            if (editingId) batch.update(target, { ...form })
+            else batch.set(target, { ...form })
+
+            await batch.commit()
+            session.assertActive()
+            invalidateCashflow()
+
+            pendingId.current = null
+            setEditingId(null); setForm(empty)
+            await load()
+        })
     }
 
-    const handleEdit = (r: CashRecord) => { setForm(r); setEditingId(r.id!); setFormError('') }
-    const handleCancel = () => { setForm(empty); setEditingId(null); setFormError('') }
+    const handleEdit = (r: CashRecord) => { if (loading) return; pendingId.current = null; setForm(r); setEditingId(r.id!); setFormError(''); feedback.clear() }
+    const handleCancel = () => { if (loading) return; pendingId.current = null; setForm(empty); setEditingId(null); setFormError(''); feedback.clear() }
     const handleDelete = async (id: string) => {
-        if (!confirm('確定要刪除？')) return
-        await deleteDoc(userDoc(investDB, 'cashflow', id))
-        invalidateCashflow()   // ✅ 1-1：寫入後清快取
-        load()
+        const record = records.find(row => row.id === id)
+        if (!await confirmAction(`確定刪除 ${record?.date || ''} 的${record?.type === 'out' ? '出金' : '入金'}紀錄（${record?.amount.toLocaleString() || '—'} 元）？`, { title: '刪除出入金紀錄' })) return
+        await mutation.run(async session => {
+            await deleteDoc(session.doc(investDB, 'cashflow', id))
+            session.assertActive()
+            invalidateCashflow()
+            await load()
+        })
     }
 
     const totalIn = records.filter(r => r.type === 'in').reduce((s, r) => s + r.amount, 0)
@@ -79,10 +106,13 @@ export default function CashFlow() {
         .cash-table td { border-bottom: 1px solid var(--c-border); color: var(--c-text); }
       `}</style>
 
-            <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
-                <div style={{ marginBottom: '24px' }}>
+            <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1600px', margin: '0 auto' }}>
+                <div style={{ marginBottom: '16px' }}>
                     <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>出入金</h1>
                     <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>共 {records.length} 筆紀錄</p>
+                    <DisclosureNote summary="請填實際轉帳日；績效預設按收盤後入金計算。">
+                        補交割款也不要倒填買股日。出金暫沿用日終假設；盤中出入金請使用進階估值核對。
+                    </DisclosureNote>
                 </div>
 
                 {/* 統計卡片 */}
@@ -100,20 +130,20 @@ export default function CashFlow() {
                     <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '16px' }}>
                         {editingId ? '✏️ 編輯紀錄' : '➕ 新增紀錄'}
                     </div>
-                    <div className="cash-form-grid">
-                        <div><label style={lbl}>日期</label><input type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} /></div>
-                        <div><label style={lbl}>類型</label>
-                            <select style={inp} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value as 'in' | 'out' }))}>
+                    <div ref={feedback.root} onChangeCapture={feedback.clear} className="cash-form-grid">
+                        <div><label htmlFor={feedback.label('date')} style={lbl}>日期</label><input {...feedback.bind('date')} disabled={mutation.busy} type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />{feedback.message('date')}</div>
+                        <div><label htmlFor={feedback.label('type')} style={lbl}>類型</label>
+                            <select {...feedback.bind('type')} disabled={mutation.busy} style={inp} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value as 'in' | 'out' }))}>
                                 <option value="in">入金</option>
                                 <option value="out">出金</option>
-                            </select>
+                            </select>{feedback.message('type')}
                         </div>
-                        <div><label style={lbl}>金額</label><input type="number" style={inp} placeholder="0" value={form.amount || ''} onChange={e => setForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))} /></div>
-                        <div><label style={lbl}>備註</label><input style={inp} placeholder="選填" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></div>
+                        <div><label htmlFor={feedback.label('amount')} style={lbl}>金額</label><input {...feedback.bind('amount')} disabled={mutation.busy} type="number" style={inp} placeholder="0" value={form.amount || ''} onChange={e => setForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))} />{feedback.message('amount')}</div>
+                        <div><label htmlFor={feedback.label('note')} style={lbl}>備註</label><input {...feedback.bind('note')} disabled={mutation.busy} style={inp} placeholder="選填" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />{feedback.message('note')}</div>
                     </div>
-                    {formError && <div style={{ color: 'var(--c-danger)', fontSize: '12px', marginTop: '10px' }}>無法儲存：{formError}</div>}
+                    {(formError || mutation.error) && <div style={{ color: 'var(--c-danger)', fontSize: '12px', marginTop: '10px' }}>{formError || mutation.error}</div>}
                     <div style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' }}>
-                        {editingId && <button style={btn('var(--c-border)')} onClick={handleCancel}><X size={14} />取消編輯</button>}
+                        {editingId && <button disabled={loading} style={btn('var(--c-border)')} onClick={handleCancel}><X size={14} />取消編輯</button>}
                         <button style={btn('var(--c-accent)')} onClick={handleSave} disabled={loading}>
                             <Check size={14} />{loading ? '儲存中...' : editingId ? '確認更新' : '確認新增'}
                         </button>
@@ -122,7 +152,8 @@ export default function CashFlow() {
 
                 {/* 列表 */}
                 <div style={card}>
-                    {records.length === 0 ? (
+                    {reading && hasLoaded && <p className="ui-refresh-status" role="status">資料更新中…</p>}
+                    {reading && !hasLoaded ? <LoadingState /> : records.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}><p>還沒有出入金紀錄，請在上方新增</p></div>
                     ) : (
                         <div className="table-wrap">
@@ -139,8 +170,8 @@ export default function CashFlow() {
                                             <td style={{ color: 'var(--c-muted)' }}>{r.note}</td>
                                             <td>
                                                 <div style={{ display: 'flex', gap: '8px' }}>
-                                                    <button onClick={() => handleEdit(r)} style={{ background: 'none', border: 'none', color: 'var(--c-accent)', cursor: 'pointer' }}><Pencil size={15} /></button>
-                                                    <button onClick={() => handleDelete(r.id!)} style={{ background: 'none', border: 'none', color: 'var(--c-danger)', cursor: 'pointer' }}><Trash2 size={15} /></button>
+                                                    <button aria-label="編輯紀錄" disabled={loading} onClick={() => handleEdit(r)} style={{ background: 'none', border: 'none', color: 'var(--c-accent)', cursor: 'pointer' }}><Pencil size={15} /></button>
+                                                    <button aria-label="刪除紀錄" disabled={loading} onClick={() => handleDelete(r.id!)} style={{ background: 'none', border: 'none', color: 'var(--c-danger)', cursor: 'pointer' }}><Trash2 size={15} /></button>
                                                 </div>
                                             </td>
                                         </tr>

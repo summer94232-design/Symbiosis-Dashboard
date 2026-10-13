@@ -1,3 +1,4 @@
+import { buttonFill } from '../../ui/styles'
 /**
  * SoldTracker.tsx — 賣出追蹤 v2.1
  *
@@ -17,10 +18,10 @@
  *   已儲存設定蓋回預設）
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { getDoc, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userDocNested } from '../../lib/userDB'
+import { captureUserSession, userDocNested } from '../../lib/userDB'
 import { getHistoricalCandles } from '../../lib/fugle'
 import { fetchTrades } from '../../lib/investData'
 import { toLocalDateString } from '../../lib/date'
@@ -90,18 +91,18 @@ const card: React.CSSProperties = {
     backgroundColor: 'var(--c-card)',
     border: '1px solid var(--c-border)',
     borderRadius: '12px',
-    padding: '20px',
+    padding: 'var(--ui-card-padding, 20px)',
 }
 
 const btn = (color: string, extra?: React.CSSProperties): React.CSSProperties => ({
-    backgroundColor: color,
+    backgroundColor: buttonFill(color),
     border: 'none',
     borderRadius: '8px',
     padding: '8px 16px',
-    color: '#fff',
+    color: /border|transparent|sidebar|card/.test(color) ? 'var(--c-text)' : /^var\(--c-(accent|positive|danger|warning|purple)\)$/.test(color) ? 'var(--c-on-accent)' : '#fff',
     fontSize: '13px',
     cursor: 'pointer',
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
     gap: '6px',
     ...extra,
@@ -437,6 +438,8 @@ function SoldCard({ record, verdictThreshold }: { record: SoldRecord; verdictThr
     const [expanded, setExpanded] = useState(false)
     const [candles, setCandles] = useState<CandleBar[] | null>(null)
     const [candleLoading, setCandleLoading] = useState(false)
+    const [candleError, setCandleError] = useState('')
+    const candleRequest = useRef(false)
 
     const changePct = record.currentPrice != null
         ? ((record.currentPrice - record.soldPrice) / record.soldPrice) * 100
@@ -449,26 +452,34 @@ function SoldCard({ record, verdictThreshold }: { record: SoldRecord; verdictThr
     const verdict = calcVerdict(changePct, verdictThreshold)
     const verdictBadge = VERDICT_BADGE[verdict]
 
-    const handleExpand = useCallback(async () => {
-        setExpanded(v => !v)
-        if (candles !== null) return
+    const loadCandles = useCallback(async () => {
+        if (candles !== null || candleRequest.current) return
+        candleRequest.current = true
         setCandleLoading(true)
+        setCandleError('')
         try {
             const today = toLocalDateString()
             const raw = await getHistoricalCandles(record.code, record.date, today)
             if (raw?.data && Array.isArray(raw.data)) {
-                setCandles(raw.data.map((d: any) => ({
+                setCandles(raw.data.map((d: {date: string; open: number; high: number; low: number; close: number; volume?: number}) => ({
                     date: d.date, open: d.open, high: d.high, low: d.low,
                     close: d.close, volume: d.volume ?? 0,
                 })))
             } else {
-                setCandles([])
+                setCandleError('K 線載入失敗，請重試')
             }
-        } catch {
-            setCandles([])
+        } catch (error) {
+            setCandleError(error instanceof Error ? error.message : 'K 線載入失敗，請重試')
+        } finally {
+            candleRequest.current = false
+            setCandleLoading(false)
         }
-        setCandleLoading(false)
     }, [candles, record.code, record.date])
+
+    const handleExpand = () => {
+        setExpanded(v => !v)
+        if (!expanded) void loadCandles()
+    }
 
     return (
         <div style={{ ...card, padding: '0', overflow: 'hidden', marginBottom: '10px' }}>
@@ -546,6 +557,11 @@ function SoldCard({ record, verdictThreshold }: { record: SoldRecord; verdictThr
                         <div style={{ height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--c-muted)', fontSize: '13px' }}>
                             載入 K 線中...
                         </div>
+                    ) : candleError ? (
+                        <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--c-muted)' }}>
+                            {candleError}
+                            <button type="button" onClick={() => void loadCandles()} style={{ padding: '8px 12px', cursor: 'pointer' }}>重試</button>
+                        </div>
                     ) : (
                         <MiniCandleChart candles={candles ?? []} soldPrice={record.soldPrice} />
                     )}
@@ -611,10 +627,10 @@ const DEFAULT_ALERT_CONFIG: AlertConfig = {
 
 export default function SoldTracker() {
     const { version: syncVersion } = useInvestSync()
-    const [allSold, setAllSold] = useState<SoldRecord[]>([])
+    const [soldTrades, setSoldTrades] = useState<Omit<SoldRecord, 'currentPrice'>[]>([])
     const [loading, setLoading] = useState(true)
-    const [priceLoading, setPriceLoading] = useState(false)
-    const [lastUpdated, setLastUpdated] = useState('')
+    const [priceFeedback, setPriceFeedback] = useState('')
+    const [loadError, setLoadError] = useState('')
     const [filterDays, setFilterDays] = useState(90)
     const [sortBy, setSortBy] = useState<'date' | 'change' | 'cost'>('date')
     const [verdictThreshold, setVerdictThreshold] = useState(3)
@@ -622,7 +638,10 @@ export default function SoldTracker() {
     const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set())
 
     // ✅ 1-3：報價統一走 PriceContext（寫回 lastPrices、跨頁同步、不重複扣額度）
-    const { updatePrices } = usePrices()
+    const { prices, priceErrors, priceLoading, lastUpdated, updatePrices } = usePrices()
+    // Derive every row from the shared quote store. A settings/lastPrices sync
+    // can reload trades, but can no longer replace their prices with null.
+    const allSold: SoldRecord[] = soldTrades.map(record => ({ ...record, currentPrice: prices[record.code] ?? null }))
 
     // ── 通知設定持久化（與儀表板共用 settings/soldAlert）──────────────────────
     useEffect(() => {
@@ -660,42 +679,51 @@ export default function SoldTracker() {
 
     // ── 載入 ──────────────────────────────────────────────────────────────
 
-    const load = useCallback(async () => {
-        setLoading(true)
-        try {
-            // ✅ 1-1：改走 investData 共用快取（TTL 內與其他頁共用同一份 trades，
-            //         不再各自 getDocs 全量讀取）。'desc' 與原 orderBy('date','desc') 行為一致。
-            const trades = await fetchTrades<Trade>('desc')
-            setAllSold(trades
-                .filter(t => t.type === 'sell')
-                .map(t => ({
-                    id: t.id!, date: t.date, code: t.code, name: t.name,
-                    soldPrice: t.price, shares: t.shares, soldNet: t.total,
-                    note: t.note, currentPrice: null, daysSinceSold: daysSince(t.date),
-                })))
-        } finally {
-            setLoading(false)
+    useEffect(() => {
+        let active = true
+        const load = async () => {
+            setLoading(true)
+            try {
+                const session = captureUserSession()
+                const trades = await fetchTrades<Trade>('desc')
+                if (!active) return
+                session.assertActive()
+                setLoadError('')
+                setSoldTrades(trades
+                    .filter(t => t.type === 'sell')
+                    .map(t => ({
+                        id: t.id!, date: t.date, code: t.code, name: t.name,
+                        soldPrice: t.price, shares: t.shares, soldNet: t.total,
+                        note: t.note, daysSinceSold: daysSince(t.date),
+                    })))
+            } catch {
+                if (active) setLoadError('賣出紀錄載入失敗，請重新整理後再試。')
+            } finally {
+                if (active) setLoading(false)
+            }
         }
-    }, [])
-
-    useEffect(() => { void load() }, [load, syncVersion])
+        void load()
+        return () => { active = false }
+    }, [syncVersion])
 
     // ── 更新現價 ──────────────────────────────────────────────────────────
 
-    const refreshPrices = useCallback(async () => {
-        if (allSold.length === 0) return
-        setPriceLoading(true)
+    const refreshPrices = async () => {
+        if (priceLoading) return
+        setPriceFeedback('')
         setDismissedAlerts(new Set()) // 每次刷新重新掃描通知
         try {
             const codes = [...new Set(allSold.map(r => r.code))]
             // ✅ 1-3：經 PriceContext 取價（內部仍走 Fugle 節流），並同步觸發自動快照
             const quotes = await updatePrices(codes)
-            setAllSold(prev => prev.map(r => ({ ...r, currentPrice: quotes[r.code] ?? r.currentPrice })))
-            setLastUpdated(new Date().toLocaleString('zh-TW'))
-        } finally {
-            setPriceLoading(false)
+            const updatedCodes = Object.keys(quotes)
+            const missing = updatedCodes.filter(code => quotes[code] == null)
+            setPriceFeedback(!updatedCodes.length ? '全系統報價未取得更新結果，請稍後再試。'
+                : `全系統報價已同步 ${updatedCodes.length - missing.length}/${updatedCodes.length} 檔${missing.length ? `；未取得報價：${missing.join('、')}` : '。'}`)
+        } catch {
+            setPriceFeedback('現價更新失敗，請稍後再試。')
         }
-    }, [allSold, updatePrices])
+    }
 
     // ── 通知計算 ──────────────────────────────────────────────────────────
 
@@ -743,9 +771,7 @@ export default function SoldTracker() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
                     <h1 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>賣出追蹤</h1>
-                    <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
-                        觀察賣出後的股票後續走勢，反省操作決策
-                    </p>
+                    
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                     {lastUpdated && <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>更新：{lastUpdated}</span>}
@@ -763,6 +789,11 @@ export default function SoldTracker() {
             </div>
 
             {/* 通知面板（有通知才顯示） */}
+            {loadError && <p role="alert" style={{ color: 'var(--c-danger)', fontSize: '12px' }}>{loadError}</p>}
+            {priceFeedback && <p role="status" style={{ color: 'var(--c-muted)', fontSize: '12px' }}>{priceFeedback}</p>}
+            {Object.entries(priceErrors).filter(([code]) => allSold.some(r => r.code === code && r.daysSinceSold <= filterDays)).map(([code, error]) => (
+                <div key={code} style={{ color: 'var(--c-warning)', fontSize: '12px', marginBottom: '4px' }}>{code}：{error}</div>
+            ))}
             <AlertPanel
                 alerts={activeAlerts}
                 config={alertConfig}

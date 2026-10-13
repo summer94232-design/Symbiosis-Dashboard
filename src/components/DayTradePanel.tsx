@@ -1,8 +1,10 @@
+import { confirmAction } from '../ui/dialogs'
 import { useMemo, useState } from 'react'
-import { getDocs, runTransaction } from 'firebase/firestore'
+import { getDocsFromServer } from 'firebase/firestore'
 import { analyzeDayTrades, usesManualDayTradeMatching, type DayTradePair, type TradeRecord } from '../lib/calc'
 import { investDB } from '../lib/firebase'
-import { userCol } from '../lib/userDB'
+import { captureUserSession } from '../lib/userDB'
+import { commitLedgerWrites } from '../lib/ledgerWrites'
 import { invalidateTrades } from '../lib/investData'
 import { card, inp, btn } from '../ui/styles'
 import { getDayTradeAttention } from '../lib/dayTradePresentation'
@@ -45,16 +47,17 @@ export default function DayTradePanel({ trades, onChanged, showDetails = false, 
         const prompt = action === 'auto' ? '恢復依同日買賣自動沖抵？持倉成本與損益將重新計算。'
             : action === 'exclude' ? '依券商結果排除此筆賣出的當沖，改用一般庫存成本？'
             : '依券商實際股數修正此筆賣出的沖抵？未指定的剩餘股數將使用一般庫存成本，費稅不變。'
-        if (!confirm(prompt)) return
+        if (!await confirmAction(prompt)) return
         setBusy(true); setMessage('')
         try {
-            const fresh = await getDocs(userCol(investDB, 'trades'))
+            const session = captureUserSession()
+            const fresh = await getDocsFromServer(session.col(investDB, 'trades'))
+            session.assertActive()
             const source = fresh.docs.find(d => d.id === sellId)
             if (!source) throw new Error('賣出紀錄已不存在，請重新載入。')
             const group = fresh.docs.filter(d => d.id === sellId || (d.data().date === source.data().date && d.data().code === source.data().code))
-            await runTransaction(investDB, async tx => {
-                const docs = await Promise.all(group.map(d => tx.get(d.ref)))
-                const rows = docs.filter(d => d.exists()).map(d => ({ ...d.data(), id: d.id }) as TradeRecord)
+            {
+                const rows = group.map(d => ({ ...d.data(), id: d.id }) as TradeRecord)
                 const sell = rows.find(t => t.id === sellId)
                 if (!sell) throw new Error('賣出紀錄已不存在，請重新載入。')
                 const before = analyzeDayTrades(rows)
@@ -81,8 +84,8 @@ export default function DayTradePanel({ trades, onChanged, showDetails = false, 
                 const after = analyzeDayTrades(rows.map(t => t === sell ? next : t))
                 const oldIssues = new Set(before.issues.map(issue => issue.trade.id))
                 if (after.issues.some(issue => issue.trade === next || !oldIssues.has(issue.trade.id))) throw new Error('配對條件不符或超過可用股數，請重新核對。')
-                tx.update(source.ref, patch)
-            })
+                await commitLedgerWrites([{ collection: 'trades', id: sellId, data: { ...next }, mode: 'update', expected: source.data() }], session)
+            }
             invalidateTrades(); await onChanged()
             setMessage('沖抵方式已更新，持倉成本與損益會同步重算；費稅不變。')
         } catch (error) { setMessage(error instanceof Error ? error.message : '更新失敗，請稍後再試。') }
@@ -96,7 +99,7 @@ export default function DayTradePanel({ trades, onChanged, showDetails = false, 
             ? '當日沖銷明細'
             : `當沖交易待核對 · ${count} 筆`}</summary>
         {showDetails && onClose && <button type="button" className="ui-button ui-button-secondary" style={{ marginTop: '10px' }} onClick={onClose}>關閉明細</button>}
-        <p style={{ color: 'var(--c-muted)', fontSize: '12px', lineHeight: 1.7 }}>已依同日、同股票的現股整張買賣自動沖抵，不必逐筆確認；剩餘股數才納入一般庫存成本。這是依成交資料推算的帳本結果，券商實際認列、標的資格與費稅仍須以對帳單為準。零股、鉅額、融資及已排除交易不自動配對。</p>
+        <p style={{ color: 'var(--c-muted)', fontSize: '12px', lineHeight: 1.7 }}>同股同日的現股整張自動沖抵，剩餘列庫存；零股、鉅額、融資及排除交易不配對，以券商認列為準。</p>
         {message && <p role="status">{message}</p>}
         {analysis.issues.map(issue => <div key={issue.trade.id} role="alert" style={{ color: 'var(--c-danger)', marginBottom: '10px' }}>
             {issue.trade.date} {issue.trade.code}：{issue.message}

@@ -1,7 +1,8 @@
+import { searchKmsFullText } from './kmsFullTextIndex'
 import { getDoc, getDocs, limit, orderBy, query, startAfter, where, type DocumentData, type QueryDocumentSnapshot } from 'firebase/firestore'
 import { kmsDB } from './firebase'
 import { cache } from './cache'
-import { getUID, userCol, userDoc, userDocNested } from './userDB'
+import { getUID, userCol, userDoc, userDocNested, captureUserSession } from './userDB'
 import { normalizeKmsSearch } from './kmsSearch'
 
 const TTL_SECONDS = 90
@@ -98,8 +99,11 @@ export async function fetchKmsNotes<T = KmsNoteData>(): Promise<T[]> {
 }
 
 export async function fetchKmsNoteSummaries<T = KmsNoteData>(): Promise<T[]> {
+  const session = captureUserSession()
   const snapshot = await getDocs(query(userCol(kmsDB, 'notes'), orderBy('createdAt', 'desc')))
-  return snapshot.docs.map(note => ({ id: note.id, ...note.data() })) as T[]
+  session.assertActive()
+  const rows = snapshot.docs.map(note => ({ id: note.id, ...note.data() }))
+  return rows as T[]
 }
 
 export async function fetchKmsTagStats(): Promise<KmsTagStats | null> {
@@ -113,7 +117,12 @@ export async function searchKmsNoteSummaries<T = KmsNoteData>(
   selectedTag: string,
   pageSize = 0,
 ): Promise<T[]> {
-  const notes = userCol(kmsDB, 'notes')
+  if (search.trim()) {
+    const result = await searchKmsFullText<T>(search)
+    return pageSize > 0 ? result.rows.slice(0, pageSize) : result.rows
+  }
+  const session = captureUserSession()
+  const notes = session.col(kmsDB, 'notes')
   const normalized = normalizeKmsSearch(search).replace(/\s+/g, '').slice(0, 12)
   const filter = normalized
     ? where('searchTerms', 'array-contains', normalized)
@@ -122,6 +131,7 @@ export async function searchKmsNoteSummaries<T = KmsNoteData>(
       : where('tagPaths', 'array-contains', selectedTag)
   const resultQuery = pageSize > 0 ? query(notes, filter, limit(pageSize)) : query(notes, filter)
   const snapshot = await getDocs(resultQuery)
+  session.assertActive()
   return snapshot.docs.map(note => ({ id: note.id, ...note.data() })) as T[]
 }
 
@@ -129,14 +139,19 @@ export async function fetchKmsBodiesInBatches<T = KmsNoteBody>(
   noteIds: string[],
   batchSize = 20,
   onProgress: (completed: number, total: number) => void = () => undefined,
+  session = captureUserSession(),
 ): Promise<Record<string, T>> {
+  if (!Number.isSafeInteger(batchSize) || batchSize < 1) throw new Error('正文讀取批次大小無效')
   const result: Record<string, T> = {}
   for (let start = 0; start < noteIds.length; start += batchSize) {
+    session.assertActive()
     const ids = noteIds.slice(start, start + batchSize)
-    const bodies = await Promise.all(ids.map(id => fetchKmsNoteBody<T>(id)))
+    const bodies = await Promise.all(ids.map(id => fetchKmsNoteBody<T>(id, session)))
+    session.assertActive()
     ids.forEach((id, index) => { result[id] = bodies[index] })
     onProgress(Math.min(start + ids.length, noteIds.length), noteIds.length)
   }
+  session.assertActive()
   return result
 }
 
@@ -158,12 +173,14 @@ export async function fetchKmsNotePage<T = KmsNoteData>(
   }
 }
 
-export async function fetchKmsNoteBody<T = KmsNoteBody>(noteId: string): Promise<T> {
-  const snapshot = await getDoc(userDoc(kmsDB, 'noteBodies', noteId))
+export async function fetchKmsNoteBody<T = KmsNoteBody>(noteId: string, session = captureUserSession()): Promise<T> {
+  const snapshot = await getDoc(session.doc(kmsDB, 'noteBodies', noteId))
+  session.assertActive()
   if (snapshot.exists()) return snapshot.data() as T
 
   // 遷移前相容：舊資料的正文仍在 notes 文件內。
-  const legacy = await getDoc(userDoc(kmsDB, 'notes', noteId))
+  const legacy = await getDoc(session.doc(kmsDB, 'notes', noteId))
+  session.assertActive()
   const data = legacy.exists() ? legacy.data() : {}
   return {
     content: typeof data.content === 'string' ? data.content : '',
@@ -199,6 +216,7 @@ export async function fetchKmsTrash<T = Record<string, unknown>>(): Promise<T[]>
 
 export function invalidateKmsNotes(): void {
   cache.invalidatePrefix('kms:notes:')
+  cache.invalidatePrefix('kms:fulltext:')
 }
 
 export function invalidateKmsTagOrder(): void {

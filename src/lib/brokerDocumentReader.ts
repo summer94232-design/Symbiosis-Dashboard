@@ -20,10 +20,11 @@ async function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 async function recognizeImages(images: Array<{ blob: Blob; label: string }>, onProgress: ProgressCallback): Promise<string[]> {
     if (images.length === 0) return []
     const { createWorker } = await import('tesseract.js')
+    onProgress({ message: '載入 OCR 模型，首次使用可能較久', progress: 0 })
     const worker = await createWorker('chi_tra+eng', undefined, {
         logger: event => {
             if (typeof event.progress === 'number') {
-                onProgress({ message: `OCR 辨識中：${event.status}`, progress: event.progress })
+                onProgress({ message: event.status === 'loading language traineddata' ? '載入 OCR 模型，首次使用可能較久' : 'OCR 辨識中', progress: event.progress })
             }
         },
     })

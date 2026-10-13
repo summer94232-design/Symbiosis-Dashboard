@@ -1,0 +1,34 @@
+[
+  {
+    "name": "industry dropdown and results fit",
+    "pass": true
+  },
+  {
+    "name": "tag rename and children fit",
+    "pass": true
+  },
+  {
+    "name": "history tabs and custom dates fit",
+    "pass": true
+  },
+  {
+    "name": "task targets are 44 by 44 and circle remains round",
+    "pass": true
+  },
+  {
+    "name": "sidebar tag closes menu and shows selected tag",
+    "pass": true
+  },
+  {
+    "name": "landscape retains mobile header and readable inputs",
+    "pass": true
+  },
+  {
+    "name": "short date picker stays visible and last day selectable",
+    "pass": true
+  },
+  {
+    "name": "watch chart responds to horizontal touch without cancelling",
+    "pass": true
+  }
+]

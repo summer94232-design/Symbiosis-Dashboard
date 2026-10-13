@@ -1,7 +1,11 @@
-import { useState, useEffect } from 'react'
-import { addDoc, getDocs, updateDoc, deleteDoc, query, where, writeBatch } from 'firebase/firestore'
+import { card, inp, lbl, btn } from '../../ui/styles'
+import { confirmAction } from '../../ui/dialogs'
+import { useSafeMutation } from '../../lib/useSafeMutation'
+import { useInvestSync } from '../../InvestSyncContext'
+import { useState, useEffect, useRef } from 'react'
+import { doc, setDoc, getDocs, updateDoc, deleteDoc, query, where, writeBatch } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { captureUserSession } from '../../lib/userDB'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import type { DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable'
@@ -37,10 +41,6 @@ const PRIORITY_LABELS = { high: '高', medium: '中', low: '低' }
 const PROJECT_COLORS = ['var(--c-accent)', 'var(--c-positive)', 'var(--c-warning)', '#a78bfa', 'var(--c-danger)', '#00b4d8']
 const DEFAULT_TAGS = ['工作', '投資', '生活', '學習', '健康', '其他']
 
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }
-const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 // 可拖曳任務元件
 function SortableTask({ task, onToggle, onDelete, onEdit }: {
@@ -56,16 +56,16 @@ function SortableTask({ task, onToggle, onDelete, onEdit }: {
     const isOverdue = task.dueDate && !task.done && task.dueDate < toLocalDateString()
 
     return (
-        <div ref={setNodeRef} style={{ ...style, display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '10px 12px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', border: '1px solid var(--c-border)', marginBottom: '6px' }}>
+        <div className="task-item" ref={setNodeRef} style={{ ...style, display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '10px 12px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', border: '1px solid var(--c-border)', marginBottom: '6px' }}>
             {/* 拖曳把手 */}
-            <button {...attributes} {...listeners} style={{ background: 'none', border: 'none', color: 'var(--c-border)', cursor: 'grab', padding: '2px', display: 'flex', flexShrink: 0, marginTop: '2px' }}>
+            <button {...attributes} {...listeners} aria-label={`拖曳排序：${task.title}`} style={{ touchAction: 'none', background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'grab', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: '2px' }}>
                 <GripVertical size={14} />
             </button>
 
             {/* 完成勾選 */}
-            <button onClick={() => onToggle(task.id, !task.done)}
-                style={{ width: '18px', height: '18px', borderRadius: '50%', border: `2px solid ${task.done ? 'var(--c-positive)' : PRIORITY_COLORS[task.priority]}`, backgroundColor: task.done ? 'var(--c-positive)' : 'transparent', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '2px' }}>
-                {task.done && <Check size={10} color="#fff" />}
+            <button onClick={() => onToggle(task.id, !task.done)} aria-label={`${task.done ? '標為待辦' : '完成任務'}：${task.title}`} aria-pressed={task.done}
+                style={{ border: 0, padding: 0, background: 'transparent', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '2px' }}>
+                <span style={{ width: '18px', height: '18px', borderRadius: '50%', border: `2px solid ${task.done ? 'var(--c-positive)' : PRIORITY_COLORS[task.priority]}`, backgroundColor: task.done ? 'var(--c-positive)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{task.done && <Check size={10} color="#fff" />}</span>
             </button>
 
             {/* 內容 */}
@@ -93,15 +93,21 @@ function SortableTask({ task, onToggle, onDelete, onEdit }: {
             </div>
 
             {/* 操作按鈕 */}
-            <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                <button onClick={() => onEdit(task)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer', padding: '2px' }}><Pencil size={13} /></button>
-                <button onClick={() => onDelete(task.id)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer', padding: '2px' }}><Trash2 size={13} /></button>
+            <div className="task-item-actions" style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                <button aria-label={`編輯任務：${task.title}`} onClick={() => onEdit(task)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer', padding: '2px' }}><Pencil size={13} /></button>
+                <button aria-label={`刪除任務：${task.title}`} onClick={() => onDelete(task.id)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer', padding: '2px' }}><Trash2 size={13} /></button>
             </div>
         </div>
     )
 }
 
 export default function TaskManager() {
+    const mutation = useSafeMutation()
+    const [loadError, setLoadError] = useState('')
+    const [projectLoadError, setProjectLoadError] = useState('')
+    const taskDraftId = useRef<string | null>(null)
+    const projectDraftId = useRef<string | null>(null)
+    const { version: syncVersion } = useInvestSync()
     const [tasks, setTasks] = useState<Task[]>([])
     const [projects, setProjects] = useState<Project[]>([])
     const [selectedProject, setSelectedProject] = useState<string | null>(null)
@@ -116,41 +122,58 @@ export default function TaskManager() {
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
     const loadTasks = async () => {
-        setTasks(await fetchTasks<Task>())
+        try {
+            const session = captureUserSession()
+            const rows = await fetchTasks<Task>()
+            session.assertActive()
+            setTasks(rows)
+            setLoadError('')
+        } catch { setLoadError('清單載入失敗，已儲存的資料不需再次新增；請重新整理。') }
     }
 
     const loadProjects = async () => {
-        setProjects(await fetchTaskProjects<Project>())
+        try {
+            const session = captureUserSession()
+            const rows = await fetchTaskProjects<Project>()
+            session.assertActive()
+            setProjects(rows)
+            setProjectLoadError('')
+        } catch { setProjectLoadError('專案清單載入失敗；請重新整理後再選擇專案。') }
     }
 
     // 初次掛載才讀取；兩個 loader 都在第一個 await 後才更新 state。
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    useEffect(() => { void loadTasks(); void loadProjects() }, [])
+    useEffect(() => { void loadTasks(); void loadProjects() }, [syncVersion])
 
     // 新增/編輯任務
     const handleSaveTask = async () => {
-        if (!taskForm.title.trim()) return
-        const now = new Date().toISOString()
-        if (editingTask) {
-            await updateDoc(userDoc(investDB, 'tasks', editingTask.id), {
-                title: taskForm.title, priority: taskForm.priority,
-                dueDate: taskForm.dueDate || null, tag: taskForm.tag || null,
-                projectId: taskForm.projectId || null, note: taskForm.note || null
-            })
-        } else {
-            const maxOrder = tasks.length > 0 ? Math.max(...tasks.map(t => t.order)) + 1 : 0
-            await addDoc(userCol(investDB, 'tasks'), {
-                title: taskForm.title, done: false, priority: taskForm.priority,
-                dueDate: taskForm.dueDate || null, tag: taskForm.tag || null,
-                projectId: taskForm.projectId || null, note: taskForm.note || null,
-                order: maxOrder, createdAt: now
-            })
-        }
-        setTaskForm({ title: '', priority: 'medium', dueDate: '', tag: '', projectId: '', note: '' })
-        invalidateTasks(); setShowTaskForm(false); setEditingTask(null); loadTasks()
+        await mutation.run(async session => {
+            if (!taskForm.title.trim()) return
+            const now = new Date().toISOString()
+            if (editingTask) {
+                await updateDoc(session.doc(investDB, 'tasks', editingTask.id), {
+                    title: taskForm.title, priority: taskForm.priority,
+                    dueDate: taskForm.dueDate || null, tag: taskForm.tag || null,
+                    projectId: taskForm.projectId || null, note: taskForm.note || null
+                })
+            } else {
+                const maxOrder = tasks.length > 0 ? Math.max(...tasks.map(t => t.order)) + 1 : 0
+                await setDoc(session.doc(investDB, 'tasks', taskDraftId.current ||= doc(session.col(investDB, 'tasks')).id), {
+                    title: taskForm.title, done: false, priority: taskForm.priority,
+                    dueDate: taskForm.dueDate || null, tag: taskForm.tag || null,
+                    projectId: taskForm.projectId || null, note: taskForm.note || null,
+                    order: maxOrder, createdAt: now
+                })
+            }
+            session.assertActive()
+            taskDraftId.current = null
+            setTaskForm({ title: '', priority: 'medium', dueDate: '', tag: '', projectId: '', note: '' })
+            invalidateTasks(); setShowTaskForm(false); setEditingTask(null); loadTasks()
+        })
     }
 
     const handleEditTask = (task: Task) => {
+        if (mutation.busy) return
+        taskDraftId.current = null
         setEditingTask(task)
         setTaskForm({
             title: task.title, priority: task.priority,
@@ -161,83 +184,102 @@ export default function TaskManager() {
     }
 
     const handleToggleTask = async (id: string, done: boolean) => {
-        await updateDoc(userDoc(investDB, 'tasks', id), { done }); invalidateTasks(); loadTasks()
+        await mutation.run(async session => {
+            await updateDoc(session.doc(investDB, 'tasks', id), { done }); invalidateTasks(); loadTasks()
+        })
     }
 
     const handleDeleteTask = async (id: string) => {
-        if (!confirm('確定要刪除此任務？')) return
-        await deleteDoc(userDoc(investDB, 'tasks', id)); invalidateTasks(); loadTasks()
+        await mutation.run(async session => {
+            if (!await confirmAction(`確定刪除任務「${tasks.find(task => task.id === id)?.title || '未命名任務'}」？`)) return
+            session.assertActive()
+            await deleteDoc(session.doc(investDB, 'tasks', id)); invalidateTasks(); loadTasks()
+        })
     }
 
     // 新增專案
     const handleSaveProject = async () => {
-        if (!projectForm.title.trim()) return
-        const maxOrder = projects.length > 0 ? Math.max(...projects.map(p => p.order)) + 1 : 0
-        await addDoc(userCol(investDB, 'taskProjects'), {
-            title: projectForm.title, color: projectForm.color,
-            order: maxOrder, createdAt: new Date().toISOString()
+        await mutation.run(async session => {
+            if (!projectForm.title.trim()) return
+            const maxOrder = projects.length > 0 ? Math.max(...projects.map(p => p.order)) + 1 : 0
+            await setDoc(session.doc(investDB, 'taskProjects', projectDraftId.current ||= doc(session.col(investDB, 'taskProjects')).id), {
+                title: projectForm.title, color: projectForm.color,
+                order: maxOrder, createdAt: new Date().toISOString()
+            })
+            session.assertActive()
+            projectDraftId.current = null
+            setProjectForm({ title: '', color: PROJECT_COLORS[0] })
+            invalidateTaskProjects(); setShowProjectForm(false); loadProjects()
         })
-        setProjectForm({ title: '', color: PROJECT_COLORS[0] })
-        invalidateTaskProjects(); setShowProjectForm(false); loadProjects()
     }
 
     const handleDeleteProject = async (id: string) => {
-        if (!confirm('確定要刪除此專案？專案內的任務也會一併刪除。')) return
+        await mutation.run(async session => {
+            if (!await confirmAction(`確定刪除專案「${projects.find(project => project.id === id)?.title || '未命名專案'}」？專案內的任務也會一併刪除。`)) return
+            session.assertActive()
 
-        // 直接從 Firestore 查詢屬於此專案的所有任務，不依賴 React state 快照
-        const snap = await getDocs(query(userCol(investDB, 'tasks'), where('projectId', '==', id)))
+            // 直接從 Firestore 查詢屬於此專案的所有任務，不依賴 React state 快照
+            const snap = await getDocs(query(session.col(investDB, 'tasks'), where('projectId', '==', id)))
 
-        if (snap.size <= 449) {
-            // 小型專案維持單一原子 batch（子任務 + 專案最多 450 次操作）。
-            const batch = writeBatch(investDB)
-            snap.docs.forEach(d => batch.delete(userDoc(investDB, 'tasks', d.id)))
-            batch.delete(userDoc(investDB, 'taskProjects', id))
-            await batch.commit()
-        } else {
-            // 超過 Firestore 500 次上限時分批刪子任務，最後才刪專案；中途失敗可安全重試。
-            for (let start = 0; start < snap.docs.length; start += 450) {
+            if (snap.size <= 449) {
+                // 小型專案維持單一原子 batch（子任務 + 專案最多 450 次操作）。
                 const batch = writeBatch(investDB)
-                snap.docs.slice(start, start + 450).forEach(d => {
-                    batch.delete(userDoc(investDB, 'tasks', d.id))
-                })
+                snap.docs.forEach(d => batch.delete(session.doc(investDB, 'tasks', d.id)))
+                batch.delete(session.doc(investDB, 'taskProjects', id))
+                session.assertActive()
                 await batch.commit()
+                session.assertActive()
+            } else {
+                // 超過 Firestore 500 次上限時分批刪子任務，最後才刪專案；中途失敗可安全重試。
+                for (let start = 0; start < snap.docs.length; start += 450) {
+                    const batch = writeBatch(investDB)
+                    snap.docs.slice(start, start + 450).forEach(d => {
+                        batch.delete(session.doc(investDB, 'tasks', d.id))
+                    })
+                    await batch.commit()
+                }
+                await deleteDoc(session.doc(investDB, 'taskProjects', id))
             }
-            await deleteDoc(userDoc(investDB, 'taskProjects', id))
-        }
 
-        // 若目前正在檢視此專案，跳回全部任務
-        if (selectedProject === id) setSelectedProject(null)
+            // 若目前正在檢視此專案，跳回全部任務
+            if (selectedProject === id) setSelectedProject(null)
 
-        invalidateTasks(); invalidateTaskProjects()
-        loadTasks()
-        loadProjects()
+            invalidateTasks(); invalidateTaskProjects()
+            loadTasks()
+            loadProjects()
+        })
     }
 
     // 拖曳排序
     const handleDragEnd = async (event: DragEndEvent) => {
-        const { active, over } = event
-        if (!over || active.id === over.id) return
-        // 把重排後的可見任務放回完整序列原本的「可見插槽」，隱藏的其他專案／標籤／
-        // 已完成任務位置不動；最後替完整序列重編唯一 order，避免篩選排序產生碰撞。
-        // 只有待辦區有 SortableContext；不可用 filteredTasks（showDone=true 時會混入已完成任務）。
-        const reorderedAll = reorderVisibleItems(tasks, todoTasks, String(active.id), String(over.id))
-        if (!reorderedAll) return
+        await mutation.run(async session => {
+            const { active, over } = event
+            if (!over || active.id === over.id) return
+            // 把重排後的可見任務放回完整序列原本的「可見插槽」，隱藏的其他專案／標籤／
+            // 已完成任務位置不動；最後替完整序列重編唯一 order，避免篩選排序產生碰撞。
+            // 只有待辦區有 SortableContext；不可用 filteredTasks（showDone=true 時會混入已完成任務）。
+            const reorderedAll = reorderVisibleItems(tasks, todoTasks, String(active.id), String(over.id))
+            if (!reorderedAll) return
 
-        try {
-            // Firestore batch 上限 500，保守每批 450；大型任務清單也能完成排序。
-            for (let start = 0; start < reorderedAll.length; start += 450) {
-                const batch = writeBatch(investDB)
-                reorderedAll.slice(start, start + 450).forEach(task => {
-                    batch.update(userDoc(investDB, 'tasks', task.id), { order: task.order })
-                })
-                await batch.commit()
+            try {
+                // Firestore batch 上限 500，保守每批 450；大型任務清單也能完成排序。
+                for (let start = 0; start < reorderedAll.length; start += 450) {
+                    const batch = writeBatch(investDB)
+                    reorderedAll.slice(start, start + 450).forEach(task => {
+                        batch.update(session.doc(investDB, 'tasks', task.id), { order: task.order })
+                    })
+                    session.assertActive()
+                    await batch.commit()
+                    session.assertActive()
+                }
+                setTasks(reorderedAll)
+                invalidateTasks()
+            } catch (err) {
+                session.assertActive()
+                console.error('任務排序儲存失敗：', err)
+                invalidateTasks(); await loadTasks(); throw err
             }
-            setTasks(reorderedAll)
-            invalidateTasks()
-        } catch (err) {
-            console.error('任務排序儲存失敗：', err)
-            invalidateTasks(); await loadTasks()
-        }
+        })
     }
 
     // 篩選任務
@@ -265,7 +307,8 @@ export default function TaskManager() {
         .project-row:hover .project-delete { opacity: 1; }
       `}</style>
 
-            <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1400px', margin: '0 auto' }}>
+            <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1400px', margin: '0 auto' }}>
+                {(mutation.error || loadError || projectLoadError) && <div role="alert" style={{ color: 'var(--c-danger)' }}>{mutation.error || loadError || projectLoadError}</div>}
 
                 {/* 標題列 */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
@@ -277,10 +320,10 @@ export default function TaskManager() {
                         </p>
                     </div>
                     <div className="page-actions" style={{ display: 'flex', gap: '8px' }}>
-                        <button onClick={() => { setShowProjectForm(true) }} style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', fontSize: '13px' }}>
+                        <button onClick={async () => { if (mutation.busy) return; projectDraftId.current = null; setShowProjectForm(true) }} style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', fontSize: '13px' }}>
                             <FolderOpen size={14} />新增專案
                         </button>
-                        <button onClick={() => { setEditingTask(null); setTaskForm({ title: '', priority: 'medium', dueDate: '', tag: '', projectId: selectedProject || '', note: '' }); setShowTaskForm(true) }} style={btn('var(--c-accent)')}>
+                        <button onClick={async () => { if (mutation.busy) return; taskDraftId.current = null; setEditingTask(null); setTaskForm({ title: '', priority: 'medium', dueDate: '', tag: '', projectId: selectedProject || '', note: '' }); setShowTaskForm(true) }} style={btn('var(--c-accent)')}>
                             <Plus size={14} />新增任務
                         </button>
                     </div>
@@ -314,7 +357,7 @@ export default function TaskManager() {
                                     </button>
                                 </div>
                             ))}
-                            <button onClick={() => setShowProjectForm(true)}
+                            <button onClick={async () => { if (mutation.busy) return; projectDraftId.current = null; setShowProjectForm(true) }}
                                 style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 8px', borderRadius: '8px', border: '1px dashed var(--c-border)', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer', background: 'none', width: '100%', marginTop: '4px' }}>
                                 <Plus size={12} />新增專案
                             </button>
@@ -393,20 +436,21 @@ export default function TaskManager() {
                     <div className="mobile-sticky-form" style={{ ...card, width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                             <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>{editingTask ? '編輯任務' : '新增任務'}</span>
-                            <button onClick={() => { setShowTaskForm(false); setEditingTask(null) }} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={18} /></button>
+                            <button onClick={async () => { if (mutation.busy) return; taskDraftId.current = null; setShowTaskForm(false); setEditingTask(null) }} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={18} /></button>
                         </div>
 
+                        {mutation.error && <div role="alert" style={{ color: 'var(--c-danger)', marginBottom: '12px' }}>{mutation.error}</div>}
                         <div className="task-form-grid">
                             <div style={{ gridColumn: 'span 2' }}>
                                 <label style={lbl}>任務標題 *</label>
-                                <input style={inp} placeholder="輸入任務..." value={taskForm.title}
+                                <input disabled={mutation.busy} style={inp} placeholder="輸入任務..." value={taskForm.title}
                                     onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))}
                                     onKeyDown={e => e.key === 'Enter' && handleSaveTask()} autoFocus />
                             </div>
 
                             <div>
                                 <label style={lbl}>優先級</label>
-                                <select style={{ ...inp, cursor: 'pointer' }} value={taskForm.priority}
+                                <select disabled={mutation.busy} style={{ ...inp, cursor: 'pointer' }} value={taskForm.priority}
                                     onChange={e => setTaskForm(f => ({ ...f, priority: e.target.value as Task['priority'] }))}>
                                     <option value="high">🔴 高</option>
                                     <option value="medium">🟡 中</option>
@@ -416,13 +460,13 @@ export default function TaskManager() {
 
                             <div>
                                 <label style={lbl}>截止日期</label>
-                                <input type="date" style={inp} value={taskForm.dueDate}
+                                <input disabled={mutation.busy} type="date" style={inp} value={taskForm.dueDate}
                                     onChange={e => setTaskForm(f => ({ ...f, dueDate: e.target.value }))} />
                             </div>
 
                             <div>
                                 <label style={lbl}>標籤</label>
-                                <select style={{ ...inp, cursor: 'pointer' }} value={taskForm.tag}
+                                <select disabled={mutation.busy} style={{ ...inp, cursor: 'pointer' }} value={taskForm.tag}
                                     onChange={e => setTaskForm(f => ({ ...f, tag: e.target.value }))}>
                                     <option value="">無標籤</option>
                                     {DEFAULT_TAGS.map(t => <option key={t} value={t}>{t}</option>)}
@@ -432,7 +476,7 @@ export default function TaskManager() {
 
                             <div>
                                 <label style={lbl}>所屬專案</label>
-                                <select style={{ ...inp, cursor: 'pointer' }} value={taskForm.projectId}
+                                <select disabled={mutation.busy} style={{ ...inp, cursor: 'pointer' }} value={taskForm.projectId}
                                     onChange={e => setTaskForm(f => ({ ...f, projectId: e.target.value }))}>
                                     <option value="">無專案</option>
                                     {projects.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
@@ -441,15 +485,15 @@ export default function TaskManager() {
 
                             <div style={{ gridColumn: 'span 2' }}>
                                 <label style={lbl}>備註</label>
-                                <textarea style={{ ...inp, minHeight: '80px', resize: 'vertical', fontFamily: 'sans-serif' }}
+                                <textarea disabled={mutation.busy} style={{ ...inp, minHeight: '80px', resize: 'vertical', fontFamily: 'sans-serif' }}
                                     placeholder="任務備註..." value={taskForm.note}
                                     onChange={e => setTaskForm(f => ({ ...f, note: e.target.value }))} />
                             </div>
                         </div>
 
                         <div className="mobile-sticky-actions" style={{ display: 'flex', gap: '8px', marginTop: '20px', justifyContent: 'flex-end' }}>
-                            <button style={btn('var(--c-border)')} onClick={() => { setShowTaskForm(false); setEditingTask(null) }}><X size={14} />取消</button>
-                            <button style={btn('var(--c-accent)')} onClick={handleSaveTask}>
+                            <button disabled={mutation.busy} style={btn('var(--c-border)')} onClick={() => { setShowTaskForm(false); setEditingTask(null) }}><X size={14} />取消</button>
+                            <button disabled={mutation.busy} style={btn('var(--c-accent)')} onClick={handleSaveTask}>
                                 <Check size={14} />{editingTask ? '更新' : '新增'}
                             </button>
                         </div>
@@ -463,12 +507,13 @@ export default function TaskManager() {
                     <div style={{ ...card, width: '100%', maxWidth: '400px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                             <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text)' }}>新增專案</span>
-                            <button onClick={() => setShowProjectForm(false)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={18} /></button>
+                            <button onClick={async () => { if (mutation.busy) return; projectDraftId.current = null; setShowProjectForm(false) }} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={18} /></button>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                             <div>
+                                {mutation.error && <div role="alert" style={{ color: 'var(--c-danger)', marginBottom: '12px' }}>{mutation.error}</div>}
                                 <label style={lbl}>專案名稱 *</label>
-                                <input style={inp} placeholder="專案名稱" value={projectForm.title}
+                                <input disabled={mutation.busy} style={inp} placeholder="專案名稱" value={projectForm.title}
                                     onChange={e => setProjectForm(f => ({ ...f, title: e.target.value }))}
                                     onKeyDown={e => e.key === 'Enter' && handleSaveProject()} autoFocus />
                             </div>
@@ -476,15 +521,15 @@ export default function TaskManager() {
                                 <label style={lbl}>顏色</label>
                                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                                     {PROJECT_COLORS.map(color => (
-                                        <button key={color} onClick={() => setProjectForm(f => ({ ...f, color }))}
+                                        <button disabled={mutation.busy} key={color} onClick={() => setProjectForm(f => ({ ...f, color }))}
                                             style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: color, border: projectForm.color === color ? '3px solid #fff' : '3px solid transparent', cursor: 'pointer' }} />
                                     ))}
                                 </div>
                             </div>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', marginTop: '20px', justifyContent: 'flex-end' }}>
-                            <button style={btn('var(--c-border)')} onClick={() => setShowProjectForm(false)}><X size={14} />取消</button>
-                            <button style={btn('var(--c-accent)')} onClick={handleSaveProject}><Check size={14} />新增</button>
+                            <button disabled={mutation.busy} style={btn('var(--c-border)')} onClick={() => setShowProjectForm(false)}><X size={14} />取消</button>
+                            <button disabled={mutation.busy} style={btn('var(--c-accent)')} onClick={handleSaveProject}><Check size={14} />新增</button>
                         </div>
                     </div>
                 </div>

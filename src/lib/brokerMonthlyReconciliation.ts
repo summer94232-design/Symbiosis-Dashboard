@@ -22,6 +22,19 @@ export interface BrokerMonthlyDetails {
     cashBalanceDate?: string
     holdings: BrokerStatementHolding[]
     dividends: BrokerStatementDividend[]
+    cashEntries?: BrokerCashEntry[]
+    lentHoldings?: BrokerStatementHolding[]
+    lendingVerified?: boolean
+    lentMarketValue?: number
+    netAssets?: number
+}
+
+export interface BrokerCashEntry {
+    date: string
+    description: string
+    amount: number
+    balance: number
+    category: 'dividend' | 'lending-income' | 'interest' | 'deposit' | 'prepayment' | 'refund' | 'trade' | 'reinvestment' | 'other'
 }
 
 export type MonthlyCheckStatus = 'matched' | 'mismatch' | 'missing-system' | 'missing-broker' | 'pending-broker'
@@ -89,7 +102,7 @@ function parseHoldings(text: string): BrokerStatementHolding[] {
     }).filter(row => row.shares > 0)
 }
 
-function parseCashSection(text: string): Pick<BrokerMonthlyDetails, 'cashBalance' | 'cashBalanceDate' | 'dividends'> {
+function parseCashSection(text: string): Pick<BrokerMonthlyDetails, 'cashBalance' | 'cashBalanceDate' | 'dividends' | 'cashEntries'> {
     const section = sectionBetween(text, 'CMA(資金管理帳戶)交易明細及帳面餘額', ['合計 ', '訊息通知'])
     if (!section) return { dividends: [] }
     const rowStart = /(?=\d{4}\/\d{2}\/\d{2}\s+TWD\s+)/g
@@ -97,6 +110,7 @@ function parseCashSection(text: string): Pick<BrokerMonthlyDetails, 'cashBalance
     let cashBalance: number | undefined
     let cashBalanceDate: string | undefined
     const dividends: BrokerStatementDividend[] = []
+    const cashEntries: BrokerCashEntry[] = []
 
     blocks.forEach(block => {
         const match = block.match(/^(\d{4}\/\d{2}\/\d{2})\s+TWD\s+(.+?)(?=\s+[\d,]+(?:\s|$))\s+(.+)$/)
@@ -112,14 +126,56 @@ function parseCashSection(text: string): Pick<BrokerMonthlyDetails, 'cashBalance
             const name = description.replace(/\((?:現金股息|基金配).*$/, '').trim()
             dividends.push({ date, code: '', name, amount: values[0], description })
         }
+        if (!description.includes('月底結餘') && values.length === 2) {
+            const category: BrokerCashEntry['category'] = /現金股息|基金配/.test(description) ? 'dividend'
+                : description.includes('出借收入') ? 'lending-income'
+                : description.includes('半年息') ? 'interest'
+                : description.includes('入金') ? 'deposit'
+                : description.includes('證券預繳') ? 'prepayment'
+                : description.includes('證券退款') ? 'refund'
+                : description.includes('股息再投入') ? 'reinvestment'
+                : /\((?:集|櫃|資)[買賣]\)|現股當沖/.test(description) ? 'trade' : 'other'
+            cashEntries.push({ date, description, amount: values[0], balance: values[1], category })
+        }
     })
-    return { cashBalance, cashBalanceDate, dividends }
+    return { cashBalance, cashBalanceDate, dividends, cashEntries }
+}
+
+/** Separate custody and lent inventory. Only include lending quantities when
+ * their values independently reconcile to the statement's lending valuation. */
+function parseLending(text: string, holdings: BrokerStatementHolding[]): Pick<BrokerMonthlyDetails, 'lentHoldings' | 'lentMarketValue' | 'lendingVerified'> {
+    const section = sectionBetween(text, '有價證券借貸庫存及沖銷明細', ['訊息通知'])
+    if (!section) return { lentHoldings: [], lendingVerified: true, lentMarketValue: 0 }
+    const lentMarketValue = numberValue(section.match(/出借股票市值:\s*([\d,]+)/)?.[1])
+    if (lentMarketValue === 0) return { lentHoldings: [], lendingVerified: true, lentMarketValue }
+    const lentHoldings: BrokerStatementHolding[] = []
+    for (const match of section.matchAll(/出借開\s+(\d{4,6}[A-Z]?)\s+(\S+)\s+\d{7}\s+[\d,]+\s+([\d,]+)\s+\d+\.\d+\s+\d{7}\s/g)) {
+        const holding = holdings.find(row => row.code === match[1])
+        const shares = (numberValue(match[3]) ?? 0) * 1000
+        if (!holding?.referencePrice || shares <= 0) continue
+        lentHoldings.push({ code: match[1], name: match[2], shares,
+            referencePrice: holding.referencePrice, marketValue: Math.floor(shares * holding.referencePrice) })
+    }
+    const total = lentHoldings.reduce((sum, row) => sum + (row.marketValue ?? 0), 0)
+    const lendingVerified = lentMarketValue !== undefined && lentHoldings.length > 0 && total === lentMarketValue
+    return { lentMarketValue, lendingVerified, lentHoldings: lendingVerified ? lentHoldings : [] }
+}
+
+export function combinedBrokerHoldings(details: BrokerMonthlyDetails): BrokerStatementHolding[] {
+    const combined = new Map(details.holdings.map(row => [row.code, { ...row }]))
+    for (const row of details.lendingVerified ? details.lentHoldings ?? [] : []) {
+        const current = combined.get(row.code)
+        combined.set(row.code, current ? { ...current, shares: current.shares + row.shares,
+            marketValue: current.marketValue !== undefined && row.marketValue !== undefined ? current.marketValue + row.marketValue : undefined } : { ...row })
+    }
+    return [...combined.values()]
 }
 
 export function parseYuantaMonthlyDetails(rawText: string): BrokerMonthlyDetails {
     const text = normalizeWidth(rawText)
     const cash = parseCashSection(text)
-    return { ...cash, holdings: parseHoldings(text) }
+    const holdings = parseHoldings(text)
+    return { ...cash, holdings, ...parseLending(text, holdings), netAssets: numberValue(text.match(/資產總淨額\s+([\d,]+)/)?.[1]) }
 }
 
 export function resolveBrokerDividendCodes(
@@ -160,15 +216,17 @@ export function reconcileMonthlyDividends(
     periodStart?: string,
     periodEnd?: string,
 ): DividendCheck[] {
-    const systemCandidates = systemRows.filter(row => row.cashDividend > 0)
+    const systemCandidates = systemRows.filter(row => row.cashDividend > 0 && row.status !== 'announced')
     const usedSystem = new Set<number>()
     const checks: DividendCheck[] = brokerRows.map((brokerRow, brokerIndex) => {
         const brokerSecurity = brokerRow.code.toUpperCase() || `name:${normalizeSecurityName(brokerRow.name)}`
         const candidates = systemCandidates.map((row, index) => ({ row, index }))
             .filter(({ row, index }) => !usedSystem.has(index)
-                && (row.code.toUpperCase() || `name:${normalizeSecurityName(row.name)}`) === brokerSecurity)
+                && (row.code.toUpperCase() || `name:${normalizeSecurityName(row.name)}`) === brokerSecurity
+                && (row.cashPaymentDate ? row.cashPaymentDate === brokerRow.date
+                    : row.date <= brokerRow.date && Date.parse(brokerRow.date) - Date.parse(row.date) <= 90 * 86400000))
             .sort((left, right) => Math.abs(Date.parse(left.row.date) - Date.parse(brokerRow.date)) - Math.abs(Date.parse(right.row.date) - Date.parse(brokerRow.date)))
-        const exact = candidates.find(({ row }) => Math.abs(row.cashDividend - brokerRow.amount) <= 1)
+        const exact = candidates.find(({ row }) => Math.abs(row.cashDividend - brokerRow.amount) < 0.000001)
         const selected = exact ?? candidates[0]
         if (!selected) return {
             key: `broker-${brokerIndex}-${dividendKey(brokerRow)}`, status: 'missing-system' as const,
@@ -179,7 +237,7 @@ export function reconcileMonthlyDividends(
         const difference = brokerRow.amount - selected.row.cashDividend
         return {
             key: `broker-${brokerIndex}-${dividendKey(brokerRow)}`,
-            status: Math.abs(difference) <= 1 ? 'matched' as const : 'mismatch' as const,
+            status: Math.abs(difference) < 0.000001 ? 'matched' as const : 'mismatch' as const,
             date: brokerRow.date, code: brokerRow.code || selected.row.code, name: brokerRow.name || selected.row.name,
             brokerAmount: brokerRow.amount, systemAmount: selected.row.cashDividend, difference,
         }
@@ -187,11 +245,12 @@ export function reconcileMonthlyDividends(
 
     systemCandidates.forEach((row, index) => {
         if (usedSystem.has(index)) return
-        if (periodStart && row.date < periodStart) return
-        if (periodEnd && row.date > periodEnd) return
+        const paymentDate = row.cashPaymentDate || row.date
+        if (periodStart && paymentDate < periodStart) return
+        if (periodEnd && paymentDate > periodEnd) return
         checks.push({
             key: `system-${index}-${dividendKey(row)}`, status: 'pending-broker',
-            date: row.date, code: row.code, name: row.name,
+            date: paymentDate, code: row.code, name: row.name,
             brokerAmount: undefined, systemAmount: row.cashDividend, difference: -row.cashDividend,
         })
     })
@@ -205,13 +264,13 @@ export function reconcileMonthlyCash(
     brokerTrades: BrokerTradeRow[],
 ): CashCheck {
     const unsettledNet = brokerTrades
-        .filter(row => row.settlementDate && row.settlementDate > periodEnd)
+        .filter(row => row.date <= periodEnd && row.settlementDate && row.settlementDate > periodEnd)
         .reduce((sum, row) => sum + (row.total ?? 0), 0)
     const systemExpectedSettledCash = systemProjectedCash - unsettledNet
     if (brokerBalance === undefined) return { status: 'unavailable', systemProjectedCash, unsettledNet, systemExpectedSettledCash }
     const difference = brokerBalance - systemExpectedSettledCash
     return {
-        status: Math.abs(difference) <= 2 ? 'matched' : 'mismatch',
+        status: Math.abs(difference) < 0.000001 ? 'matched' : 'mismatch',
         brokerBalance, systemProjectedCash, unsettledNet, systemExpectedSettledCash, difference,
     }
 }

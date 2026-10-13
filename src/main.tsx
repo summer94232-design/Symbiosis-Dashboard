@@ -6,14 +6,23 @@ import Login from './pages/Login.tsx'
 import { onBothAuthChanged } from './lib/auth.ts'
 import type { User } from 'firebase/auth'
 import './index.css'
+import AppErrorBoundary from './components/AppErrorBoundary'
+import { loadAnnualCalendars } from './lib/annualCalendars'
 
 export function Root() {
     const [user, setUser] = useState<User | null | undefined>(undefined)
 
     useEffect(() => {
         // 同時等待 investAuth 和 kmsAuth 都完成初始化，再決定顯示 App 或 Login
-        const unsub = onBothAuthChanged(u => setUser(u))
-        return unsub
+        let active = true, request = 0
+        const unsub = onBothAuthChanged(u => {
+            const current = ++request
+            if (!u) { setUser(null); return }
+            setUser(undefined)
+            // All calculators and calendar pages mount after the shared dates are loaded.
+            void loadAnnualCalendars().finally(() => { if (active && current === request) setUser(u) })
+        })
+        return () => { active = false; request++; unsub() }
     }, [])
 
     // 載入中（兩個 Auth 都還沒回應）
@@ -34,8 +43,10 @@ export function Root() {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
-        <BrowserRouter>
-            <Root />
-        </BrowserRouter>
+        <AppErrorBoundary>
+            <BrowserRouter>
+                <Root />
+            </BrowserRouter>
+        </AppErrorBoundary>
     </React.StrictMode>,
 )

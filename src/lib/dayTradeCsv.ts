@@ -1,6 +1,6 @@
 import type { TradeRecord } from './calc'
 
-export function exportDayTradeFields(t: Pick<TradeRecord, 'brokerAccount' | 'tradingSession' | 'dayTradeExcluded' | 'dayTradePending' | 'dayTradeMatches' | 'dayTradeMode'>) {
+export function exportDayTradeFields(t: Pick<TradeRecord, 'brokerAccount' | 'tradingSession' | 'dayTradeExcluded' | 'dayTradePending' | 'dayTradeMatches' | 'dayTradeMode' | 'inventoryMatches'>) {
     return {
         '券商帳戶': t.brokerAccount || '',
         '交易市場': t.tradingSession || '',
@@ -8,11 +8,12 @@ export function exportDayTradeFields(t: Pick<TradeRecord, 'brokerAccount' | 'tra
         '當沖待回補': t.dayTradePending ? 'true' : 'false',
         '當沖配對': JSON.stringify(t.dayTradeMatches || []),
         '當沖計算方式': t.dayTradeMode || '',
+        '指定庫存沖抵': t.inventoryMatches === undefined ? '' : JSON.stringify(t.inventoryMatches),
     }
 }
 
 export function importDayTradeFields(row: Record<string, string>): Pick<TradeRecord,
-    'brokerAccount' | 'tradingSession' | 'dayTradeExcluded' | 'dayTradePending' | 'dayTradeMatches' | 'dayTradeMode'> {
+    'brokerAccount' | 'tradingSession' | 'dayTradeExcluded' | 'dayTradePending' | 'dayTradeMatches' | 'dayTradeMode' | 'inventoryMatches'> {
     const booleanField = (key: string) => {
         const value = (row[key] || '').trim()
         if (!['', 'true', 'false'].includes(value)) throw new Error(`${key} 格式錯誤`)
@@ -27,11 +28,18 @@ export function importDayTradeFields(row: Record<string, string>): Pick<TradeRec
         || !link.buyId.trim() || !Number.isInteger(link.shares) || link.shares <= 0 || link.shares % 1000 !== 0)) {
         throw new Error('當沖配對格式錯誤')
     }
+    const inventoryText = (row['指定庫存沖抵'] || '').trim()
+    const inventory = inventoryText ? JSON.parse(inventoryText) : undefined
+    if (inventory !== undefined && (!Array.isArray(inventory) || !inventory.length
+        || inventory.some(link => !link || typeof link.buyId !== 'string' || !link.buyId.trim()
+            || link.buyId.includes('/') || !Number.isSafeInteger(link.shares) || link.shares <= 0)
+        || new Set(inventory.map(link => link.buyId)).size !== inventory.length)) throw new Error('指定庫存沖抵格式錯誤')
     return { brokerAccount: (row['券商帳戶'] || '').trim(),
         ...(mode ? { dayTradeMode: mode as TradeRecord['dayTradeMode'] } : {}),
         ...(session ? { tradingSession: session as TradeRecord['tradingSession'] } : {}),
         dayTradeExcluded: booleanField('不參與當沖'), dayTradePending: booleanField('當沖待回補'),
-        dayTradeMatches: matches.map(link => ({ buyId: link.buyId, shares: link.shares })) }
+        dayTradeMatches: matches.map(link => ({ buyId: link.buyId, shares: link.shares })),
+        ...(inventory ? { inventoryMatches: inventory.map((link: { buyId: string; shares: number }) => ({ buyId: link.buyId, shares: link.shares })) } : {}) }
 }
 
 /** 先建立所有買入 ID，再匯入賣出連結；sourceIndex 保留原始同日順序。 */

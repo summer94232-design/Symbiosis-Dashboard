@@ -1,3 +1,5 @@
+import { invokeEventHandler } from '../lib/http-function.js'
+import { authorizeApi, apiError, apiHeaders, cachedApi } from '../lib/api-access.js'
 // netlify/functions/yahoo-calendar-proxy.js
 // ──────────────────────────────────────────────────────────────
 // 從 Yahoo 股市「台股行事曆 - 法說會」整頁抓取全市場法說會，一次回傳所有事件。
@@ -18,16 +20,11 @@
 
 const SOURCE_URL = 'https://tw.stock.yahoo.com/calendar/earnings-call'
 
-export const handler = async (event) => {
-    const headers = {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type',
-        'Content-Type': 'application/json',
-    }
+export const handleEvent = async (event) => {
+    const headers = apiHeaders
+    const denied = await authorizeApi(event, 'meetings')
+    if (denied) return denied
 
-    if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 200, headers, body: '' }
-    }
 
     try {
         const res = await fetch(SOURCE_URL, {
@@ -141,4 +138,7 @@ function parseEarningsCall(html) {
     }
 
     return events
+}
+export default async function (request) {
+    return invokeEventHandler(request, handleEvent)
 }

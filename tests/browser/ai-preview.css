@@ -1,0 +1,7 @@
+.ai-preview-label { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ai-preview-controls { display:flex; align-items:center; gap:10px; flex:none; }
+.ai-preview-scope { white-space:nowrap; font-size:10px; }
+.ai-preview-theme { width:90px; flex:none; }
+.ai-preview-theme button { margin-bottom:0 !important; min-height:26px; padding:3px 6px !important; }
+.ai-preview-controls > button, .ai-preview-controls > select { width:auto; font-size:10px; min-height:26px; padding:3px 6px; }
+@media(max-width:600px) { .ai-preview-scope { display:none; } .ai-preview-controls { gap:4px; } }

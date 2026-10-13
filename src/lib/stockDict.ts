@@ -16,7 +16,7 @@
 
 import { getDoc, setDoc, getDocs, query, orderBy, startAt, endAt, documentId, limit } from 'firebase/firestore'
 import { investDB } from './firebase'
-import { userDoc, userCol, getUID } from './userDB'
+import { userDoc, userCol, getUID, captureUserSession } from './userDB'
 import { cache } from './cache'
 
 // 全系統共用的 session 快取；key 內含 uid，避免切換帳號後沿用前一帳號的自訂名稱。
@@ -28,19 +28,21 @@ function dictCacheKey(code: string): string {
 
 /** 單筆查詢：依序查快取 → stockDict → stockDictFull，查無回傳空字串 */
 export async function lookupStockName(code: string): Promise<string> {
+    const session = captureUserSession()
     const key = dictCacheKey(code)
     const cached = dictCache[key]
     if (cached) return cached
 
     const name = await cache.getOrLoad(`stock:lookup:${key}`, async () => {
-        const shortDoc = await getDoc(userDoc(investDB, 'stockDict', code))
+        const shortDoc = await getDoc(session.doc(investDB, 'stockDict', code))
         if (shortDoc.exists()) return shortDoc.data().name as string
-        const fullDoc = await getDoc(userDoc(investDB, 'stockDictFull', code))
+        const fullDoc = await getDoc(session.doc(investDB, 'stockDictFull', code))
         if (!fullDoc.exists()) return ''
         const fullName = fullDoc.data().name as string
-        await setDoc(userDoc(investDB, 'stockDict', code), { name: fullName })
+        await setDoc(session.doc(investDB, 'stockDict', code), { name: fullName })
         return fullName
     }, 600)
+    session.assertActive()
     if (name) dictCache[key] = name
     return name
 }

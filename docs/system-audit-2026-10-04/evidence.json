@@ -1,0 +1,86 @@
+{
+  "workDate": "2026-10-04",
+  "appVersion": "v26.10.4.4",
+  "productCodeChanged": false,
+  "syntheticDataOnly": true,
+  "reproductions": [
+    {
+      "id": "R01",
+      "cashAsOfSeptember30": 2000,
+      "historyDividendTotal": 3000,
+      "yearReviewAugustDividend": 2000,
+      "yearReviewSeptemberDividend": 1000,
+      "correctSeptemberReceivedDividend": 2000,
+      "explanation": "Forecast counted as income; confirmed dividend assigned to ex-date month instead of payment month."
+    },
+    {
+      "id": "R02",
+      "shared365DayPercent": 10.000000000012509,
+      "yearReview365_25DayPercent": 10.007181194549778,
+      "nearTotalLossSharedPercent": -99.95000000000002,
+      "nearTotalLossYearReview": null,
+      "yearlyDisplayedNearTotalLossPercent": 0
+    },
+    {
+      "id": "R03",
+      "historicalStartPrice": 100,
+      "historicalEndPrice": 120,
+      "currentlySavedPrice": 150,
+      "expectedNoFlowOneYearReturnPercent": 20,
+      "actualHistoricalRangePercent": 3.1341917502112006e-8,
+      "explanation": "Both historical endpoints valued at the current saved price 150; actual historical prices are not queried."
+    },
+    {
+      "id": "R04",
+      "realizedProfits": [
+        1000,
+        -500
+      ],
+      "displayedProfitCurveDrawdownPercent": 50,
+      "equityDrawdownOnSameClosedTradesPercent": 0.49504950495049505,
+      "initialLossCurveDrawdownPercent": 0,
+      "explanation": "Display discloses realized-PnL basis, but standard MDD label and percentage have a different denominator."
+    },
+    {
+      "id": "R05",
+      "initialUid": "A",
+      "switchedUid": "B",
+      "reads": 21,
+      "mixedTitleAndBody": "A-title-20|B-body-n20",
+      "downloadedDespiteAccountChange": true,
+      "explanation": "KMSExport and fetchKmsBodiesInBatches do not bind the initial session; a later batch follows the new account."
+    },
+    {
+      "id": "R06",
+      "holdingsAfterDistribution": 1100,
+      "marginSharesAfterDistribution": 1000,
+      "preflightAvailableShares": 1100,
+      "ledgerValidationAcceptedSell": true,
+      "holdingsAfterAcceptedSell": 1100,
+      "realizedRecordsAfterSell": 0,
+      "cashBeforeSell": -40000,
+      "cashAfterSell": 10000,
+      "remainingDebtAfterSell": 60000,
+      "explanation": "Position validation accepts 1100 shares; MarginLedger has only 1000 and silently ignores that sale, while cash includes it."
+    },
+    {
+      "id": "R07",
+      "taipeiQuoteTime": "10:00",
+      "rejectedAsStale": false,
+      "backgroundWindowAllows10AM": true,
+      "snapshotUsesAfterCloseBasis": "after-close-v1",
+      "acceptedIntradaySnapshotReturnPercent": 0,
+      "assumedTrueClosingNAV": 110000,
+      "correctReturnIfClosingNAV110000Percent": 10,
+      "explanation": "Quote source date and fetch date are checked, but closing provenance is not stored or verified before daily return calculations."
+    },
+    {
+      "id": "R08",
+      "year": 2025,
+      "confirmedDividendAmount": 2000,
+      "salesInYear": 0,
+      "annualPerformanceRows": 0,
+      "explanation": "Year list is derived only from realized sales, so a dividend-only year disappears from advanced annual statistics."
+    }
+  ]
+}

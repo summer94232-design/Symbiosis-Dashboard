@@ -1,0 +1,1751 @@
+{
+  "date": "2026-10-02",
+  "version": "v26.10.2.2",
+  "total": 168,
+  "totals": {
+    "V": 41,
+    "C": 85,
+    "E": 25,
+    "H": 17
+  },
+  "summary": [
+    {
+      "page": "儀表板",
+      "count": 14,
+      "V": 3,
+      "C": 6,
+      "E": 0,
+      "H": 5
+    },
+    {
+      "page": "買賣紀錄",
+      "count": 16,
+      "V": 0,
+      "C": 8,
+      "E": 7,
+      "H": 1
+    },
+    {
+      "page": "股票持倉",
+      "count": 4,
+      "V": 0,
+      "C": 1,
+      "E": 0,
+      "H": 3
+    },
+    {
+      "page": "資產趨勢",
+      "count": 8,
+      "V": 1,
+      "C": 6,
+      "E": 0,
+      "H": 1
+    },
+    {
+      "page": "歷史損益",
+      "count": 5,
+      "V": 1,
+      "C": 1,
+      "E": 0,
+      "H": 3
+    },
+    {
+      "page": "出入金",
+      "count": 1,
+      "V": 0,
+      "C": 0,
+      "E": 1,
+      "H": 0
+    },
+    {
+      "page": "除權息",
+      "count": 6,
+      "V": 1,
+      "C": 4,
+      "E": 1,
+      "H": 0
+    },
+    {
+      "page": "年度復盤",
+      "count": 11,
+      "V": 0,
+      "C": 9,
+      "E": 2,
+      "H": 0
+    },
+    {
+      "page": "融資管理",
+      "count": 7,
+      "V": 2,
+      "C": 3,
+      "E": 2,
+      "H": 0
+    },
+    {
+      "page": "組合水位試算",
+      "count": 9,
+      "V": 7,
+      "C": 1,
+      "E": 1,
+      "H": 0
+    },
+    {
+      "page": "產業地圖－股票／題材",
+      "count": 3,
+      "V": 0,
+      "C": 2,
+      "E": 1,
+      "H": 0
+    },
+    {
+      "page": "產業地圖－脈絡圖",
+      "count": 7,
+      "V": 0,
+      "C": 6,
+      "E": 1,
+      "H": 0
+    },
+    {
+      "page": "選股追蹤",
+      "count": 2,
+      "V": 0,
+      "C": 2,
+      "E": 0,
+      "H": 0
+    },
+    {
+      "page": "觀點追蹤",
+      "count": 4,
+      "V": 1,
+      "C": 3,
+      "E": 0,
+      "H": 0
+    },
+    {
+      "page": "賣出追蹤",
+      "count": 7,
+      "V": 2,
+      "C": 2,
+      "E": 3,
+      "H": 0
+    },
+    {
+      "page": "對帳核對",
+      "count": 13,
+      "V": 4,
+      "C": 8,
+      "E": 1,
+      "H": 0
+    },
+    {
+      "page": "設定與備份",
+      "count": 15,
+      "V": 11,
+      "C": 2,
+      "E": 2,
+      "H": 0
+    },
+    {
+      "page": "知識庫首頁／編輯器",
+      "count": 7,
+      "V": 0,
+      "C": 7,
+      "E": 0,
+      "H": 0
+    },
+    {
+      "page": "標籤管理",
+      "count": 2,
+      "V": 1,
+      "C": 1,
+      "E": 0,
+      "H": 0
+    },
+    {
+      "page": "知識庫匯出",
+      "count": 6,
+      "V": 5,
+      "C": 0,
+      "E": 1,
+      "H": 0
+    },
+    {
+      "page": "知識圖譜",
+      "count": 3,
+      "V": 0,
+      "C": 2,
+      "E": 1,
+      "H": 0
+    },
+    {
+      "page": "知識庫垃圾桶",
+      "count": 1,
+      "V": 1,
+      "C": 0,
+      "E": 0,
+      "H": 0
+    },
+    {
+      "page": "月曆／行程編輯",
+      "count": 13,
+      "V": 0,
+      "C": 10,
+      "E": 0,
+      "H": 3
+    },
+    {
+      "page": "法說會關注清單／設定",
+      "count": 2,
+      "V": 1,
+      "C": 1,
+      "E": 0,
+      "H": 0
+    },
+    {
+      "page": "每日重點",
+      "count": 0,
+      "V": 0,
+      "C": 0,
+      "E": 0,
+      "H": 0
+    },
+    {
+      "page": "任務管理",
+      "count": 0,
+      "V": 0,
+      "C": 0,
+      "E": 0,
+      "H": 0
+    },
+    {
+      "page": "登入／側欄",
+      "count": 0,
+      "V": 0,
+      "C": 0,
+      "E": 0,
+      "H": 0
+    },
+    {
+      "page": "共用同步狀態",
+      "count": 2,
+      "V": 0,
+      "C": 0,
+      "E": 1,
+      "H": 1
+    }
+  ],
+  "rows": [
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 842,
+      "type": "V",
+      "text": "股票市值 ÷ 自有資金；無現價時加註「（以成本估算）」",
+      "when": "倉位百分比",
+      "id": "N001"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 907,
+      "type": "V",
+      "text": "輸入目標水位，快速換算應買賣金額與股數",
+      "when": "倉位水位試算",
+      "id": "N002"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 962,
+      "type": "C",
+      "text": "目前 〔變動資料〕／—%，輸入目標水位開始試算",
+      "when": "尚未輸入目標水位",
+      "id": "N003"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 989,
+      "type": "C",
+      "text": "依整股估算，交易後約 〔變動資料〕%",
+      "when": "已輸入股票與有效試算資料",
+      "id": "N004"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 1004,
+      "type": "V",
+      "text": "未計入手續費、證交稅與成交滑價；融資帳戶以自有資金口徑計算。",
+      "when": "水位試算底部",
+      "id": "N005"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 1043,
+      "type": "C",
+      "text": "尚未更新現價，以買入成本估算／以最新現價計算",
+      "when": "有融資持股",
+      "id": "N006"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 1187,
+      "type": "C",
+      "text": "輸入買入價格與股數後自動計算",
+      "when": "展開加碼試算且尚未填完",
+      "id": "N007"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 1245,
+      "type": "C",
+      "text": "前往「持倉明細」設定每檔股票的族群",
+      "when": "尚未設定族群標籤",
+      "id": "N008"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 1289,
+      "type": "C",
+      "text": "有 〔變動資料〕 檔尚未設定族群，已歸入「未分類」",
+      "when": "有未設定族群的持股",
+      "id": "N009"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 772,
+      "type": "H",
+      "text": "依成交日計入買賣收付，含尚未交割款項；此數字與交割銀行當下可提領餘額不同。台股一般按 T+2 營業日交割，請以元大交割款查詢確認金額與日期；實際入金仍按轉帳日期記錄。",
+      "when": "帳面現金的說明圖示",
+      "id": "N010"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 802,
+      "type": "H",
+      "text": "市值 − 含買進手續費的持倉成本 − 預估賣出手續費與交易稅，不含股息。賣出手續費依元大庫存畫面採未折扣費率 0.1425%，零股最低 1 元、整股最低 20 元。股數、市值與損益均含出借股票；預估費稅不扣現金或資產市值。有券商沖抵明細時依指定買進批次，其餘採先進先出；部分賣出尾差留在剩餘成本，歷史資料差異另行核對；融資尚未扣預估利息，個股報酬率以自備款為分母。",
+      "when": "未實現損益的說明圖示",
+      "id": "N011"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 803,
+      "type": "H",
+      "text": "賣出價 − 賣出當時的先進先出批次成本（含配股攤薄），與歷史損益頁口徑一致；年度回顧的 XIRR 為另一種口徑，數字不同屬正常。",
+      "when": "已實現損益的說明圖示",
+      "id": "N012"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 686,
+      "type": "H",
+      "text": "更新股票現價、除權息預告、今日資產快照與法說會資料",
+      "when": "更新現價按鈕的 title",
+      "id": "N013"
+    },
+    {
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "line": 1402,
+      "type": "H",
+      "text": "融資損益率（以自備款 $〔金額〕為基準）／現股損益率",
+      "when": "目前持倉表的個股報酬率",
+      "id": "N014"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/pages/invest/Trades.tsx",
+      "line": 285,
+      "type": "C",
+      "text": "已使用手動修正金額；利息依「總額－本金」更新。",
+      "when": "手動修改融資償還金額",
+      "id": "N015"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/components/DayTradePanel.tsx",
+      "line": 102,
+      "type": "E",
+      "text": "已依同日、同股票的現股整張買賣自動沖抵，不必逐筆確認；剩餘股數才納入一般庫存成本。這是依成交資料推算的帳本結果，券商實際認列、標的資格與費稅仍須以對帳單為準。零股、鉅額、融資及已排除交易不自動配對。",
+      "when": "當沖待核對或開啟明細",
+      "id": "N016"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/components/TradeDayTradeExceptions.tsx",
+      "line": 39,
+      "type": "E",
+      "text": "一般交易會自動判定，不需設定。費稅維持原成交金額，僅例外情況需修正。",
+      "when": "現股表單的「例外處理」",
+      "id": "N017"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/components/TradeSettlementDetails.tsx",
+      "line": 49,
+      "type": "E",
+      "text": "費稅由系統估算，可依券商實際金額調整；收付金額會同步更新。",
+      "when": "費稅明細",
+      "id": "N018"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/components/TradeSettlementDetails.tsx",
+      "line": 15,
+      "type": "E",
+      "text": "手續費：零股6折，最低1元／6折自動計算",
+      "when": "費稅明細；依交易類型與股數切換",
+      "id": "N019"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/components/TradeSettlementDetails.tsx",
+      "line": 17,
+      "type": "E",
+      "text": "交易稅：債券ETF停徵／ETF千分之一／千分之三／買入免稅",
+      "when": "費稅明細；依交易類型與股數切換",
+      "id": "N020"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/components/TradeSettlementDetails.tsx",
+      "line": 18,
+      "type": "C",
+      "text": "收付金額：（自備款）／（已扣償還）",
+      "when": "融資買入／融資賣出",
+      "id": "N021"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/components/TradeDayTradeExceptions.tsx",
+      "line": 35,
+      "type": "E",
+      "text": "券商未認列當沖／不沖銷，使用一般庫存成本",
+      "when": "例外處理中的勾選說明",
+      "id": "N022"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/components/TradeDayTradeExceptions.tsx",
+      "line": 38,
+      "type": "E",
+      "text": "尚未登錄回補買入，先暫存（報表暫不完整）",
+      "when": "符合條件的現股賣出",
+      "id": "N023"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/lib/tradeList.ts",
+      "line": 40,
+      "type": "H",
+      "text": "依帳本配對沖抵〔股數〕股；其餘〔股數〕股按一般庫存計算。券商認列以對帳單為準。",
+      "when": "當沖徽章；全數沖抵時不顯示「其餘」段",
+      "id": "N024"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/pages/invest/Trades.tsx",
+      "line": 260,
+      "type": "C",
+      "text": "融資成數：（例：0.6 = 六成）",
+      "when": "融資買入或融資賣出欄位",
+      "id": "N025"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/pages/invest/Trades.tsx",
+      "line": 264,
+      "type": "C",
+      "text": "融資年利率：（可修改）",
+      "when": "融資買入或融資賣出欄位",
+      "id": "N026"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/pages/invest/Trades.tsx",
+      "line": 268,
+      "type": "C",
+      "text": "融資金額：（自動計算）",
+      "when": "融資買入或融資賣出欄位",
+      "id": "N027"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/pages/invest/Trades.tsx",
+      "line": 275,
+      "type": "C",
+      "text": "償還本金：（系統估算）",
+      "when": "融資買入或融資賣出欄位",
+      "id": "N028"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/pages/invest/Trades.tsx",
+      "line": 279,
+      "type": "C",
+      "text": "融資利息：（系統估算）",
+      "when": "融資買入或融資賣出欄位",
+      "id": "N029"
+    },
+    {
+      "page": "買賣紀錄",
+      "file": "src/pages/invest/Trades.tsx",
+      "line": 283,
+      "type": "C",
+      "text": "融資償還總額：（可依券商金額修正）",
+      "when": "融資買入或融資賣出欄位",
+      "id": "N030"
+    },
+    {
+      "page": "股票持倉",
+      "file": "src/pages/invest/Holdings.tsx",
+      "line": 265,
+      "type": "H",
+      "text": "市值 − 含買進手續費的持倉成本 − 預估賣出手續費與交易稅，不含股息。賣出手續費依元大庫存畫面採未折扣費率 0.1425%，零股最低 1 元、整股最低 20 元。股數、市值與損益均含出借股票；預估費稅不扣現金或資產市值。有券商沖抵明細時依指定買進批次，其餘採先進先出；部分賣出尾差留在剩餘成本，歷史資料差異另行核對；融資尚未扣預估利息，個股報酬率以自備款為分母。",
+      "when": "未實現損益的說明圖示",
+      "id": "N031"
+    },
+    {
+      "page": "股票持倉",
+      "file": "src/pages/invest/Holdings.tsx",
+      "line": 266,
+      "type": "H",
+      "text": "未實現損益 ÷ 持倉總成本（含融資借款的全額成本）。下方表格的個股報酬率對融資部位改以自備款為分母，兩者口徑不同。",
+      "when": "整體報酬率的說明圖示",
+      "id": "N032"
+    },
+    {
+      "page": "股票持倉",
+      "file": "src/pages/invest/Holdings.tsx",
+      "line": 283,
+      "type": "C",
+      "text": "請先在買賣紀錄新增買入交易",
+      "when": "目前沒有持倉",
+      "id": "N033"
+    },
+    {
+      "page": "股票持倉",
+      "file": "src/pages/invest/Holdings.tsx",
+      "line": 370,
+      "type": "H",
+      "text": "融資損益率（以自備款 $〔金額〕為基準）／現股損益率",
+      "when": "個股報酬率",
+      "id": "N034"
+    },
+    {
+      "page": "資產趨勢",
+      "file": "src/pages/invest/AssetTrend.tsx",
+      "line": 443,
+      "type": "V",
+      "text": "自動績效：預設收盤後入金",
+      "when": "自動績效卡片",
+      "id": "N035"
+    },
+    {
+      "page": "資產趨勢",
+      "file": "src/pages/invest/AssetTrend.tsx",
+      "line": 576,
+      "type": "C",
+      "text": "（以〔日期〕為共同起點・近似 TWR）",
+      "when": "報酬率模式且有共同比較起點",
+      "id": "N036"
+    },
+    {
+      "page": "資產趨勢",
+      "file": "src/pages/invest/AssetTrend.tsx",
+      "line": 595,
+      "type": "C",
+      "text": "請累積至少 2 筆資料",
+      "when": "快照不足",
+      "id": "N037"
+    },
+    {
+      "page": "資產趨勢",
+      "file": "src/pages/invest/AssetTrend.tsx",
+      "line": 670,
+      "type": "C",
+      "text": "比較起點：〔變動資料〕｜資料來源：Fugle MarketData｜近似 TWR",
+      "when": "比較加權指數時",
+      "id": "N038"
+    },
+    {
+      "page": "資產趨勢",
+      "file": "src/pages/invest/AssetTrend.tsx",
+      "line": 693,
+      "type": "C",
+      "text": "點「自動帶入」會從 Firebase 計算目前持倉市值與現金，並自動扣除融資借款",
+      "when": "手動新增／編輯快照",
+      "id": "N039"
+    },
+    {
+      "page": "資產趨勢",
+      "file": "src/pages/invest/AssetTrend.tsx",
+      "line": 98,
+      "type": "H",
+      "text": "資產報酬率減去加權指數報酬率",
+      "when": "報酬圖的自訂 tooltip 內說明",
+      "id": "N040"
+    },
+    {
+      "page": "資產趨勢",
+      "file": "src/pages/invest/AssetTrend.tsx",
+      "line": 710,
+      "type": "C",
+      "text": "總淨值：（已扣融資）",
+      "when": "快照表單欄位註記",
+      "id": "N041"
+    },
+    {
+      "page": "資產趨勢",
+      "file": "src/pages/invest/AssetTrend.tsx",
+      "line": 722,
+      "type": "C",
+      "text": "融資借款：（負債）",
+      "when": "快照表單欄位註記",
+      "id": "N042"
+    },
+    {
+      "page": "歷史損益",
+      "file": "src/pages/invest/HistoryPnL.tsx",
+      "line": 228,
+      "type": "V",
+      "text": "已實現損益與股利紀錄",
+      "when": "頁首",
+      "id": "N043"
+    },
+    {
+      "page": "歷史損益",
+      "file": "src/pages/invest/HistoryPnL.tsx",
+      "line": 504,
+      "type": "C",
+      "text": "含息總損益 = 已實現價差 + 篩選區間內的現金股利",
+      "when": "個股含息損益分頁",
+      "id": "N044"
+    },
+    {
+      "page": "歷史損益",
+      "file": "src/pages/invest/HistoryPnL.tsx",
+      "line": 291,
+      "type": "H",
+      "text": "賣出淨收入扣除成本：自動沖抵／人工指定的當沖使用配對買入成本，庫存優先依券商指定批次，其餘使用先進先出批次成本（含費稅、配股攤薄）。部分當沖會拆為兩筆損益列。與 XIRR、TWR 的報酬率口徑不同。",
+      "when": "已實現損益的說明圖示",
+      "id": "N045"
+    },
+    {
+      "page": "歷史損益",
+      "file": "src/pages/invest/HistoryPnL.tsx",
+      "line": 292,
+      "type": "H",
+      "text": "各筆已實現交易報酬率的簡單平均（每筆等權、非金額加權），大額與小額交易權重相同。",
+      "when": "平均報酬率的說明圖示",
+      "id": "N046"
+    },
+    {
+      "page": "歷史損益",
+      "file": "src/pages/invest/HistoryPnL.tsx",
+      "line": 506,
+      "type": "H",
+      "text": "價差優先採券商指定批次，其餘為先進先出批次成本口徑（與已實現損益表一致）。股利含仍持有部位領到的現金股利；含息報酬率分母為已實現成本基礎，從未賣出的存股部位無分母故顯示 —。股票股利不計入金額（已透過攤薄反映在均價）。",
+      "when": "含息總損益的說明圖示",
+      "id": "N047"
+    },
+    {
+      "page": "出入金",
+      "file": "src/pages/invest/CashFlow.tsx",
+      "line": 113,
+      "type": "E",
+      "text": "摘要：請填實際轉帳日；績效預設按收盤後入金計算。；展開：補交割款也不要倒填買股日。出金暫沿用日終假設；盤中出入金請使用進階估值核對。",
+      "when": "頁首摘要及其展開內容",
+      "id": "N048"
+    },
+    {
+      "page": "除權息",
+      "file": "src/pages/invest/Dividend.tsx",
+      "line": 174,
+      "type": "V",
+      "text": "更新現價時一起查詢。未來除權息按目前持股試算；已到除權息日則按前一日持股計算。確認實領後才入帳。",
+      "when": "自動預告卡片",
+      "id": "N049"
+    },
+    {
+      "page": "除權息",
+      "file": "src/pages/invest/Dividend.tsx",
+      "line": 213,
+      "type": "C",
+      "text": "請改成實際收到的金額／股數，並填實際入帳／配發日。日期尚未填妥前不會儲存或計入資產。",
+      "when": "從預告帶入表單",
+      "id": "N050"
+    },
+    {
+      "page": "除權息",
+      "file": "src/pages/invest/Dividend.tsx",
+      "line": 214,
+      "type": "E",
+      "text": "摘要：預告不計入資產；確認後請填入帳／配發日。；展開：未填入帳／配發日期的舊紀錄沿用原日期。",
+      "when": "表單底部摘要及其展開內容",
+      "id": "N051"
+    },
+    {
+      "page": "除權息",
+      "file": "src/pages/invest/Dividend.tsx",
+      "line": 179,
+      "type": "C",
+      "text": "含融資，請核對元大配發",
+      "when": "符合條件的自動預告列",
+      "id": "N052"
+    },
+    {
+      "page": "除權息",
+      "file": "src/components/DividendFeedStatus.tsx",
+      "line": 9,
+      "type": "C",
+      "text": "公告更新：上市／上櫃〔時間〕；預告尚未入帳。／點選更新現價會取得除權息公告；預告尚未入帳。",
+      "when": "預告更新狀態；依是否已有公告資料切換",
+      "id": "N053"
+    },
+    {
+      "page": "除權息",
+      "file": "src/pages/invest/Dividend.tsx",
+      "line": 195,
+      "type": "C",
+      "text": "除權息日期：（舊紀錄兼作入帳日）",
+      "when": "表單欄位註記",
+      "id": "N054"
+    },
+    {
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "line": 824,
+      "type": "C",
+      "text": "請先在「資產趨勢」頁面至少記錄 2 筆以上的資產快照才能計算績效",
+      "when": "投資績效資料不足",
+      "id": "N055"
+    },
+    {
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "line": 845,
+      "type": "E",
+      "text": "摘要：依帳戶淨值與出入金計算；歷史日期需有快照。；展開：採期初／期末帳戶淨值與期間出入金計算；買賣回收本金、現金股利已含於淨值，不另加總。歷史端點須有當日快照；今日無快照時使用完整有效報價計算。起始設定視為當日結束時的淨值。",
+      "when": "投資績效－自訂區間",
+      "id": "N056"
+    },
+    {
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "line": 893,
+      "type": "C",
+      "text": "報酬率為 XIRR，已排除出入金",
+      "when": "投資績效年度表",
+      "id": "N057"
+    },
+    {
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "line": 962,
+      "type": "C",
+      "text": "依全歷史已實現損益曲線計算，如有久遠舊紀錄可用下方自訂區間",
+      "when": "交易績效－最大回撤",
+      "id": "N058"
+    },
+    {
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "line": 985,
+      "type": "E",
+      "text": "摘要：只統計所選期間的交易。；展開：指定一段時間區間，年化報酬率（XIRR）、最大回撤（MDD）、勝率、平均持有天數都只採計這段區間內的交易， 可排除帳戶閒置前的久遠舊紀錄，看到真實想檢視那段期間的表現。",
+      "when": "交易績效－自訂區間",
+      "id": "N059"
+    },
+    {
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "line": 1006,
+      "type": "C",
+      "text": "點「計算」取得這段區間的統計",
+      "when": "自訂區間尚未計算",
+      "id": "N060"
+    },
+    {
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "line": 830,
+      "type": "C",
+      "text": "年化報酬（排除出入金）",
+      "when": "整體 XIRR",
+      "id": "N061"
+    },
+    {
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "line": 832,
+      "type": "C",
+      "text": "最近一筆快照",
+      "when": "最新總資產",
+      "id": "N062"
+    },
+    {
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "line": 833,
+      "type": "C",
+      "text": "第一筆快照",
+      "when": "起始資產",
+      "id": "N063"
+    },
+    {
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "line": 871,
+      "type": "C",
+      "text": "365 天年化",
+      "when": "自訂帳戶績效結果",
+      "id": "N064"
+    },
+    {
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "line": 947,
+      "type": "C",
+      "text": "保守估（以成本）：〔報酬率〕",
+      "when": "交易績效 XIRR",
+      "id": "N065"
+    },
+    {
+      "page": "融資管理",
+      "file": "src/pages/invest/MarginManager.tsx",
+      "line": 162,
+      "type": "V",
+      "text": "整戶融資維持率監控 · 加碼試算",
+      "when": "頁首",
+      "id": "N066"
+    },
+    {
+      "page": "融資管理",
+      "file": "src/pages/invest/MarginManager.tsx",
+      "line": 203,
+      "type": "C",
+      "text": "尚未更新現價，以買入成本估算／以最新現價計算",
+      "when": "目前融資部位",
+      "id": "N067"
+    },
+    {
+      "page": "融資管理",
+      "file": "src/pages/invest/MarginManager.tsx",
+      "line": 415,
+      "type": "C",
+      "text": "淡色：現況 〔變動資料〕% · 亮色：試算後",
+      "when": "有試算結果時的色彩圖例",
+      "id": "N068"
+    },
+    {
+      "page": "融資管理",
+      "file": "src/pages/invest/MarginManager.tsx",
+      "line": 420,
+      "type": "C",
+      "text": "輸入買入價格與股數後自動計算加碼後維持率",
+      "when": "尚未填完加碼試算",
+      "id": "N069"
+    },
+    {
+      "page": "融資管理",
+      "file": "src/pages/invest/MarginManager.tsx",
+      "line": 425,
+      "type": "V",
+      "text": "多筆累計試算，預設融資六成。",
+      "when": "多筆試算區",
+      "id": "N070"
+    },
+    {
+      "page": "融資管理",
+      "file": "src/pages/invest/MarginManager.tsx",
+      "line": 438,
+      "type": "E",
+      "text": "摘要：假設全部融資持股同幅下跌。；展開：查看維持率與追繳線的距離；單一個股暴跌的觸線點見上方明細的「單檔觸追繳」。",
+      "when": "整體下跌壓力測試",
+      "id": "N071"
+    },
+    {
+      "page": "融資管理",
+      "file": "src/components/MarginRulesPanel.tsx",
+      "line": 68,
+      "type": "E",
+      "text": "這裡只調整估算與風險提示，不會回頭改寫既有成交紀錄。",
+      "when": "融資規則設定",
+      "id": "N072"
+    },
+    {
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "line": 366,
+      "type": "V",
+      "text": "設定水位與占比，試算調整交易。",
+      "when": "頁首",
+      "id": "N073"
+    },
+    {
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "line": 401,
+      "type": "V",
+      "text": "先決定股票部位，再選擇這次允許的調整方式。",
+      "when": "水位與交易條件",
+      "id": "N074"
+    },
+    {
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "line": 427,
+      "type": "V",
+      "text": "可加入目前沒有持有、但想納入配置的股票。",
+      "when": "加入規劃標的",
+      "id": "N075"
+    },
+    {
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "line": 465,
+      "type": "V",
+      "text": "以股票部位為基準，合計 100%。",
+      "when": "個股配置",
+      "id": "N076"
+    },
+    {
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "line": 513,
+      "type": "V",
+      "text": "設定集中度、現金與槓桿限制。",
+      "when": "風險檢查",
+      "id": "N077"
+    },
+    {
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "line": 543,
+      "type": "E",
+      "text": "摘要：估算未含滑價；方案限此帳號／裝置，未納入 JSON 備份。；展開：試算以目前資料與參考價估算，可選擇整股或整張交易；費稅採系統共用費率，尚未計入滑價與實際成交限制，執行前請再核對券商資料。儲存方案僅供目前裝置的此登入帳號使用，不包含於系統 JSON 備份。",
+      "when": "頁面底部摘要及完整估算限制",
+      "id": "N078"
+    },
+    {
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "line": 383,
+      "type": "V",
+      "text": "持股市值＋現金－融資負債",
+      "when": "自有資金 KPI",
+      "id": "N079"
+    },
+    {
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "line": 489,
+      "type": "C",
+      "text": "已限制可賣股數",
+      "when": "建議賣出超過持股時的結果註記",
+      "id": "N080"
+    },
+    {
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "line": 406,
+      "type": "V",
+      "text": "目標股票水位：（占自有資金）",
+      "when": "欄位口徑註記",
+      "id": "N081"
+    },
+    {
+      "page": "產業地圖－股票／題材",
+      "file": "src/pages/invest/IndustryMap.tsx",
+      "line": 284,
+      "type": "E",
+      "text": "摘要：關係會同步至脈絡圖。；展開：在此加入的上下游會直接寫入脈絡圖；詳細的供應內容、或既有關係的刪除，請到「脈絡圖」分頁管理。",
+      "when": "新增／編輯股票表單",
+      "id": "N082"
+    },
+    {
+      "page": "產業地圖－股票／題材",
+      "file": "src/pages/invest/IndustryMap.tsx",
+      "line": 412,
+      "type": "C",
+      "text": "搜尋一支股票，查看與哪些股票有共同題材",
+      "when": "關聯股票搜尋初始畫面",
+      "id": "N083"
+    },
+    {
+      "page": "產業地圖－股票／題材",
+      "file": "src/pages/invest/IndustryMap.tsx",
+      "line": 706,
+      "type": "C",
+      "text": "尚未建立任何題材，請先新增股票並標記題材",
+      "when": "尚未建立題材",
+      "id": "N084"
+    },
+    {
+      "page": "產業地圖－脈絡圖",
+      "file": "src/pages/invest/IndustryChainView.tsx",
+      "line": 258,
+      "type": "C",
+      "text": "可連續加入多筆",
+      "when": "新增上下游關係",
+      "id": "N085"
+    },
+    {
+      "page": "產業地圖－脈絡圖",
+      "file": "src/pages/invest/IndustryChainView.tsx",
+      "line": 324,
+      "type": "C",
+      "text": "請先到「股票視圖」新增股票。脈絡圖會以你的股票為節點，標記彼此的上下游關係。",
+      "when": "尚無可顯示的股票",
+      "id": "N086"
+    },
+    {
+      "page": "產業地圖－脈絡圖",
+      "file": "src/pages/invest/IndustryChainView.tsx",
+      "line": 333,
+      "type": "E",
+      "text": "摘要：由左至右：上游 → 下游；點股票追蹤關係。；展開：以你追蹤的股票為節點，由左到右呈現供應鏈：左邊是上游、右邊是下游，箭頭由供應商指向客戶。點任一節點即可重新聚焦、沿鏈往下追。關係類型可自由填寫，不限產業。 點連線可刪除該關係；目前顯示 〔變動資料〕 層，可在上方調整。",
+      "when": "頁首操作摘要及完整說明",
+      "id": "N087"
+    },
+    {
+      "page": "產業地圖－脈絡圖",
+      "file": "src/pages/invest/IndustryChainView.tsx",
+      "line": 373,
+      "type": "C",
+      "text": "選擇一個標的後，這裡會顯示它的上下游脈絡。",
+      "when": "尚未選擇標的",
+      "id": "N088"
+    },
+    {
+      "page": "產業地圖－脈絡圖",
+      "file": "src/pages/invest/IndustryChainView.tsx",
+      "line": 432,
+      "type": "C",
+      "text": "← 上游（供應商）焦點下游（客戶）→",
+      "when": "有圖表時的方向圖例",
+      "id": "N089"
+    },
+    {
+      "page": "產業地圖－脈絡圖",
+      "file": "src/pages/invest/IndustryChainView.tsx",
+      "line": 489,
+      "type": "C",
+      "text": "上游供應商：（供應給此檔）",
+      "when": "上下游關係清單",
+      "id": "N090"
+    },
+    {
+      "page": "產業地圖－脈絡圖",
+      "file": "src/pages/invest/IndustryChainView.tsx",
+      "line": 500,
+      "type": "C",
+      "text": "下游客戶：（此檔供應給）",
+      "when": "上下游關係清單",
+      "id": "N091"
+    },
+    {
+      "page": "選股追蹤",
+      "file": "src/pages/invest/Watchlist.tsx",
+      "line": 597,
+      "type": "C",
+      "text": "歷史資料更新中；遇到限流會排隊等待，請稍候。",
+      "when": "正在讀取歷史 MA／線圖；非單純載入狀態，而是限流行為說明",
+      "id": "N092"
+    },
+    {
+      "page": "選股追蹤",
+      "file": "src/pages/invest/Watchlist.tsx",
+      "line": 750,
+      "type": "C",
+      "text": "點擊「新增自選股」開始追蹤",
+      "when": "尚無自選股",
+      "id": "N093"
+    },
+    {
+      "page": "觀點追蹤",
+      "file": "src/pages/invest/SentimentTracker.tsx",
+      "line": 299,
+      "type": "V",
+      "text": "記錄每次對股票的看多/看空，追蹤波段判斷勝率",
+      "when": "頁首",
+      "id": "N094"
+    },
+    {
+      "page": "觀點追蹤",
+      "file": "src/pages/invest/SentimentTracker.tsx",
+      "line": 339,
+      "type": "C",
+      "text": "各檔勝率加權平均",
+      "when": "各檔平均勝率",
+      "id": "N095"
+    },
+    {
+      "page": "觀點追蹤",
+      "file": "src/pages/invest/SentimentTracker.tsx",
+      "line": 442,
+      "type": "C",
+      "text": "點上方「新增觀點」開始記錄你的判斷",
+      "when": "尚無觀點",
+      "id": "N096"
+    },
+    {
+      "page": "觀點追蹤",
+      "file": "src/pages/invest/SentimentTracker.tsx",
+      "line": 327,
+      "type": "C",
+      "text": "所有記錄加總",
+      "when": "整體勝率",
+      "id": "N097"
+    },
+    {
+      "page": "賣出追蹤",
+      "file": "src/pages/invest/SoldTracker.tsx",
+      "line": 283,
+      "type": "E",
+      "text": "觀察天數：（賣出後幾日內）",
+      "when": "通知設定中的欄位",
+      "id": "N098"
+    },
+    {
+      "page": "賣出追蹤",
+      "file": "src/pages/invest/SoldTracker.tsx",
+      "line": 302,
+      "type": "E",
+      "text": "跌幅警示閾值：（0 = 不偵測）",
+      "when": "通知設定中的欄位",
+      "id": "N099"
+    },
+    {
+      "page": "賣出追蹤",
+      "file": "src/pages/invest/SoldTracker.tsx",
+      "line": 319,
+      "type": "E",
+      "text": "每次點擊「更新現價」後自動重新掃描。手動關閉的通知在下次刷新前不會再出現。",
+      "when": "展開波動通知設定",
+      "id": "N100"
+    },
+    {
+      "page": "賣出追蹤",
+      "file": "src/pages/invest/SoldTracker.tsx",
+      "line": 416,
+      "type": "V",
+      "text": "✓ 賣對了 現價跌超 〔變動資料〕% — 差不多 現價在 ±〔變動資料〕% 之間 ✗ 賣早了 現價漲超 〔變動資料〕%",
+      "when": "決策判斷閾值圖例",
+      "id": "N101"
+    },
+    {
+      "page": "賣出追蹤",
+      "file": "src/pages/invest/SoldTracker.tsx",
+      "line": 774,
+      "type": "V",
+      "text": "觀察賣出後的股票後續走勢，反省操作決策",
+      "when": "頁首",
+      "id": "N102"
+    },
+    {
+      "page": "賣出追蹤",
+      "file": "src/pages/invest/SoldTracker.tsx",
+      "line": 858,
+      "type": "C",
+      "text": "至買賣紀錄頁面新增賣出交易後，此處將自動顯示",
+      "when": "尚無賣出紀錄",
+      "id": "N103"
+    },
+    {
+      "page": "賣出追蹤",
+      "file": "src/pages/invest/SoldTracker.tsx",
+      "line": 873,
+      "type": "C",
+      "text": "點擊每列可展開 K 線走勢圖",
+      "when": "有賣出紀錄",
+      "id": "N104"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 364,
+      "type": "V",
+      "text": "月中截圖暫核對，月底 PDF 完成月結；不修改交易。",
+      "when": "頁首",
+      "id": "N105"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 384,
+      "type": "C",
+      "text": "可選擇多張 JPG、PNG 截圖，或一份 PDF",
+      "when": "選檔區尚未選檔",
+      "id": "N106"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 423,
+      "type": "V",
+      "text": "檔案在本機解析，不上傳。",
+      "when": "檔案處理說明",
+      "id": "N107"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 430,
+      "type": "C",
+      "text": "只有解析異常時才需要查看或修改。",
+      "when": "已有原始辨識文字",
+      "id": "N108"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 441,
+      "type": "C",
+      "text": "所有必要欄位皆已完整辨識，不需要逐筆檢查。",
+      "when": "所有必要欄位均辨識完整",
+      "id": "N109"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 450,
+      "type": "C",
+      "text": "截圖可能只是部分頁面，因此「截圖未涵蓋」只是提醒，不會判定為系統錯誤。",
+      "when": "月中截圖核對結果",
+      "id": "N110"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 486,
+      "type": "E",
+      "text": "摘要：以交割日口徑核對 CMA。；展開：系統仍以成交日計算帳面現金；此處只把月底尚未交割的款項加回／扣回，用相同交割日口徑與 CMA 比較。",
+      "when": "CMA 有差異時的口徑說明",
+      "id": "N111"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 490,
+      "type": "C",
+      "text": "比較集保、信用及已驗證的出借庫存。已辨識出借〔股數〕股。",
+      "when": "完整月結的庫存核對",
+      "id": "N112"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 498,
+      "type": "C",
+      "text": "以股票與金額配對；系統日期與 CMA 入帳日期可以不同。",
+      "when": "完整月結的現金股利核對",
+      "id": "N113"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 506,
+      "type": "C",
+      "text": "只提供檢查方向，不會自動修改任何帳務資料。",
+      "when": "完整月結的健檢方向",
+      "id": "N114"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 413,
+      "type": "C",
+      "text": "只在目前分頁的記憶體中記住（重新整理或關閉後清除）",
+      "when": "已選 PDF 時的密碼記憶選項說明",
+      "id": "N115"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 89,
+      "type": "V",
+      "text": "暫時核對",
+      "when": "月中截圖模式按鈕副文字",
+      "id": "N116"
+    },
+    {
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "line": 90,
+      "type": "V",
+      "text": "正式月結",
+      "when": "PDF 總對帳單模式按鈕副文字",
+      "id": "N117"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 900,
+      "type": "V",
+      "text": "匯入資料、匯出報表與完整備份",
+      "when": "頁首",
+      "id": "N118"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 920,
+      "type": "V",
+      "text": "顯示在側邊欄與帳號切換選單；每個登入帳號會保存自己的名稱。",
+      "when": "顯示名稱",
+      "id": "N119"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 943,
+      "type": "V",
+      "text": "需含 「股票代號」 和 「股票名稱」 欄位。匯入後輸入代號自動帶入名稱。",
+      "when": "股票字典匯入",
+      "id": "N120"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 966,
+      "type": "V",
+      "text": "必填：日期、類型（買入/賣出）、代號、名稱、價格、股數 選填：手續費、交易稅、收付金額、備註",
+      "when": "買賣 CSV 格式",
+      "id": "N121"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 992,
+      "type": "V",
+      "text": "必填：日期、代號 選填：名稱、現金股利、股票股利、備註",
+      "when": "除權息 CSV 格式",
+      "id": "N122"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 1017,
+      "type": "V",
+      "text": "必填：日期、類型（入金/出金）、金額 選填：備註",
+      "when": "出入金 CSV 格式",
+      "id": "N123"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 1045,
+      "type": "V",
+      "text": "報表／XLSX 依日期，留空不限；JSON 固定全量",
+      "when": "匯出日期區間",
+      "id": "N124"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 1076,
+      "type": "V",
+      "text": "匯出交易、出入金、股利與股票字典。",
+      "when": "XLSX 備份",
+      "id": "N125"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 1079,
+      "type": "E",
+      "text": "含文件 ID，方便核查資料；股票字典不受日期區間限制。",
+      "when": "XLSX 匯出範圍",
+      "id": "N126"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 1092,
+      "type": "V",
+      "text": "備份全系統資料，不受日期限制；附件檔案另存雲端，未包含於 JSON。",
+      "when": "JSON 完整備份",
+      "id": "N127"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 1095,
+      "type": "E",
+      "text": "摘要：備份範圍與還原方式；展開：包含投資紀錄、全部設定、觀點／賣出追蹤、選股、產業地圖、行事曆、任務，以及 KMS 筆記正文、附件引用、回收桶與標籤排序。 還原以文件 ID 覆蓋，可重複執行、不產生重複資料；JSON 僅保留圖片與附件的雲端引用。還原前會列出差異供確認。",
+      "when": "備份範圍與還原方式",
+      "id": "N128"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 1142,
+      "type": "V",
+      "text": "各類紀錄可單獨匯出，中文字符完整顯示。",
+      "when": "分項匯出",
+      "id": "N129"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "line": 1159,
+      "type": "V",
+      "text": "匯出資產快照；JSON 備份亦已包含。",
+      "when": "資產趨勢匯出",
+      "id": "N130"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/components/RestoreDifferencePreview.tsx",
+      "line": 41,
+      "type": "C",
+      "text": "紀錄合計包含備份外保留的資料；不代表目前餘額、損益或實際入帳股利。快照僅比較最新一筆。",
+      "when": "JSON 還原差異預覽有帳務金額",
+      "id": "N131"
+    },
+    {
+      "page": "設定與備份",
+      "file": "src/components/RestoreDifferencePreview.tsx",
+      "line": 43,
+      "type": "C",
+      "text": "覆蓋會取代同 ID 的完整內容；相同文件仍會寫入，備份外資料保留。確認時會重新比對雲端資料。",
+      "when": "JSON 還原差異預覽",
+      "id": "N132"
+    },
+    {
+      "page": "知識庫首頁／編輯器",
+      "file": "src/pages/kms/KMSHome.tsx",
+      "line": 963,
+      "type": "C",
+      "text": "目前載入的資料有 〔變動資料〕 則舊筆記待最佳化：拆分摘要／正文，舊原圖會搬到私有路徑並補產生縮圖。",
+      "when": "有舊筆記待最佳化",
+      "id": "N133"
+    },
+    {
+      "page": "知識庫首頁／編輯器",
+      "file": "src/pages/kms/KMSHome.tsx",
+      "line": 987,
+      "type": "C",
+      "text": "JSON — 陣列格式，每筆含： title（必填）、 content、 type（note/url/image/file）、 url、 hashtags（字串陣列）",
+      "when": "批次匯入視窗",
+      "id": "N134"
+    },
+    {
+      "page": "知識庫首頁／編輯器",
+      "file": "src/pages/kms/KMSHome.tsx",
+      "line": 995,
+      "type": "C",
+      "text": "CSV — 標題行： title, content, type, url, hashtags（hashtags 用分號分隔）",
+      "when": "批次匯入視窗",
+      "id": "N135"
+    },
+    {
+      "page": "知識庫首頁／編輯器",
+      "file": "src/pages/kms/KMSHome.tsx",
+      "line": 999,
+      "type": "C",
+      "text": "※ 重複標題的筆記不會被覆蓋，會新增一筆",
+      "when": "批次匯入視窗",
+      "id": "N136"
+    },
+    {
+      "page": "知識庫首頁／編輯器",
+      "file": "src/pages/kms/KMSHome.tsx",
+      "line": 1160,
+      "type": "C",
+      "text": "支援母子標籤，用 / 分隔，例如：投資/台股",
+      "when": "筆記新增／編輯",
+      "id": "N137"
+    },
+    {
+      "page": "知識庫首頁／編輯器",
+      "file": "src/components/kms/RichTextEditor.tsx",
+      "line": 249,
+      "type": "C",
+      "text": "圖片會先壓縮再上傳；可拖曳圖片、貼上截圖，或使用工具列插入。",
+      "when": "富文字編輯器",
+      "id": "N138"
+    },
+    {
+      "page": "知識庫首頁／編輯器",
+      "file": "src/pages/kms/KMSHome.tsx",
+      "line": 1352,
+      "type": "C",
+      "text": "還沒有筆記，點上方「新增」開始記錄",
+      "when": "標籤下尚無筆記",
+      "id": "N139"
+    },
+    {
+      "page": "標籤管理",
+      "file": "src/pages/kms/KMSTags.tsx",
+      "line": 204,
+      "type": "V",
+      "text": "可拖曳或點擊 ↑↓ 自訂排序",
+      "when": "頁首",
+      "id": "N140"
+    },
+    {
+      "page": "標籤管理",
+      "file": "src/pages/kms/KMSTags.tsx",
+      "line": 220,
+      "type": "C",
+      "text": "在知識庫新增筆記並加上標籤後會顯示在這裡",
+      "when": "尚無標籤",
+      "id": "N141"
+    },
+    {
+      "page": "知識庫匯出",
+      "file": "src/pages/kms/KMSExport.tsx",
+      "line": 256,
+      "type": "V",
+      "text": "選擇要匯出的標籤（可多選，子標籤會自動包含）：",
+      "when": "標籤篩選",
+      "id": "N142"
+    },
+    {
+      "page": "知識庫匯出",
+      "file": "src/pages/kms/KMSExport.tsx",
+      "line": 225,
+      "type": "V",
+      "text": "匯出筆記，供 NotebookLM 分析。",
+      "when": "頁首",
+      "id": "N143"
+    },
+    {
+      "page": "知識庫匯出",
+      "file": "src/pages/kms/KMSExport.tsx",
+      "line": 278,
+      "type": "V",
+      "text": "全部筆記合併一檔",
+      "when": "各匯出格式選項的副文字",
+      "id": "N144"
+    },
+    {
+      "page": "知識庫匯出",
+      "file": "src/pages/kms/KMSExport.tsx",
+      "line": 279,
+      "type": "V",
+      "text": "每個標籤各一檔",
+      "when": "各匯出格式選項的副文字",
+      "id": "N145"
+    },
+    {
+      "page": "知識庫匯出",
+      "file": "src/pages/kms/KMSExport.tsx",
+      "line": 280,
+      "type": "V",
+      "text": "保留標題與標籤結構",
+      "when": "各匯出格式選項的副文字",
+      "id": "N146"
+    },
+    {
+      "page": "知識庫匯出",
+      "file": "src/pages/kms/KMSExport.tsx",
+      "line": 331,
+      "type": "E",
+      "text": "NotebookLM 上傳方式：1. 前往 notebooklm.google.com；2. 建立新 Notebook 或開啟既有的；3. 點「新增來源」→「上傳檔案」；4. 選擇剛才匯出的 TXT 或 MD 檔案；5. 即可用 AI 對你的筆記內容進行問答！",
+      "when": "五步教學為同一個收合區塊，算 1 處",
+      "id": "N147"
+    },
+    {
+      "page": "知識圖譜",
+      "file": "src/pages/kms/KMSGraph.tsx",
+      "line": 563,
+      "type": "E",
+      "text": "摘要：點標籤展開，點筆記查看；節點可拖曳。；展開：點擊標籤展開 · 子標籤再點一次顯示筆記 · 可拖曳節點 · 取消根標籤只隱藏根節點",
+      "when": "頁首操作摘要及完整說明",
+      "id": "N148"
+    },
+    {
+      "page": "知識圖譜",
+      "file": "src/pages/kms/KMSGraph.tsx",
+      "line": 669,
+      "type": "C",
+      "text": "從左側點擊標籤加入圖譜",
+      "when": "圖譜為空",
+      "id": "N149"
+    },
+    {
+      "page": "知識圖譜",
+      "file": "src/pages/kms/KMSGraph.tsx",
+      "line": 677,
+      "type": "C",
+      "text": "頂層標籤（點擊移除根節點） 子標籤（點擊展開筆記） 子標籤（浮動中，根標籤已隱藏） 筆記（點擊查看）",
+      "when": "有圖譜時的操作圖例",
+      "id": "N150"
+    },
+    {
+      "page": "知識庫垃圾桶",
+      "file": "src/pages/kms/KMSTrash.tsx",
+      "line": 156,
+      "type": "V",
+      "text": "30 天後自動永久刪除",
+      "when": "頁首",
+      "id": "N151"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/pages/calendar/CalendarHome.tsx",
+      "line": 712,
+      "type": "C",
+      "text": "目前表單只編輯本次行程。",
+      "when": "編輯 Google 重複系列的一次行程",
+      "id": "N152"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/pages/calendar/CalendarHome.tsx",
+      "line": 731,
+      "type": "C",
+      "text": "支援 .xlsx / .xls 格式，必要欄位（順序不限）： 股票代號、股票名稱、法說會日期 日期格式：YYYY-MM-DD、YYYY/MM/DD 或 Excel 日期格式 皆可 ※ 匯入的日期會與 Firestore 既有資料合併（不覆蓋）",
+      "when": "匯入法說會 Excel 視窗",
+      "id": "N153"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/pages/calendar/CalendarHome.tsx",
+      "line": 783,
+      "type": "C",
+      "text": "⚠️ 法說會請在標題填入「股票代號 公司名稱」，如：2330 台積電",
+      "when": "新增法說會",
+      "id": "N154"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/pages/calendar/CalendarHome.tsx",
+      "line": 89,
+      "type": "C",
+      "text": "資格試算〔股數〕股；現金約〔金額〕元（未扣費）／待公告／（外幣待確認）；配股約〔股數〕股。尚未入帳，實領請至除權息頁確認。",
+      "when": "系統產生的除權息預告行程描述，非個人輸入備註",
+      "id": "N155"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/pages/calendar/CalendarHome.tsx",
+      "line": 462,
+      "type": "H",
+      "text": "從 Yahoo 股市台股行事曆抓取全市場法說會並更新",
+      "when": "對應按鈕的 title",
+      "id": "N156"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/pages/calendar/CalendarHome.tsx",
+      "line": 466,
+      "type": "H",
+      "text": "從 xlsx 手動匯入法說會日期",
+      "when": "對應按鈕的 title",
+      "id": "N157"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/pages/calendar/CalendarHome.tsx",
+      "line": 471,
+      "type": "H",
+      "text": "把未來半年的行事曆事件同步到 Google 行事曆",
+      "when": "對應按鈕的 title",
+      "id": "N158"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/components/GoogleSeriesEditor.tsx",
+      "line": 50,
+      "type": "C",
+      "text": "修改系列的頻率與結束條件。系列原始起始日期、時間、時區及其他內容保持原值；每月／每年的日期由原始起始日期決定。",
+      "when": "編輯整組 Google 重複系列",
+      "id": "N159"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/components/GoogleSeriesEditor.tsx",
+      "line": 56,
+      "type": "C",
+      "text": "星期：未勾選時沿用系列起始日",
+      "when": "每週重複系列",
+      "id": "N160"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/components/GoogleSeriesEditor.tsx",
+      "line": 59,
+      "type": "C",
+      "text": "此模式保留完整規則。每行一條 RRULE、RDATE 或 EXDATE；UNTIL 與 COUNT 不可同時使用。日期型全天事件使用 YYYYMMDD；有時間事件的 UNTIL 使用 UTC（YYYYMMDDTHHMMSSZ）。",
+      "when": "重複系列進階模式",
+      "id": "N161"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/components/GoogleSeriesEditor.tsx",
+      "line": 61,
+      "type": "C",
+      "text": "即將修改「〔變動資料〕」整個系列，包含過去及未來的正常次數；單次例外依 Google 的系列規則處理。請確認上方規則後套用。",
+      "when": "修改整組系列前的說明",
+      "id": "N162"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/components/CalendarTimingFields.tsx",
+      "line": 7,
+      "type": "C",
+      "text": "行程時間：（台北時間）",
+      "when": "新增／編輯個人行程；同一共用欄位只算一次",
+      "id": "N163"
+    },
+    {
+      "page": "月曆／行程編輯",
+      "file": "src/components/CalendarTimingFields.tsx",
+      "line": 10,
+      "type": "C",
+      "text": "結束日期：（全天行程含當天）",
+      "when": "新增／編輯個人行程",
+      "id": "N164"
+    },
+    {
+      "page": "法說會關注清單／設定",
+      "file": "src/pages/calendar/CalendarSettings.tsx",
+      "line": 145,
+      "type": "V",
+      "text": "設定要追蹤法說會的股票，行事曆會自動顯示相關法說會",
+      "when": "頁首",
+      "id": "N165"
+    },
+    {
+      "page": "法說會關注清單／設定",
+      "file": "src/pages/calendar/CalendarSettings.tsx",
+      "line": 170,
+      "type": "C",
+      "text": "連結 Google 帳號後，可以把未來半年的行事曆事件（法說會、除權息、個人行程等）手動同步到你的 Google 行事曆。",
+      "when": "尚未連結 Google",
+      "id": "N166"
+    },
+    {
+      "page": "共用同步狀態",
+      "file": "src/InvestSyncContext.tsx",
+      "line": 164,
+      "type": "E",
+      "text": "最後同步：〔變動資料〕（台灣時間）",
+      "when": "投資頁面右上角",
+      "id": "N167"
+    },
+    {
+      "page": "共用同步狀態",
+      "file": "src/InvestSyncContext.tsx",
+      "line": 163,
+      "type": "H",
+      "text": "最近更新：〔資料集合〕／投資資料同步狀態",
+      "when": "同步狀態的 title",
+      "id": "N168"
+    }
+  ]
+}

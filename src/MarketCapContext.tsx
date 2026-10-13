@@ -1,3 +1,4 @@
+import { MarketCapContext, type SharesMap } from './lib/marketCapContext'
 /**
  * MarketCapContext.tsx
  * 全域已發行股數管理 Context — v1.0
@@ -12,30 +13,10 @@
  *   共用同一份 state 即可（不同頁面切換不會重複打 API）
  */
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { useState, useCallback, type ReactNode } from 'react'
 import { getSharesOutstanding } from './lib/marketCap'
 
 // ── Types ──────────────────────────────────────────────────────
-
-export type SharesMap = Record<string, number | null>
-
-interface MarketCapContextValue {
-    /** 所有已知股票的已發行股數，null = 查無資料 */
-    shares: SharesMap
-    /** 最後更新時間（zh-TW 字串），空字串表示尚未更新 */
-    sharesUpdatedAt: string
-    /** 是否正在拉取股數資料 */
-    sharesLoading: boolean
-    /**
-     * 更新指定代號的已發行股數（僅台股有資料，其他市場代號會回傳 null）。
-     * @returns 本次取得的股數（供呼叫端同步使用，不需等 state 更新）
-     */
-    updateShares: (codes: string[]) => Promise<SharesMap>
-}
-
-// ── Context ────────────────────────────────────────────────────
-
-const MarketCapContext = createContext<MarketCapContextValue | null>(null)
 
 // ── Provider ───────────────────────────────────────────────────
 
@@ -43,10 +24,12 @@ export function MarketCapProvider({ children }: { children: ReactNode }) {
     const [shares, setShares] = useState<SharesMap>({})
     const [sharesUpdatedAt, setSharesUpdatedAt] = useState('')
     const [sharesLoading, setSharesLoading] = useState(false)
+    const [sharesError, setSharesError] = useState('')
 
     const updateShares = useCallback(async (codes: string[]): Promise<SharesMap> => {
         if (codes.length === 0) return {}
         setSharesLoading(true)
+        setSharesError('')
 
         let result: SharesMap = {}
         try {
@@ -58,6 +41,7 @@ export function MarketCapProvider({ children }: { children: ReactNode }) {
             setSharesUpdatedAt(now)
         } catch (err) {
             console.error('[MarketCapContext] updateShares error:', err)
+            setSharesError(err instanceof Error ? err.message : '股本資料更新失敗')
         }
 
         setSharesLoading(false)
@@ -65,16 +49,8 @@ export function MarketCapProvider({ children }: { children: ReactNode }) {
     }, [])
 
     return (
-        <MarketCapContext.Provider value={{ shares, sharesUpdatedAt, sharesLoading, updateShares }}>
+        <MarketCapContext.Provider value={{ shares, sharesUpdatedAt, sharesLoading, sharesError, updateShares }}>
             {children}
         </MarketCapContext.Provider>
     )
-}
-
-// ── Hook ───────────────────────────────────────────────────────
-
-export function useMarketCap(): MarketCapContextValue {
-    const ctx = useContext(MarketCapContext)
-    if (!ctx) throw new Error('useMarketCap must be used within <MarketCapProvider>')
-    return ctx
 }

@@ -1,0 +1,722 @@
+[
+  {
+    "page": "dashboard",
+    "size": "desktop",
+    "contentLength": 679,
+    "emptySections": 0,
+    "mainScrollWidth": 1274,
+    "mainWidth": 1274,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "holdings",
+    "size": "desktop",
+    "contentLength": 233,
+    "emptySections": 0,
+    "mainScrollWidth": 1280,
+    "mainWidth": 1280,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "history",
+    "size": "desktop",
+    "contentLength": 125,
+    "emptySections": 0,
+    "mainScrollWidth": 1280,
+    "mainWidth": 1280,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "trades",
+    "size": "desktop",
+    "contentLength": 163,
+    "emptySections": 0,
+    "mainScrollWidth": 1280,
+    "mainWidth": 1280,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "settings",
+    "size": "desktop",
+    "contentLength": 621,
+    "emptySections": 0,
+    "mainScrollWidth": 1274,
+    "mainWidth": 1274,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "review",
+    "size": "desktop",
+    "contentLength": 489,
+    "emptySections": 0,
+    "mainScrollWidth": 1274,
+    "mainWidth": 1274,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "planner",
+    "size": "desktop",
+    "contentLength": 734,
+    "emptySections": 0,
+    "mainScrollWidth": 1274,
+    "mainWidth": 1274,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "industry",
+    "size": "desktop",
+    "contentLength": 62,
+    "emptySections": 0,
+    "mainScrollWidth": 1280,
+    "mainWidth": 1280,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "graph",
+    "size": "desktop",
+    "contentLength": 45,
+    "emptySections": 0,
+    "mainScrollWidth": 1280,
+    "mainWidth": 1280,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "broker",
+    "size": "desktop",
+    "contentLength": 109,
+    "emptySections": 0,
+    "mainScrollWidth": 1280,
+    "mainWidth": 1280,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "margin",
+    "size": "desktop",
+    "contentLength": 561,
+    "emptySections": 0,
+    "mainScrollWidth": 1274,
+    "mainWidth": 1274,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "dividend",
+    "size": "desktop",
+    "contentLength": 273,
+    "emptySections": 0,
+    "mainScrollWidth": 1274,
+    "mainWidth": 1274,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "trend",
+    "size": "desktop",
+    "contentLength": 270,
+    "emptySections": 0,
+    "mainScrollWidth": 1274,
+    "mainWidth": 1274,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "sentiment",
+    "size": "desktop",
+    "contentLength": 53,
+    "emptySections": 0,
+    "mainScrollWidth": 1280,
+    "mainWidth": 1280,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "sold",
+    "size": "desktop",
+    "contentLength": 139,
+    "emptySections": 0,
+    "mainScrollWidth": 1280,
+    "mainWidth": 1280,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "industry-map",
+    "size": "desktop",
+    "contentLength": 78,
+    "emptySections": 0,
+    "mainScrollWidth": 1280,
+    "mainWidth": 1280,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "calendar",
+    "size": "desktop",
+    "contentLength": 224,
+    "emptySections": 0,
+    "mainScrollWidth": 1280,
+    "mainWidth": 1280,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "calendar-settings",
+    "size": "desktop",
+    "contentLength": 152,
+    "emptySections": 0,
+    "mainScrollWidth": 1280,
+    "mainWidth": 1280,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "dashboard",
+    "size": "portrait",
+    "contentLength": 609,
+    "emptySections": 0,
+    "mainScrollWidth": 388,
+    "mainWidth": 388,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "holdings",
+    "size": "portrait",
+    "contentLength": 151,
+    "emptySections": 0,
+    "mainScrollWidth": 394,
+    "mainWidth": 394,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "history",
+    "size": "portrait",
+    "contentLength": 125,
+    "emptySections": 0,
+    "mainScrollWidth": 388,
+    "mainWidth": 388,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "trades",
+    "size": "portrait",
+    "contentLength": 59,
+    "emptySections": 0,
+    "mainScrollWidth": 394,
+    "mainWidth": 394,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "settings",
+    "size": "portrait",
+    "contentLength": 621,
+    "emptySections": 0,
+    "mainScrollWidth": 388,
+    "mainWidth": 388,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "review",
+    "size": "portrait",
+    "contentLength": 470,
+    "emptySections": 0,
+    "mainScrollWidth": 388,
+    "mainWidth": 388,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "planner",
+    "size": "portrait",
+    "contentLength": 734,
+    "emptySections": 0,
+    "mainScrollWidth": 388,
+    "mainWidth": 388,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "industry",
+    "size": "portrait",
+    "contentLength": 62,
+    "emptySections": 0,
+    "mainScrollWidth": 394,
+    "mainWidth": 394,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "graph",
+    "size": "portrait",
+    "contentLength": 45,
+    "emptySections": 0,
+    "mainScrollWidth": 394,
+    "mainWidth": 394,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "broker",
+    "size": "portrait",
+    "contentLength": 109,
+    "emptySections": 0,
+    "mainScrollWidth": 394,
+    "mainWidth": 394,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "margin",
+    "size": "portrait",
+    "contentLength": 561,
+    "emptySections": 0,
+    "mainScrollWidth": 388,
+    "mainWidth": 388,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "dividend",
+    "size": "portrait",
+    "contentLength": 273,
+    "emptySections": 0,
+    "mainScrollWidth": 388,
+    "mainWidth": 388,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "trend",
+    "size": "portrait",
+    "contentLength": 270,
+    "emptySections": 0,
+    "mainScrollWidth": 388,
+    "mainWidth": 388,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "sentiment",
+    "size": "portrait",
+    "contentLength": 53,
+    "emptySections": 0,
+    "mainScrollWidth": 394,
+    "mainWidth": 394,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "sold",
+    "size": "portrait",
+    "contentLength": 139,
+    "emptySections": 0,
+    "mainScrollWidth": 394,
+    "mainWidth": 394,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "industry-map",
+    "size": "portrait",
+    "contentLength": 78,
+    "emptySections": 0,
+    "mainScrollWidth": 394,
+    "mainWidth": 394,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "calendar",
+    "size": "portrait",
+    "contentLength": 206,
+    "emptySections": 0,
+    "mainScrollWidth": 394,
+    "mainWidth": 394,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "calendar-settings",
+    "size": "portrait",
+    "contentLength": 152,
+    "emptySections": 0,
+    "mainScrollWidth": 394,
+    "mainWidth": 394,
+    "scrollWidth": 393,
+    "width": 393
+  },
+  {
+    "page": "dashboard",
+    "size": "narrow",
+    "contentLength": 609,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "holdings",
+    "size": "narrow",
+    "contentLength": 151,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "history",
+    "size": "narrow",
+    "contentLength": 125,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "trades",
+    "size": "narrow",
+    "contentLength": 59,
+    "emptySections": 0,
+    "mainScrollWidth": 320,
+    "mainWidth": 320,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "settings",
+    "size": "narrow",
+    "contentLength": 621,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "review",
+    "size": "narrow",
+    "contentLength": 470,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "planner",
+    "size": "narrow",
+    "contentLength": 734,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "industry",
+    "size": "narrow",
+    "contentLength": 62,
+    "emptySections": 0,
+    "mainScrollWidth": 320,
+    "mainWidth": 320,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "graph",
+    "size": "narrow",
+    "contentLength": 45,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "broker",
+    "size": "narrow",
+    "contentLength": 109,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "margin",
+    "size": "narrow",
+    "contentLength": 561,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "dividend",
+    "size": "narrow",
+    "contentLength": 273,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "trend",
+    "size": "narrow",
+    "contentLength": 270,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "sentiment",
+    "size": "narrow",
+    "contentLength": 53,
+    "emptySections": 0,
+    "mainScrollWidth": 320,
+    "mainWidth": 320,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "sold",
+    "size": "narrow",
+    "contentLength": 139,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "industry-map",
+    "size": "narrow",
+    "contentLength": 78,
+    "emptySections": 0,
+    "mainScrollWidth": 320,
+    "mainWidth": 320,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "calendar",
+    "size": "narrow",
+    "contentLength": 206,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "calendar-settings",
+    "size": "narrow",
+    "contentLength": 152,
+    "emptySections": 0,
+    "mainScrollWidth": 314,
+    "mainWidth": 314,
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "page": "dashboard",
+    "size": "landscape",
+    "contentLength": 687,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "holdings",
+    "size": "landscape",
+    "contentLength": 233,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "history",
+    "size": "landscape",
+    "contentLength": 125,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "trades",
+    "size": "landscape",
+    "contentLength": 163,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "settings",
+    "size": "landscape",
+    "contentLength": 621,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "review",
+    "size": "landscape",
+    "contentLength": 489,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "planner",
+    "size": "landscape",
+    "contentLength": 734,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "industry",
+    "size": "landscape",
+    "contentLength": 62,
+    "emptySections": 0,
+    "mainScrollWidth": 844,
+    "mainWidth": 844,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "graph",
+    "size": "landscape",
+    "contentLength": 45,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "broker",
+    "size": "landscape",
+    "contentLength": 109,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "margin",
+    "size": "landscape",
+    "contentLength": 561,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "dividend",
+    "size": "landscape",
+    "contentLength": 273,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "trend",
+    "size": "landscape",
+    "contentLength": 270,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "sentiment",
+    "size": "landscape",
+    "contentLength": 53,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "sold",
+    "size": "landscape",
+    "contentLength": 139,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "industry-map",
+    "size": "landscape",
+    "contentLength": 78,
+    "emptySections": 0,
+    "mainScrollWidth": 844,
+    "mainWidth": 844,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "calendar",
+    "size": "landscape",
+    "contentLength": 224,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  },
+  {
+    "page": "calendar-settings",
+    "size": "landscape",
+    "contentLength": 152,
+    "emptySections": 0,
+    "mainScrollWidth": 838,
+    "mainWidth": 838,
+    "scrollWidth": 844,
+    "width": 844
+  }
+]

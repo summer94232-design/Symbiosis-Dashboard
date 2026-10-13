@@ -1,17 +1,6 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { ThemeContext } from './lib/themeContext'
+import { useEffect, useState } from 'react'
 import { applyTheme, type ThemeMode } from './theme'
-
-interface ThemeContextValue {
-    mode: ThemeMode
-    toggle: () => void
-    setMode: (m: ThemeMode) => void
-}
-
-const ThemeContext = createContext<ThemeContextValue>({
-    mode: 'dark',
-    toggle: () => { },
-    setMode: () => { },
-})
 
 const STORAGE_KEY = 'symbiosis-theme'
 
@@ -26,11 +15,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem(STORAGE_KEY, mode)
     }, [mode])
 
-    // 初始化時立即套用，避免 FOUC（Flash of Unstyled Content）
-    useEffect(() => {
-        applyTheme(mode)
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
 
     const setMode = (m: ThemeMode) => setModeState(m)
     const toggle = () => setModeState(prev => (prev === 'dark' ? 'light' : 'dark'))
@@ -40,8 +24,4 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
             {children}
         </ThemeContext.Provider>
     )
-}
-
-export function useTheme() {
-    return useContext(ThemeContext)
 }

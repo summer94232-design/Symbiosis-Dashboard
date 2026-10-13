@@ -1,0 +1,106 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "@fugle/marketdata": {
+      "name": "@fugle/marketdata",
+      "severity": "moderate",
+      "isDirect": true,
+      "via": [
+        "query-string"
+      ],
+      "effects": [
+        "fubon-neo"
+      ],
+      "range": "<=1.7.0",
+      "nodes": [
+        "node_modules/@fugle/marketdata",
+        "node_modules/fubon-neo/node_modules/@fugle/marketdata"
+      ],
+      "fixAvailable": false
+    },
+    "decode-uri-component": {
+      "name": "decode-uri-component",
+      "severity": "moderate",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1147955,
+          "name": "decode-uri-component",
+          "dependency": "decode-uri-component",
+          "title": "decode-uri-component: Denial of service via exponential decoding of malformed percent-encoded input",
+          "url": "https://github.com/advisories/GHSA-vcc3-ghjq-m6fr",
+          "severity": "moderate",
+          "cwe": [
+            "CWE-400",
+            "CWE-405",
+            "CWE-407",
+            "CWE-1176"
+          ],
+          "cvss": {
+            "score": 0,
+            "vectorString": null
+          },
+          "range": "<=0.4.2"
+        }
+      ],
+      "effects": [
+        "query-string"
+      ],
+      "range": "<=0.4.2",
+      "nodes": [
+        "node_modules/decode-uri-component"
+      ],
+      "fixAvailable": false
+    },
+    "fubon-neo": {
+      "name": "fubon-neo",
+      "severity": "moderate",
+      "isDirect": true,
+      "via": [
+        "@fugle/marketdata",
+        "query-string"
+      ],
+      "effects": [],
+      "range": "*",
+      "nodes": [
+        "node_modules/fubon-neo"
+      ],
+      "fixAvailable": false
+    },
+    "query-string": {
+      "name": "query-string",
+      "severity": "moderate",
+      "isDirect": false,
+      "via": [
+        "decode-uri-component"
+      ],
+      "effects": [
+        "@fugle/marketdata",
+        "fubon-neo"
+      ],
+      "range": "5.0.0 - 9.4.1",
+      "nodes": [
+        "node_modules/query-string"
+      ],
+      "fixAvailable": false
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 4,
+      "high": 0,
+      "critical": 0,
+      "total": 4
+    },
+    "dependencies": {
+      "prod": 509,
+      "dev": 741,
+      "optional": 147,
+      "peer": 1,
+      "peerOptional": 0,
+      "total": 1302
+    }
+  }
+}

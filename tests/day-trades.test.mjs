@@ -148,12 +148,12 @@ test('舊資料的空配對預設自動沖抵，不需選市場或逐筆確認',
     assert.equal(pnl(calc.calcPositions(rows)), 5000)
 })
 
-test('人工指定零股數恢復一般移動平均，不被自動重新配對', () => {
+test('人工指定零股數恢復庫存 FIFO，不被自動重新配對', () => {
     const normalSell = { ...sell, sequence: 3, dayTradeMode: 'manual', dayTradeMatches: [] }
     const rows = [old, buy, normalSell]
     assert.equal(calc.analyzeDayTrades(rows).automatic.length, 0)
-    assert.equal(calc.calcPositions(rows).holdings['2330'].avgCost, 105)
-    assert.equal(pnl(calc.calcPositions(rows)), 10000)
+    assert.equal(calc.calcPositions(rows).holdings['2330'].avgCost, 110)
+    assert.equal(pnl(calc.calcPositions(rows)), 15000)
 })
 
 test('買超僅將剩餘買入併入庫存，分攤原始費用與稅', () => {

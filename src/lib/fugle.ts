@@ -1,71 +1,268 @@
-const FUGLE_API_KEY = import.meta.env.VITE_FUGLE_API_KEY
+import { authenticatedFetch } from './authenticatedFetch'
+import { captureUserSession } from './userDB'
+import { isPositivePrice, type QuoteObservation, type QuoteObservations } from './pricePolicy'
+import { QUOTE_PROXY_TIMEOUT_MS, QUOTE_REFRESH_TIMEOUT_MS } from './quoteTiming'
 
-// 取得單一股票報價
-export async function getQuote(symbol: string) {
-    try {
-        const res = await fetch(
-            `https://api.fugle.tw/marketdata/v1.0/stock/intraday/quote/${symbol}`,
-            { headers: { 'X-API-KEY': FUGLE_API_KEY } }
-        )
-        if (!res.ok) return null
-        const data = await res.json()
-        return data
-    } catch {
-        return null
+// Fugle credentials live only in the authenticated server proxy.
+
+type QuoteData = Record<string, unknown>
+interface QuoteResult { quote: QuoteData | null; error?: string; fetchedAt?: string }
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+// Concurrency alone does not enforce Fugle's rolling per-minute quota. Share a
+// budget across batches and callers, leaving headroom for other open devices.
+const REQUESTS_PER_MINUTE = 55
+const WINDOW_MS = 61000
+const requestStarts: number[] = []
+let cooldownUntil = 0
+let slotQueue: Promise<void> = Promise.resolve()
+const inFlight = new Map<string, Promise<QuoteResult>>()
+
+function reserveQuoteSlot(): Promise<void> {
+    const slot = slotQueue.then(async () => {
+        while (true) {
+            const now = Date.now()
+            while (requestStarts.length && requestStarts[0] <= now - WINDOW_MS) requestStarts.shift()
+            const waitUntil = Math.max(cooldownUntil,
+                requestStarts.length >= REQUESTS_PER_MINUTE ? requestStarts[0] + WINDOW_MS : 0)
+            if (waitUntil <= now) break
+            await sleep(waitUntil - now)
+        }
+        requestStarts.push(Date.now())
+    })
+    slotQueue = slot.catch(() => {})
+    return slot
+}
+
+// Foreground refreshes fail promptly at the quota boundary. Historical downloads
+// retain their queued retries; both paths still consume the same rolling budget.
+function tryReserveQuoteSlot(): boolean {
+    const now = Date.now()
+    while (requestStarts.length && requestStarts[0] <= now - WINDOW_MS) requestStarts.shift()
+    if (now < cooldownUntil || requestStarts.length >= REQUESTS_PER_MINUTE) return false
+    requestStarts.push(now)
+    return true
+}
+
+// Admission is local; the proxy atomically reserves the cross-device quota
+// immediately before every upstream call, including history and retries.
+async function reserveSharedBudget(count: number, deadline: number): Promise<number> {
+    return Date.now() >= deadline || Date.now() < cooldownUntil ? 0 : Math.min(count, 55)
+}
+
+async function proxy(kind: 'quote' | 'history', symbol: string, signal: AbortSignal, dates?: {from: string; to: string}): Promise<Response> {
+    const session = captureUserSession()
+    const response = await authenticatedFetch('/.netlify/functions/fugle-proxy', session, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({kind, symbol, ...dates}), signal,
+    }, true)
+    session.assertActive()
+    return response
+}
+
+async function fetchQuote(symbol: string, deadline: number, reserved: boolean): Promise<QuoteResult> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+        if (Date.now() >= deadline) return { quote: null, error: '報價等待逾時，請稍後再試' }
+        if (!reserved || attempt > 0) {
+            try {
+                if (!await reserveSharedBudget(1, deadline)) return { quote: null, error: '報價共用額度已達上限，請稍後再試' }
+            } catch { return { quote: null, error: '報價額度無法確認，請稍後再試' } }
+        }
+        if (Date.now() >= deadline) return { quote: null, error: '報價等待逾時，請稍後再試' }
+        if (!tryReserveQuoteSlot()) return { quote: null, error: '報價服務限流，請稍後再試' }
+        try {
+            const res = await proxy('quote', symbol, AbortSignal.timeout(Math.max(1, Math.min(QUOTE_PROXY_TIMEOUT_MS, deadline - Date.now()))))
+            if (res.status === 429) {
+                const retry = res.headers.get('Retry-After')
+                const delay = retry && /^\d+(\.\d+)?$/.test(retry) ? Number(retry) * 1000
+                    : retry ? Date.parse(retry) - Date.now() : WINDOW_MS
+                const waitMs = Number.isFinite(delay) ? Math.max(1000, delay) : WINDOW_MS
+                // Do not keep a foreground refresh waiting for a daily quota reset.
+                cooldownUntil = Math.max(cooldownUntil, Date.now() + waitMs)
+                if (waitMs > 120000) return { quote: null, error: '報價額度已用完，請稍後再試' }
+                return { quote: null, error: '報價服務限流，請稍後再試' }
+            }
+            if (!res.ok) {
+                if (res.status >= 500 && attempt === 0 && Date.now() + 1000 < deadline) { await sleep(1000); continue }
+                return { quote: null, error: res.status === 401 || res.status === 403
+                    ? '報價金鑰無效或無存取權限' : `報價服務 HTTP ${res.status}` }
+            }
+            const quote = await res.json() as QuoteData
+            if (Date.now() >= deadline) return { quote: null, error: '報價等待逾時，請稍後再試' }
+            if (extractPrice(quote) === null && attempt === 0 && Date.now() + 1000 < deadline) { await sleep(1000); continue }
+            return { quote, ...(extractPrice(quote) === null ? { error: '此股票暫無有效報價' } : {}) }
+        } catch {
+            // An interrupted proxy can still be reserving quota or reading upstream.
+            // Do not start a duplicate metered request when its outcome is unknown.
+            return { quote: null, error: '報價連線失敗或逾時' }
+        }
     }
+    return { quote: null, error: '此股票暫無有效報價' }
+}
+
+function getQuoteResult(symbol: string, deadline = Date.now() + QUOTE_REFRESH_TIMEOUT_MS, reserved = false): Promise<QuoteResult> {
+    const existing = inFlight.get(symbol)
+    if (existing) return existing
+    const request = fetchQuote(symbol, deadline, reserved)
+        .then(result => ({ ...result, fetchedAt: new Date().toISOString() }))
+        .finally(() => inFlight.delete(symbol))
+    inFlight.set(symbol, request)
+    return request
+}
+
+// 取得單一股票報價，與批次查詢共用限流及進行中的請求。
+export async function getQuote(symbol: string) {
+    return (await getQuoteResult(symbol)).quote
 }
 
 // 從報價資料取得最佳現價
-// 優先順序：closePrice → lastPrice → referencePrice
-export function extractPrice(quote: any): number | null {
+// 優先使用成交價；referencePrice 僅供估值，不認定為當日成交價。
+function tradePrices(quote: QuoteData) {
+    const lastTrade = quote.lastTrade as { price?: unknown } | undefined
+    return [quote.closePrice, lastTrade?.price, quote.lastPrice]
+}
+export function extractPrice(quote: Record<string, unknown> | null): number | null {
     if (!quote) return null
-    return quote.closePrice || quote.lastPrice || quote.referencePrice || null
+    return [...tradePrices(quote), quote.referencePrice].find(isPositivePrice) ?? null
 }
 
 // ── 批次取得多檔股票現價（優化建議書 3-2）─────────────────────────────────
 //
-// 原實作對 N 檔股票同時發 N 個請求，持倉＋賣出追蹤代號一多就會撞 Fugle
-// rate limit（部分股票拿不到價）。改為：
-//   1. 併發上限 5：以固定數量的 worker 消化佇列，同一時間最多 5 個請求在途。
-//   2. 失敗單檔重試一次：第一次拿不到價（HTTP 錯誤 / 網路例外 / 無價格欄位）
-//      時，等 300ms 讓限流窗口過去再試一次，仍失敗才回傳 null。
-//
-// 函式簽名與回傳格式完全不變，呼叫端（PriceContext）無需修改。
+// 併發上限搭配共用分鐘配額；429 記住冷卻時間，立即回報，不阻塞畫面。
 const MAX_CONCURRENT = 5
-const RETRY_DELAY_MS = 300
 
-export async function getMultipleQuotes(symbols: string[]): Promise<Record<string, number | null>> {
-    const results: Record<string, number | null> = {}
-    let cursor = 0
+export async function getMultipleQuoteObservations(symbols: string[], requestedAt: string, deadline = Date.now() + QUOTE_REFRESH_TIMEOUT_MS): Promise<QuoteObservations> {
+    const results: QuoteObservations = {}
+    symbols = [...new Set(symbols)]
+    if (!symbols.length) return {}
 
-    const worker = async (): Promise<void> => {
-        while (cursor < symbols.length) {
-            const symbol = symbols[cursor]
-            cursor += 1
-            let price = extractPrice(await getQuote(symbol))
-            if (price === null) {
-                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
-                price = extractPrice(await getQuote(symbol))
-            }
-            results[symbol] = price
+    const requests = new Map<string, Promise<QuoteResult>>()
+    const owned: { symbol: string; request: Promise<QuoteResult>; resolve: (result: QuoteResult) => void }[] = []
+    // Claim every new symbol synchronously, including queued work, before the first
+    // quota await. Other batches and single reads reuse these promises without
+    // reserving another slot, even when the first quota response is still pending.
+    for (const symbol of symbols) {
+        let request = inFlight.get(symbol)
+        if (!request) {
+            let resolve!: (result: QuoteResult) => void
+            request = new Promise<QuoteResult>(done => { resolve = done })
+            inFlight.set(symbol, request)
+            owned.push({ symbol, request, resolve })
         }
+        requests.set(symbol, request)
     }
 
-    const workerCount = Math.min(MAX_CONCURRENT, symbols.length)
-    await Promise.all(Array.from({ length: workerCount }, () => worker()))
-    return results
+    try {
+        if (owned.length) {
+            let cursor = 0
+            let granted = 0, budgetError = '報價共用額度已達上限，請稍後再試'
+            try { granted = await reserveSharedBudget(owned.length, deadline) }
+            catch { budgetError = '報價額度無法確認，請稍後再試' }
+            const worker = async (): Promise<void> => {
+                while (cursor < owned.length) {
+                    const index = cursor++, item = owned[index]
+                    let result: QuoteResult = { quote: null, error: budgetError }
+                    if (index < granted) {
+                        try { result = await fetchQuote(item.symbol, deadline, true) }
+                        catch { result = { quote: null, error: '報價連線失敗或逾時' } }
+                    }
+                    item.resolve({ ...result, fetchedAt: new Date().toISOString() })
+                }
+            }
+            await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT, owned.length) }, () => worker()))
+        }
+        await Promise.all(symbols.map(async symbol => {
+            const { quote, error, fetchedAt } = await requests.get(symbol)!
+            const price = extractPrice(quote)
+            const priceType: QuoteObservation['priceType'] = price === null ? 'missing'
+                : quote && tradePrices(quote).some(isPositivePrice) ? 'trade' : 'reference'
+            results[symbol] = { price, requestedAt, fetchedAt: fetchedAt || new Date().toISOString(),
+                sourceDate: typeof quote?.date === 'string' ? quote.date : '',
+                sourceUpdatedAt: typeof quote?.lastUpdated === 'number' && Number.isFinite(quote.lastUpdated) ? quote.lastUpdated : null,
+                priceType, status: price === null ? 'failed' : 'success', ...(error ? { error } : {}),
+                isFinalClose: quote?.isClose === true && quote.isTrial !== true && quote.isDelayedClose !== true && quote.closePrice === price,
+                ...(typeof quote?.changePercent === 'number' && Number.isFinite(quote.changePercent) ? { changePercent: quote.changePercent } : {}) }
+        }))
+        return results
+    } finally {
+        // Retain fulfilled queued work for the lifetime of its batch; a late
+        // overlapping caller can still reuse it. Failure never leaves a stale claim.
+        for (const item of owned) if (inFlight.get(item.symbol) === item.request) inFlight.delete(item.symbol)
+    }
 }
 
-// 取得歷史收盤價（升序排列，舊→新，確保 MA 計算正確）
-export async function getHistoricalCandles(symbol: string, from: string, to: string) {
+export interface HistoricalCandle {
+    date: string
+    open: number
+    high: number
+    low: number
+    close: number
+    volume?: number
+}
+interface HistoricalResult { data: HistoricalCandle[] }
+const historicalInFlight = new Map<string, Promise<HistoricalResult>>()
+const historicalWaiters: Array<() => void> = []
+let historicalActive = 0
+
+async function fetchHistoricalCandles(symbol: string, from: string, to: string): Promise<HistoricalResult> {
+    // The provider lists separate endpoint quotas. Sharing our conservative budget
+    // also prevents history refreshes from bypassing this tab's request protection.
+    if (historicalActive >= 4) await new Promise<void>(resolve => historicalWaiters.push(resolve))
+    else historicalActive++
     try {
-        const res = await fetch(
-            `https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/${symbol}?from=${from}&to=${to}&sort=asc`,
-            { headers: { 'X-API-KEY': FUGLE_API_KEY } }
-        )
-        if (!res.ok) return null
-        return res.json()
-    } catch {
-        return null
+        for (let attempt = 0; attempt < 2; attempt++) {
+            await reserveQuoteSlot()
+            let res: Response
+            let payload: unknown
+            try {
+                res = await proxy('history', symbol, AbortSignal.timeout(QUOTE_PROXY_TIMEOUT_MS), {from, to})
+                if (res.ok) payload = await res.json()
+            } catch {
+                if (attempt === 0) { await sleep(1000); continue }
+                throw new Error('歷史行情連線失敗或逾時，請重試')
+            }
+            if (res.status === 429) {
+                const retry = res.headers.get('Retry-After')
+                const delay = retry && /^\d+(\.\d+)?$/.test(retry) ? Number(retry) * 1000
+                    : retry ? Date.parse(retry) - Date.now() : WINDOW_MS
+                const waitMs = Number.isFinite(delay) ? Math.max(1000, delay) : WINDOW_MS
+                if (waitMs > 120000) throw new Error('歷史行情額度已用完，請稍後再試')
+                cooldownUntil = Math.max(cooldownUntil, Date.now() + waitMs)
+                if (attempt === 0) continue
+                throw new Error('歷史行情服務限流，請稍後重試')
+            }
+            if (!res.ok) {
+                if (res.status >= 500 && attempt === 0) { await sleep(1000); continue }
+                throw new Error(res.status === 401 || res.status === 403
+                    ? '歷史行情金鑰無效或無存取權限' : `歷史行情服務 HTTP ${res.status}`)
+            }
+            const data = (payload as Partial<HistoricalResult> | null)?.data
+            if (!Array.isArray(data) || data.some(bar => !bar || typeof bar.date !== 'string'
+                || !/^\d{4}-\d{2}-\d{2}$/.test(bar.date)
+                || ![bar.open, bar.high, bar.low, bar.close].every(isPositivePrice))) {
+                throw new Error('歷史行情資料格式異常，請重試')
+            }
+            return { data: [...data].sort((a, b) => a.date.localeCompare(b.date)) }
+        }
+        throw new Error('歷史行情載入失敗，請重試')
+    } finally {
+        const next = historicalWaiters.shift()
+        if (next) next()
+        else historicalActive--
     }
+}
+
+// All history consumers share concurrency, rate limits and identical in-flight requests.
+// Empty data is a successful response; failures reject so UI can offer a retry.
+export function getHistoricalCandles(symbol: string, from: string, to: string): Promise<HistoricalResult> {
+    const key = JSON.stringify([symbol, from, to])
+    const existing = historicalInFlight.get(key)
+    if (existing) return existing
+    const request = fetchHistoricalCandles(symbol, from, to).finally(() => historicalInFlight.delete(key))
+    historicalInFlight.set(key, request)
+    return request
+}
+/** Compatibility for consumers that only need the fetched numeric prices. */
+export async function getMultipleQuotes(symbols: string[]): Promise<Record<string, number | null>> {
+    const quotes = await getMultipleQuoteObservations(symbols, new Date().toISOString())
+    return Object.fromEntries(Object.entries(quotes).map(([code, quote]) => [code, quote.price]))
 }

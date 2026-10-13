@@ -291,10 +291,10 @@ test('投資資料寫入驗證會阻擋無效日期、數字與矛盾帳務', ()
 
 test('月底現金核對會把月底後待交割款換回 CMA 交割日口徑', () => {
     const brokerTrades = [
-        { settlementDate: '2026-08-03', total: -112345 },
-        { settlementDate: '2026-08-03', total: -46739 },
-        { settlementDate: '2026-08-04', total: -101386 },
-        { settlementDate: '2026-08-04', total: -102837 },
+        { date: '2026-07-30', settlementDate: '2026-08-03', total: -112345 },
+        { date: '2026-07-30', settlementDate: '2026-08-03', total: -46739 },
+        { date: '2026-07-31', settlementDate: '2026-08-04', total: -101386 },
+        { date: '2026-07-31', settlementDate: '2026-08-04', total: -102837 },
     ]
     const check = brokerMonthlyReconciliation.reconcileMonthlyCash(1064860, 701553, '2026-07-31', brokerTrades)
     assert.equal(check.unsettledNet, -363307)
@@ -708,4 +708,95 @@ test('只有個人資料的法說會可建立，全部日期隱藏後會從結�
         removedDates: ['2026-09-03'],
     }])
     assert.deepEqual(hidden, [])
+})
+
+const marginBuy = overrides => trade({ id: 'a', date: '2026-05-04', price: 100, shares: 1000, isMargin: true, ...overrides })
+const marginSell = overrides => marginBuy({ id: 's', date: '2026-05-20', type: 'sell', ...overrides })
+function assertMarginDebt(rows, expected) {
+    assert.equal(calc.aggregateMarginDebt(rows), expected)
+    assert.equal(calc.calcPositions(rows).holdings['2330'].marginAmount, expected)
+}
+
+test('F03 different buy prices repay FIFO and conserve debt across repeated partial sales', () => {
+    const rows = [marginBuy({}), marginBuy({ id: 'b', date: '2026-05-05', price: 200 })]
+    let repaid = 0
+    for (const [i, shares, expected] of [[0, 500, 30000], [1, 1000, 90000], [2, 500, 60000]]) {
+        const sell = marginSell({ id: `s${i}`, date: `2026-05-${20 + i}`, shares })
+        const estimate = calc.estimateMarginRepayment(sell, rows)
+        assert.equal(estimate.principal, expected)
+        rows.push({ ...sell, marginPrincipal: estimate.principal })
+        repaid += expected
+        assertMarginDebt(rows, 180000 - repaid)
+    }
+    assert.equal(calc.aggregateMarginPositions(rows).length, 0)
+})
+
+test('F03 audit example retains 120000 debt after first 1000 shares are sold', () => {
+    const rows = [marginBuy({}), marginBuy({ id: 'b', date: '2026-05-05', price: 200 }), marginSell({})]
+    assertMarginDebt(rows, 120000)
+    assert.equal(calc.aggregateMarginPositions(rows)[0].marginCost, 200000)
+    // Inventory cost now follows the same remaining FIFO purchase batch as debt.
+    assert.equal(calc.calcPositions(rows).holdings['2330'].totalCost, 200000)
+    assert.equal(calc.calcPositions(rows, [], { costMethod: 'moving-average' }).holdings['2330'].totalCost, 150000)
+})
+
+test('F03 actual buy principal and manually confirmed repayment feed the next estimate', () => {
+    const rows = [marginBuy({ marginAmount: 55000 }), marginBuy({ id: 'b', date: '2026-05-05', price: 200, marginAmount: 115000 }),
+        marginSell({ marginPrincipal: 50000, marginInterest: 12, marginRepay: 50012 })]
+    assertMarginDebt(rows, 120000)
+    const next = marginSell({ id: 'last', date: '2026-05-21' })
+    assert.equal(calc.estimateMarginRepayment(next, rows).principal, 120000)
+    assertMarginDebt([...rows, next], 0)
+})
+
+test('F03 underpaid principal remains visible after closing shares; overpayment is rejected', () => {
+    assertMarginDebt([marginBuy({}), marginSell({ marginPrincipal: 50000 })], 10000)
+    assert.throws(() => calc.aggregateMarginDebt([marginBuy({}), marginSell({ marginPrincipal: 60001 })]), /超過/)
+    assert.throws(() => calc.calcPositions([marginBuy({}), marginSell({ marginPrincipal: 60001 })]), /超過/)
+})
+
+test('F03 broker accounts do not share FIFO lots or cover an oversell', () => {
+    const buys = [marginBuy({ brokerAccount: 'A' }), marginBuy({ id: 'b', price: 200, brokerAccount: 'B' })]
+    const sell = marginSell({ brokerAccount: 'B' })
+    assert.equal(calc.estimateMarginRepayment(sell, buys).principal, 120000)
+    assertMarginDebt([...buys, sell], 60000)
+    const invalid = marginSell({ brokerAccount: 'C' })
+    assert.equal(calc.estimateMarginRepayment(invalid, buys).unmatchedShares, 1000)
+    assertMarginDebt([...buys, invalid], 180000)
+})
+
+test('F03 same-day sequence is deterministic, partial rounding closes with exact principal', () => {
+    const rows = [marginBuy({ shares: 3, marginAmount: 1000, sequence: 0 })]
+    let repaid = 0
+    for (let i = 1; i <= 3; i++) {
+        const sell = marginSell({ id: `s${i}`, date: '2026-05-04', sequence: i, shares: 1 })
+        const estimate = calc.estimateMarginRepayment(sell, [...rows].reverse())
+        repaid += estimate.principal
+        rows.push({ ...sell, marginPrincipal: estimate.principal })
+        assertMarginDebt([...rows].reverse(), 1000 - repaid)
+    }
+    assert.equal(repaid, 1000)
+})
+
+test('F03 legacy zero placeholder uses FIFO, cash-stock sale leaves margin debt intact', () => {
+    const rows = [marginBuy({}), marginBuy({ id: 'cash', isMargin: false }), marginSell({ isMargin: false })]
+    assertMarginDebt(rows, 60000)
+    assertMarginDebt([...rows, marginSell({ id: 'last', date: '2026-05-21', marginPrincipal: 0, marginRepay: 60010 })], 0)
+})
+
+test('F03 daily holdings and beforeTrade use the same FIFO debt at each point', () => {
+    const buyA = marginBuy({}), buyB = marginBuy({ id: 'b', date: '2026-05-05', price: 200 })
+    const sell = marginSell({})
+    const rows = [buyA, buyB, sell]
+    assert.equal(calc.calcPositions(rows, [], { beforeTrade: sell }).holdings['2330'].marginAmount, 180000)
+    const result = calc.calcPositions(rows, [], { includeDailyHoldings: true })
+    assert.equal(result.dailyHoldings['2026-05-04']['2330'].marginAmount, 60000)
+    assert.equal(result.dailyHoldings['2026-05-20']['2330'].marginAmount, 120000)
+})
+
+test('F03 higher manual repayment reduces subsequent principal without treating interest as debt', () => {
+    const rows = [marginBuy({}), marginBuy({ id: 'b', date: '2026-05-05', price: 200 }),
+        marginSell({ marginPrincipal: 70000, marginInterest: 100, marginRepay: 70100 })]
+    assertMarginDebt(rows, 110000)
+    assert.equal(calc.estimateMarginRepayment(marginSell({ id: 'next', date: '2026-05-21' }), rows).principal, 110000)
 })

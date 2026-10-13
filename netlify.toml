@@ -3,6 +3,10 @@
   publish = "dist"
   functions = "netlify/functions"
 
+[functions."fubon-snapshot"]
+  node_bundler = "esbuild"
+  external_node_modules = ["fubon-neo"]
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

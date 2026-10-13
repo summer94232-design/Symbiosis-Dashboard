@@ -1,0 +1,10 @@
+{
+  "VITE_FUGLE_API_KEY": {
+    "configured": true,
+    "presentInBuild": true
+  },
+  "VITE_GEMINI_API_KEY": {
+    "configured": false,
+    "presentInBuild": false
+  }
+}

@@ -1,0 +1,190 @@
+{
+  "portrait": [
+    {
+      "page": "settings",
+      "scrollWidth": 390,
+      "summaries": [
+        "XLSX 匯出範圍",
+        "備份範圍與還原方式"
+      ],
+      "width": 390,
+      "writes": "測試寫入：0",
+      "snapshotHasError": false
+    },
+    {
+      "page": "review",
+      "scrollWidth": 390,
+      "summaries": [],
+      "width": 390,
+      "writes": "測試寫入：0",
+      "snapshotHasError": false
+    },
+    {
+      "page": "planner",
+      "scrollWidth": 390,
+      "summaries": [
+        "估算未含滑價；方案限此帳號／裝置，未納入 JSON 備份。"
+      ],
+      "width": 390,
+      "writes": "測試寫入：0",
+      "snapshotHasError": false
+    },
+    {
+      "page": "industry",
+      "scrollWidth": 390,
+      "summaries": [
+        "由左至右：上游 → 下游；點股票追蹤關係。"
+      ],
+      "width": 390,
+      "writes": "測試寫入：0",
+      "snapshotHasError": false
+    },
+    {
+      "page": "export",
+      "scrollWidth": 390,
+      "summaries": [
+        "NotebookLM 上傳方式"
+      ],
+      "width": 390,
+      "writes": "測試寫入：0",
+      "snapshotHasError": false
+    },
+    {
+      "page": "graph",
+      "scrollWidth": 390,
+      "summaries": [
+        "點標籤展開，點筆記查看；節點可拖曳。"
+      ],
+      "width": 390,
+      "writes": "測試寫入：0",
+      "snapshotHasError": false
+    },
+    {
+      "page": "broker",
+      "scrollWidth": 390,
+      "summaries": [],
+      "width": 390,
+      "writes": "測試寫入：0",
+      "snapshotHasError": false
+    },
+    {
+      "page": "cash",
+      "scrollWidth": 390,
+      "summaries": [
+        "請填實際轉帳日；績效預設按收盤後入金計算。"
+      ],
+      "width": 390,
+      "writes": "測試寫入：0",
+      "snapshotHasError": false
+    },
+    {
+      "page": "margin",
+      "scrollWidth": 390,
+      "summaries": [
+        "假設全部融資持股同幅下跌。"
+      ],
+      "width": 390,
+      "writes": "測試寫入：0",
+      "snapshotHasError": false
+    },
+    {
+      "page": "dividend",
+      "scrollWidth": 390,
+      "summaries": [
+        "預告不計入資產；確認後請填入帳／配發日。"
+      ],
+      "width": 390,
+      "writes": "測試寫入：0",
+      "snapshotHasError": false
+    }
+  ],
+  "landscape": [
+    {
+      "page": "settings",
+      "scrollWidth": 844,
+      "summaries": [
+        "XLSX 匯出範圍",
+        "備份範圍與還原方式"
+      ],
+      "width": 844,
+      "snapshotHasError": false
+    },
+    {
+      "page": "review",
+      "scrollWidth": 844,
+      "summaries": [],
+      "width": 844,
+      "snapshotHasError": false
+    },
+    {
+      "page": "planner",
+      "scrollWidth": 844,
+      "summaries": [
+        "估算未含滑價；方案限此帳號／裝置，未納入 JSON 備份。"
+      ],
+      "width": 844,
+      "snapshotHasError": false
+    },
+    {
+      "page": "industry",
+      "scrollWidth": 844,
+      "summaries": [
+        "由左至右：上游 → 下游；點股票追蹤關係。"
+      ],
+      "width": 844,
+      "snapshotHasError": false
+    },
+    {
+      "page": "export",
+      "scrollWidth": 844,
+      "summaries": [
+        "NotebookLM 上傳方式"
+      ],
+      "width": 844,
+      "snapshotHasError": false
+    },
+    {
+      "page": "graph",
+      "scrollWidth": 844,
+      "summaries": [
+        "點標籤展開，點筆記查看；節點可拖曳。"
+      ],
+      "width": 844,
+      "snapshotHasError": false
+    },
+    {
+      "page": "broker",
+      "scrollWidth": 844,
+      "summaries": [],
+      "width": 844,
+      "snapshotHasError": false
+    },
+    {
+      "page": "cash",
+      "scrollWidth": 844,
+      "summaries": [
+        "請填實際轉帳日；績效預設按收盤後入金計算。"
+      ],
+      "width": 844,
+      "snapshotHasError": false
+    },
+    {
+      "page": "margin",
+      "scrollWidth": 844,
+      "summaries": [
+        "假設全部融資持股同幅下跌。"
+      ],
+      "width": 844,
+      "snapshotHasError": false
+    },
+    {
+      "page": "dividend",
+      "scrollWidth": 844,
+      "summaries": [
+        "預告不計入資產；確認後請填入帳／配發日。"
+      ],
+      "width": 844,
+      "snapshotHasError": false
+    }
+  ]
+}

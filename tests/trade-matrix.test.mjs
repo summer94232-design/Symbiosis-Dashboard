@@ -138,13 +138,13 @@ for (const funding of FUNDING_CASES) {
                         const averageCost = buyCost / buyShares
                         // 融資利息屬於實際交易成本；償還本金只減少負債，不影響損益。
                         const sellRevenue = sellGross - sellFee - sellTax - (funding.isMargin ? 50 : 0)
-                        const soldCost = averageCost * sellShares
+                        const soldCost = exit.ratio === 1 ? buyCost : Math.floor(averageCost * sellShares)
                         const expectedRealized = sellRevenue - soldCost
                         const remainingShares = buyShares - sellShares
 
                         assert.equal(result.realized.length, 1, '應產生一筆已實現損益')
                         assert.equal(result.realized[0].date, year.sellDate, '損益應歸屬賣出年度')
-                        closeTo(result.realized[0].avgCost, averageCost, '已實現平均成本')
+                        closeTo(result.realized[0].avgCost, soldCost / sellShares, '已實現批次成本')
                         closeTo(result.realized[0].realized, expectedRealized, '已實現損益')
                         closeTo(result.realized[0].returnRate, expectedRealized / soldCost, '已實現報酬率')
                         assert.equal(position.shares, remainingShares, '剩餘股數')
@@ -155,7 +155,7 @@ for (const funding of FUNDING_CASES) {
                             assert.equal(position.marginAmount, 0, '全數平倉融資借款歸零')
                         } else {
                             closeTo(position.totalCost, buyCost - soldCost, '部分賣出剩餘成本')
-                            closeTo(position.avgCost, averageCost, '部分賣出後平均成本不變')
+                            closeTo(position.avgCost, (buyCost - soldCost) / remainingShares, '部分賣出尾差留在剩餘批次')
                             closeTo(
                                 position.marginAmount ?? 0,
                                 funding.isMargin ? debt * (1 - exit.ratio) : 0,

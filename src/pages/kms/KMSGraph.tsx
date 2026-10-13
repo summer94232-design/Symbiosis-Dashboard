@@ -1,3 +1,6 @@
+import LoadingState from '../../components/LoadingState'
+import { useMobileLayout } from '../../lib/useMobileLayout'
+import DisclosureNote from '../../components/DisclosureNote'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchKmsNoteSummaries, fetchKmsTagOrder } from '../../lib/kmsData'
@@ -44,6 +47,44 @@ const TAG_COLORS = [
   '#378add', '#d4537e', '#639922', '#5f5e5a',
 ]
 
+function buildTagTree(data: Note[], parentOrder: string[], childOrder: Record<string, string[]>): TagNode[] {
+  const tagNoteIds: Record<string, Set<string>> = {}
+  data.forEach(n => n.hashtags?.forEach(tag => {
+    if (!tagNoteIds[tag]) tagNoteIds[tag] = new Set()
+    tagNoteIds[tag].add(n.id)
+  }))
+  const parentMap: Record<string, TagNode> = {}
+  Object.keys(tagNoteIds).forEach(tag => {
+    const root = tag.split('/')[0]
+    if (!parentMap[root]) parentMap[root] = { name: root, fullTag: root, noteCount: 0, children: [] }
+  })
+  Object.entries(tagNoteIds).forEach(([tag, ids]) => {
+    const parts = tag.split('/')
+    const root = parts[0]
+    if (!parentMap[root]) return
+    if (parts.length === 1) {
+      parentMap[root].noteCount += ids.size
+    } else {
+      if (!parentMap[root].children.find(c => c.fullTag === tag))
+        parentMap[root].children.push({ name: parts.slice(1).join('/'), fullTag: tag, noteCount: ids.size, children: [] })
+      parentMap[root].noteCount += ids.size
+    }
+  })
+  const ordered: TagNode[] = []
+  const seen = new Set<string>()
+  parentOrder.forEach(name => { if (parentMap[name]) { ordered.push(parentMap[name]); seen.add(name) } })
+  Object.values(parentMap).forEach(n => { if (!seen.has(n.name)) ordered.push(n) })
+  ordered.forEach(parent => {
+    const kids = childOrder[parent.name]; if (!kids?.length) return
+    const cm = Object.fromEntries(parent.children.map(c => [c.fullTag, c]))
+    const sorted: TagNode[] = []; const cs = new Set<string>()
+    kids.forEach(ft => { if (cm[ft]) { sorted.push(cm[ft]); cs.add(ft) } })
+    parent.children.forEach(c => { if (!cs.has(c.fullTag)) sorted.push(c) })
+    parent.children = sorted
+  })
+  return ordered
+}
+
 export default function KMSGraph() {
   const navigate = useNavigate()
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -54,9 +95,11 @@ export default function KMSGraph() {
   const [tagTree, setTagTree] = useState<TagNode[]>([])
   const [tagColorMap, setTagColorMap] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
+    const [hasLoaded, setHasLoaded] = useState(false)
+  const [loadError, setLoadError] = useState('')
   const [search, setSearch] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const isMobile = useMobileLayout()
   const [focusedNote, setFocusedNote] = useState<Note | null>(null)
   const [, forceRender] = useState(0)
 
@@ -68,73 +111,35 @@ export default function KMSGraph() {
   const sizeRef = useRef({ w: 600, h: 420 })
 
   useEffect(() => {
-    const h = () => setIsMobile(window.innerWidth < 768)
-    window.addEventListener('resize', h)
-    return () => window.removeEventListener('resize', h)
-  }, [])
-
-  useEffect(() => {
+    let active = true
     const load = async () => {
-      setLoading(true)
-      const [data, tagOrder] = await Promise.all([
-        fetchKmsNoteSummaries<Note>(),
-        fetchKmsTagOrder(),
-      ])
-      setNotes(data)
-      const parentOrder = tagOrder.parentOrder
-      const childOrder = tagOrder.childOrder
-      const tree = buildTagTree(data, parentOrder, childOrder)
-      setTagTree(tree)
+      try {
+        const [data, tagOrder] = await Promise.all([
+          fetchKmsNoteSummaries<Note>(),
+          fetchKmsTagOrder(),
+        ])
+        if (!active) return
+        setNotes(data)
+            setHasLoaded(true)
+        const parentOrder = tagOrder.parentOrder
+        const childOrder = tagOrder.childOrder
+        const tree = buildTagTree(data, parentOrder, childOrder)
+        setTagTree(tree)
 
-      const colorMap: Record<string, string> = {}
-      tree.forEach((root, i) => {
-        const c = TAG_COLORS[i % TAG_COLORS.length]
-        colorMap[root.fullTag] = c
-        root.children.forEach(child => { colorMap[child.fullTag] = c })
-      })
-      setTagColorMap(colorMap)
-      setLoading(false)
+        const colorMap: Record<string, string> = {}
+        tree.forEach((root, i) => {
+          const c = TAG_COLORS[i % TAG_COLORS.length]
+          colorMap[root.fullTag] = c
+          root.children.forEach(child => { colorMap[child.fullTag] = c })
+        })
+        setTagColorMap(colorMap)
+      } catch {
+        if (active) setLoadError('知識圖譜載入失敗，請重新整理後重試。')
+      } finally { if (active) setLoading(false) }
     }
-    load()
+    void load()
+    return () => { active = false }
   }, [])
-
-  function buildTagTree(data: Note[], parentOrder: string[], childOrder: Record<string, string[]>): TagNode[] {
-    const tagNoteIds: Record<string, Set<string>> = {}
-    data.forEach(n => n.hashtags?.forEach(tag => {
-      if (!tagNoteIds[tag]) tagNoteIds[tag] = new Set()
-      tagNoteIds[tag].add(n.id)
-    }))
-    const parentMap: Record<string, TagNode> = {}
-    Object.keys(tagNoteIds).forEach(tag => {
-      const root = tag.split('/')[0]
-      if (!parentMap[root]) parentMap[root] = { name: root, fullTag: root, noteCount: 0, children: [] }
-    })
-    Object.entries(tagNoteIds).forEach(([tag, ids]) => {
-      const parts = tag.split('/')
-      const root = parts[0]
-      if (!parentMap[root]) return
-      if (parts.length === 1) {
-        parentMap[root].noteCount += ids.size
-      } else {
-        if (!parentMap[root].children.find(c => c.fullTag === tag))
-          parentMap[root].children.push({ name: parts.slice(1).join('/'), fullTag: tag, noteCount: ids.size, children: [] })
-        parentMap[root].noteCount += ids.size
-      }
-    })
-    const ordered: TagNode[] = []
-    const seen = new Set<string>()
-    parentOrder.forEach(name => { if (parentMap[name]) { ordered.push(parentMap[name]); seen.add(name) } })
-    Object.values(parentMap).forEach(n => { if (!seen.has(n.name)) ordered.push(n) })
-    ordered.forEach(parent => {
-      const kids = childOrder[parent.name]; if (!kids?.length) return
-      const cm = Object.fromEntries(parent.children.map(c => [c.fullTag, c]))
-      const sorted: TagNode[] = []; const cs = new Set<string>()
-      kids.forEach(ft => { if (cm[ft]) { sorted.push(cm[ft]); cs.add(ft) } })
-      parent.children.forEach(c => { if (!cs.has(c.fullTag)) sorted.push(c) })
-      parent.children = sorted
-    })
-    return ordered
-  }
 
   // ── 建立/更新 canvas 節點 ────────────────────────────
   // 核心邏輯變更：
@@ -314,7 +319,7 @@ export default function KMSGraph() {
 
     nodesRef.current = newNodes
     edgesRef.current = newEdges
-  }, [tagTree])
+  }, [])
 
   const [activeRoots, setActiveRoots] = useState<string[]>([])
   const [expandedChildTags, setExpandedChildTags] = useState<Set<string>>(new Set())
@@ -337,7 +342,7 @@ export default function KMSGraph() {
   const toggleChildTag = (fullTag: string) => {
     setExpandedChildTags(prev => {
       const next = new Set(prev)
-      next.has(fullTag) ? next.delete(fullTag) : next.add(fullTag)
+      if (next.has(fullTag)) next.delete(fullTag); else next.add(fullTag)
       return next
     })
     setFocusedNote(null)
@@ -516,7 +521,7 @@ export default function KMSGraph() {
     const { x, y } = getPos(e); const hit = nodeAt(x, y)
     if (hit) dragRef.current = { id: hit.id, ox: hit.x - x, oy: hit.y - y, moved: false }
   }
-  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleMouseUp = () => {
     if (!dragRef.current) return
     const wasMoved = dragRef.current.moved
     const id = dragRef.current.id
@@ -539,7 +544,7 @@ export default function KMSGraph() {
     dragRef.current = null; hovRef.current = null
   }
 
-  const toggleSidebarExpand = (tag: string) => setExpanded(prev => { const next = new Set(prev); next.has(tag) ? next.delete(tag) : next.add(tag); return next })
+  const toggleSidebarExpand = (tag: string) => setExpanded(prev => { const next = new Set(prev); if (next.has(tag)) next.delete(tag); else next.add(tag); return next })
 
   const filteredTree = search.trim()
     ? tagTree.filter(root => root.name.toLowerCase().includes(search.toLowerCase()) || root.children.some(c => c.name.toLowerCase().includes(search.toLowerCase())))
@@ -552,11 +557,10 @@ export default function KMSGraph() {
 
   return (
     <div style={{ padding: 'clamp(12px, 2vw, 24px)' }}>
+      {loadError && <p role="alert" style={{ color: 'var(--c-danger)' }}>{loadError}</p>}
       <div style={{ marginBottom: '14px' }}>
         <h1 style={{ fontSize: 'clamp(16px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>知識圖譜</h1>
-        <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
-          點擊標籤展開 · 子標籤再點一次顯示筆記 · 可拖曳節點 · 取消根標籤只隱藏根節點
-        </p>
+        <DisclosureNote summary="點標籤展開、筆記查看；可拖曳。" style={{ margin: '4px 0 0' }}>子標籤展開筆記；移除根標籤只隱藏根節點。</DisclosureNote>
       </div>
 
       <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: '12px', alignItems: 'flex-start' }}>
@@ -572,8 +576,9 @@ export default function KMSGraph() {
           </div>
 
           <div style={{ maxHeight: isMobile ? '180px' : '500px', overflowY: 'auto', padding: '8px 6px' }}>
-            {loading ? (
-              <div style={{ padding: '24px', textAlign: 'center', fontSize: '12px', color: 'var(--c-muted)' }}>載入中...</div>
+            {loading && hasLoaded && <p className="ui-refresh-status" role="status">資料更新中…</p>}
+                {loading && !hasLoaded ? (
+              <LoadingState />
             ) : filteredTree.map(root => {
               const isActive = activeRoots.includes(root.fullTag)
               const color = tagColorMap[root.fullTag] || '#888'
@@ -660,7 +665,6 @@ export default function KMSGraph() {
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '320px', gap: '8px', color: 'var(--c-muted)' }}>
               <Tag size={32} style={{ opacity: 0.15 }} />
               <p style={{ fontSize: '13px' }}>從左側點擊標籤加入圖譜</p>
-              <p style={{ fontSize: '11px', opacity: 0.6 }}>點頂層標籤 → 展開子標籤 → 點子標籤 → 展開筆記</p>
             </div>
           ) : (
             <>
@@ -670,16 +674,16 @@ export default function KMSGraph() {
                 onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} />
               <div style={{ marginTop: '6px', display: 'flex', gap: '14px', fontSize: '11px', color: 'var(--c-muted)', flexWrap: 'wrap' }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                  <span style={{ width: '9px', height: '9px', borderRadius: '50%', backgroundColor: 'var(--c-accent)', display: 'inline-block' }} />頂層標籤（點擊移除根節點）
+                  <span style={{ width: '9px', height: '9px', borderRadius: '50%', backgroundColor: 'var(--c-accent)', display: 'inline-block' }} />根標籤（隱藏）
                 </span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', border: '2px solid var(--c-accent)', display: 'inline-block' }} />子標籤（點擊展開筆記）
+                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', border: '2px solid var(--c-accent)', display: 'inline-block' }} />子標籤（展開筆記）
                 </span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', border: '2px dashed var(--c-accent)', display: 'inline-block' }} />子標籤（浮動中，根標籤已隱藏）
+                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', border: '2px dashed var(--c-accent)', display: 'inline-block' }} />浮動子標籤
                 </span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'rgba(79,142,247,0.4)', display: 'inline-block' }} />筆記（點擊查看）
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'rgba(79,142,247,0.4)', display: 'inline-block' }} />筆記（查看）
                 </span>
               </div>
             </>

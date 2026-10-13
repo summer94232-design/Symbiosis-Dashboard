@@ -1,3 +1,5 @@
+import { authenticatedFetch } from './authenticatedFetch'
+import { captureUserSession } from './userDB'
 // src/lib/marketCap.ts
 // 台股市值查詢與計算工具
 // 已發行股數資料透過 Netlify Function market-cap-proxy 取得（來源：MOPS 公開資料 CSV）
@@ -21,17 +23,18 @@ export async function getSharesOutstanding(
 ): Promise<Record<string, number | null>> {
     if (codes.length === 0) return {}
 
-    try {
-        const res = await fetch(
-            `/.netlify/functions/market-cap-proxy?codes=${encodeURIComponent(codes.join(','))}`
+    const session = captureUserSession()
+    const result: Record<string, number | null> = {}
+    const unique = [...new Set(codes)]
+    for (let start = 0; start < unique.length; start += 100) {
+        const res = await authenticatedFetch(
+            `/.netlify/functions/market-cap-proxy?codes=${encodeURIComponent(unique.slice(start, start + 100).join(','))}`, session
         )
         if (!res.ok) throw new Error(`market-cap-proxy HTTP ${res.status}`)
         const data = await res.json()
-        return data as Record<string, number | null>
-    } catch (err) {
-        console.error('[marketCap] 查詢已發行股數失敗:', err)
-        return Object.fromEntries(codes.map(c => [c, null]))
+        Object.assign(result, data)
     }
+    return result
 }
 
 /**

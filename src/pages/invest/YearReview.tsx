@@ -1,11 +1,15 @@
+import LoadingState from '../../components/LoadingState'
+import { accountXirr, calculateSnapshotAccountReturn, buildTimeWeightedReturns, calculateReturnDrawdown, snapshotValuationIssue, type AssetValuation } from '../../lib/performanceReturns'
+import DisclosureNote from '../../components/DisclosureNote'
+import { buildTodaySnapshot } from '../../lib/snapshot'
+import { captureUserSession } from '../../lib/userDB'
 // YearReview.tsx
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useInvestSync } from '../../InvestSyncContext'
 import { getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userDocNested } from '../../lib/userDB'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { calcAvailableCash, calcPositions, type DividendRecord, type TradeRecord } from '../../lib/calc'
+import { calcPositions, receivedCashDividends, type DividendRecord, type TradeRecord } from '../../lib/calc'
 import { fetchTrades, fetchDividends, fetchCashflow, fetchAssetSnapshots } from '../../lib/investData'
 // ✅ 1-2：共用 UI 樣式與格式化（inp 因本頁刻意無 width:100%，保留本地定義）
 import { card } from '../../ui/styles'
@@ -26,8 +30,9 @@ interface YearlyPerf {
     startValue: number
     endValue: number
     invested: number
-    cagr: number
-    totalReturn: number
+    cagr: number | null
+    totalReturn: number | null
+    reason: string
 }
 
 interface RealizedTrade {
@@ -48,7 +53,7 @@ interface YearStat {
     total: number
     costBasis: number
     returnRate: number | null
-    /** ✅ 5-2：含息報酬率 =（已實現價差＋現金股利）/ 已實現成本基礎 */
+    /** Account XIRR includes received dividends and unrealized NAV changes. */
     totalReturnRate: number | null
     winRate: number | null
     tradeCount: number
@@ -56,7 +61,7 @@ interface YearStat {
 
 interface BarChartEntry {
     year: string
-    '年度報酬率%': number
+    '年度報酬率%': number | null
     '年末資產': number
     fill: string
 }
@@ -70,12 +75,6 @@ interface MonthlyBarEntry {
     realizedFill: string
 }
 
-// ── 原始現金流（供 XIRR 區間計算使用）──
-interface RawCashflow {
-    date: string
-    amount: number // 負 = 流出（買入/入金），正 = 流入（賣出/出金/股利）
-}
-
 // ── 出入金（供 snapshot 分頁排除增資影響）──
 // amount 約定：入金 = 負（資金流出口袋、流入帳戶），出金 = 正
 // 與 XIRR 期初(負)、期末(正) 方向一致
@@ -84,45 +83,12 @@ interface AccountCashflow {
     amount: number
 }
 
-function calcXIRR(cashflows: { date: string; amount: number }[]): number | null {
-    if (cashflows.length < 2) return null
-    const t0 = new Date(cashflows[0].date).getTime()
-    const days = cashflows.map(cf => (new Date(cf.date).getTime() - t0) / 86400000)
-    const amounts = cashflows.map(cf => cf.amount)
-    const npv = (rate: number) =>
-        amounts.reduce((s, a, i) => s + a / Math.pow(1 + rate, days[i] / 365.25), 0)
-    let lo = -0.999, hi = 100.0
-    if (Math.sign(npv(lo)) === Math.sign(npv(hi))) return null
-    for (let i = 0; i < 200; i++) {
-        const mid = (lo + hi) / 2
-        if (Math.abs(hi - lo) < 1e-8) return mid
-        if (Math.sign(npv(mid)) === Math.sign(npv(lo))) lo = mid
-        else hi = mid
-    }
-    return (lo + hi) / 2
-}
-
-function calcMDD(curve: number[]): number {
-    let peak = -Infinity, maxDD = 0
-    for (const v of curve) {
-        if (v > peak) peak = v
-        const dd = peak > 0 ? (peak - v) / peak : 0
-        if (dd > maxDD) maxDD = dd
-    }
-    return maxDD
-}
-
 function heatColor(val: number, max: number): string {
     if (max === 0) return 'var(--c-border)'
     const r = Math.min(Math.abs(val) / max, 1)
     if (val > 0) return `rgba(0,200,150,${(0.15 + r * 0.65).toFixed(2)})`
     if (val < 0) return `rgba(255,87,87,${(0.15 + r * 0.65).toFixed(2)})`
     return 'var(--c-card)'
-}
-
-function calcCAGR(startValue: number, endValue: number, years: number): number {
-    if (startValue <= 0 || years <= 0) return 0
-    return (Math.pow(endValue / startValue, 1 / years) - 1) * 100
 }
 
 // 本頁的 inp 刻意不帶 width:100%（用於行內 select），與共用版不同，故保留本地定義
@@ -157,12 +123,17 @@ export default function YearReview() {
     const [startMonth, setStartMonth] = useState(1)
     const [endMonth, setEndMonth] = useState(12)
     const [loading, setLoading] = useState(true)
+    const [loadError, setLoadError] = useState('')
+    const [hasLoaded, setHasLoaded] = useState(false)
     const [years, setYears] = useState<number[]>([])
 
     const [yearlyPerf, setYearlyPerf] = useState<YearlyPerf[]>([])
     const [customStart, setCustomStart] = useState('')
     const [customEnd, setCustomEnd] = useState('')
     const [customCAGR, setCustomCAGR] = useState<number | null>(null)
+    const [customMessage, setCustomMessage] = useState('')
+    const [customBasis, setCustomBasis] = useState('')
+    const customRequestRef = useRef(0)
     const [assetSnapshots, setAssetSnapshots] = useState<Record<string, number>>({})
     const [perfLoading, setPerfLoading] = useState(false)
     const [perfConfig, setPerfConfig] = useState<{ startDate: string | null; startValue: number | null }>({ startDate: null, startValue: null })
@@ -177,10 +148,8 @@ export default function YearReview() {
         rawDataLoadedRef.current = false
         loadedVersionRef.current = syncVersion
     }
-    const savedPricesRef = useRef<Record<string, number | string>>({})
 
     const [xirr, setXirr] = useState<number | null>(null)
-    const [xirrCost, setXirrCost] = useState<number | null>(null)
     const [mdd, setMdd] = useState<number | null>(null)
     const [winRate, setWinRate] = useState<number | null>(null)
     const [totalWins, setTotalWins] = useState(0)
@@ -205,14 +174,10 @@ export default function YearReview() {
     } | null>(null)
     const [rangeLoading, setRangeLoading] = useState(false)
 
-    // 儲存原始現金流供區間重算（loadPerformance 後設定）
-    const rawCashflowsRef = useRef<RawCashflow[]>([])
-    // 儲存每一天的持倉快照（日期 → {code: {shares, avgCost}}）供區間估算用
-    const posSnapshotRef = useRef<{
-        dates: string[]
-        snapshots: Record<string, Record<string, { shares: number; avgCost: number; marginAmount?: number }>>
-        savedPrices: Record<string, number | string>
-    }>({ dates: [], snapshots: {}, savedPrices: {} })
+    const performanceSnapshotsRef = useRef<AssetValuation[]>([])
+    const performanceCashflowsRef = useRef<AccountCashflow[]>([])
+    const [performanceMessage, setPerformanceMessage] = useState('')
+    const [rangeMessage, setRangeMessage] = useState('')
 
     // ✅ 修正：年度報酬率改用 XIRR，排除出入金（增資）影響。
     //   原本 (年末資產 − 年初資產) / 年初資產 會把入金當成獲利而高估。
@@ -222,9 +187,7 @@ export default function YearReview() {
     const calcYearlyPerf = useCallback((
         allYears: number[],
         snapshots: Record<string, number>,
-        _trades: TradeRecord[],
-        cashflows: AccountCashflow[],
-        _dividends: DividendRecord[]
+        cashflows: AccountCashflow[]
     ) => {
         const perf: YearlyPerf[] = []
         allYears.forEach(year => {
@@ -241,20 +204,12 @@ export default function YearReview() {
                 .filter(c => c.date > startDate && c.date <= endDate)
                 .reduce((s, c) => s - c.amount, 0) // amount 入金為負 → 取負還原成「投入金額為正」
 
-            // 組現金流：期初淨值(負) + 區間出入金(入金負/出金正) + 期末淨值(正)
-            const cf: { date: string; amount: number }[] = [{ date: startDate, amount: -startValue }]
-            cashflows
-                .filter(c => c.date > startDate && c.date <= endDate)
-                .forEach(c => cf.push({ date: c.date, amount: c.amount }))
-            // ✅ 方案 A：快照的 cash 已含現金股利（期初/期末淨值都吸收了股利），
-            //    股利不再列為獨立正向流，否則重複計算。
-            cf.push({ date: endDate, amount: endValue })
-
-            const xirr = calcXIRR(cf.sort((a, b) => a.date.localeCompare(b.date)))
-            const annualized = xirr != null ? xirr * 100 : 0
+            // NAV already includes dividends and sale proceeds; only external flows enter XIRR.
+            const result = calculateSnapshotAccountReturn({ snapshots: performanceSnapshotsRef.current, startDate, endDate, cashflows })
+            const annualized = result.annualized
 
             perf.push({
-                year, startValue, endValue, invested,
+                year, startValue, endValue, invested, reason: result.reason,
                 cagr: annualized,        // XIRR 年化（已排除出入金）
                 totalReturn: annualized  // 與 cagr 同口徑，圖表/表格皆顯示真實年化報酬
             })
@@ -268,14 +223,14 @@ export default function YearReview() {
         const monthlyCost: Record<string, number> = {}
         const monthlyDividend: Record<string, number> = {}
 
-        for (const r of calcPositions(trades, dividends).realized) {
+        for (const r of calcPositions(trades, dividends, { asOf: toLocalDateString() }).realized) {
             if (r.date.slice(0, 4) !== String(year)) continue
             const mo = r.date.slice(0, 7)
             monthlyRealized[mo] = (monthlyRealized[mo] || 0) + r.realized
             monthlyCost[mo] = (monthlyCost[mo] || 0) + r.avgCost * r.shares
         }
 
-        dividends.forEach(d => {
+        receivedCashDividends(dividends, toLocalDateString()).forEach(d => {
             if (d.date.slice(0, 4) === String(year)) {
                 const mo = d.date.slice(0, 7)
                 monthlyDividend[mo] = (monthlyDividend[mo] || 0) + d.cashDividend
@@ -297,6 +252,7 @@ export default function YearReview() {
     const load = useCallback(async () => {
         setLoading(true)
         try {
+            const session = captureUserSession()
             let trades: TradeRecord[]
             let dividends: DividendRecord[]
             let snapshots: Record<string, number>
@@ -305,17 +261,20 @@ export default function YearReview() {
             // ── 只有第一次才讀 Firestore，之後切換年份從快取重算 ──
             if (!rawDataLoadedRef.current) {
                 // ✅ 多讀 cashflow，供 snapshot 分頁排除出入金
-                const [tradesData, dividendsData, snapshotRows, cashflowData] = await Promise.all([
+                const [tradesData, dividendsData, allSnapshotRows, cashflowData] = await Promise.all([
                     fetchTrades<TradeRecord>('asc'),
                     fetchDividends<DividendRecord>('asc'),
-                    fetchAssetSnapshots<{ date: string; totalAssets: number }>('asc'),
+                    fetchAssetSnapshots<AssetValuation>('asc'),
                     fetchCashflow<{ date: string; type: 'in' | 'out'; amount: number }>('asc')
                 ])
 
+                session.assertActive()
+                const snapshotRows = allSnapshotRows.filter(row => row.date <= toLocalDateString())
                 trades = tradesData
                 dividends = dividendsData
                 snapshots = {}
                 snapshotRows.forEach(row => { snapshots[row.date] = row.totalAssets })
+                performanceSnapshotsRef.current = snapshotRows
                 setAssetSnapshots(snapshots)
 
                 // ┌─────────────────────────────────────────────────────────────┐
@@ -334,21 +293,19 @@ export default function YearReview() {
                 allCashflowsRef.current = cashflows
 
                 // 讀取設定與現價（只需一次）
-                getDoc(userDocNested(investDB, 'settings', 'performanceConfig')).then(pd => {
+                getDoc(session.doc(investDB, 'settings', 'performanceConfig')).then(pd => {
+                    session.assertActive()
                     if (pd.exists()) setPerfConfig({ startDate: pd.data().startDate || null, startValue: pd.data().startValue || null })
                 }).catch(() => { })
-                getDoc(userDocNested(investDB, 'settings', 'lastPrices')).then(pd => {
-                    savedPricesRef.current = pd.exists() ? pd.data() as Record<string, number | string> : {}
-                }).catch(() => { })
 
-                const allDates = [...trades.map(t => t.date), ...dividends.map(d => d.date)]
+                const allDates = [...trades.map(t => t.date), ...receivedCashDividends(dividends, toLocalDateString()).map(d => d.date), ...snapshotRows.map(s => s.date)].filter(d => d <= toLocalDateString())
                 const allYears = [...new Set(allDates.map(d => parseInt(d.slice(0, 4))))].sort()
                 if (allYears.length > 0) {
                     setYears(allYears)
                     setCustomStart(prev => prev || `${allYears[0]}-01-01`)
                     setCustomEnd(prev => prev || toLocalDateString())
                 }
-                calcYearlyPerf(allYears, snapshots, trades, cashflows, dividends)
+                calcYearlyPerf(allYears, snapshots, cashflows)
                 rawDataLoadedRef.current = true
             } else {
                 // 切換年份：從快取直接重算，不讀 Firestore
@@ -360,77 +317,66 @@ export default function YearReview() {
 
             // 重算本年月度資料
             calcMonthlyForYear(selectedYear, trades, dividends)
-        } catch (err) { console.error(err) }
+            setLoadError('')
+            setHasLoaded(true)
+        } catch (err) { console.error(err); setLoadError(err instanceof Error ? err.message : '年度資料載入失敗，請重新載入。') }
         setLoading(false)
     }, [selectedYear, calcYearlyPerf, calcMonthlyForYear, assetSnapshots])
 
     // ── 切換年份時只重算月度資料，不重讀 Firestore ──
     const handleYearChange = useCallback((year: number) => {
         setSelectedYear(year)
-        if (rawDataLoadedRef.current) {
-            calcMonthlyForYear(year, allTradesRef.current, allDividendsRef.current)
-        }
-    }, [calcMonthlyForYear])
+        // The load effect reuses cached rows and also handles invalid-ledger errors.
+    }, [])
 
-    // ✅ 修正：自訂區間 CAGR 改用 XIRR，排除區間內出入金（增資）影響。
-    //   期初持倉以成本估值作為流出(負)，期末（持倉市值 + 區間已實現 + 區間股利）作為流入(正)，
-    //   區間內的出入金一併納入現金流，XIRR 自動排除增資對報酬率的扭曲。
-    const calcCustomCAGR = useCallback(() => {
+    // End-of-day account NAV plus external flows only. Sale proceeds and dividends
+    // already belong to NAV cash; adding realized profit again would double-count.
+    const calcCustomCAGR = useCallback(async () => {
+        const requestId = ++customRequestRef.current
+        setCustomCAGR(null)
+        setCustomMessage('')
+        setCustomBasis('')
         if (!customStart || !customEnd || customStart >= customEnd) return
         setPerfLoading(true)
-
-        const trades = allTradesRef.current
-        const dividends = allDividendsRef.current
-        const cashflows = allCashflowsRef.current
-        const savedPrices = savedPricesRef.current
-
-        // 設定頁的起始日配置：實際計算起始點 = max(customStart, perfConfig.startDate)
-        const effectiveStart = perfConfig.startDate && perfConfig.startDate > customStart
-            ? perfConfig.startDate
-            : customStart
-
-        // 期初資產：若設定頁有起始資產且起始日吻合，用那個數字；否則用期初持倉成本推算
-        let startValue: number
-        if (perfConfig.startValue && perfConfig.startDate && effectiveStart === perfConfig.startDate) {
-            startValue = perfConfig.startValue
-        } else {
-            const posStart = calcPositions(trades.filter(t => t.date <= effectiveStart), dividends.filter(d => d.date <= effectiveStart)).holdings
-            startValue = Object.values(posStart).reduce((s, p) => s + p.totalCost, 0)
-        }
-
-        const endResult = calcPositions(trades.filter(t => t.date <= customEnd), dividends.filter(d => d.date <= customEnd))
-        const posEnd = endResult.holdings
-        const realizedPnL = endResult.realized.filter(r => r.date > effectiveStart).reduce((sum, r) => sum + r.realized, 0)
-
-        const endPortfolioValue = Object.entries(posEnd).reduce((s, [code, p]) => {
-            if (p.shares <= 0) return s
-            const cp = savedPrices[code]
-            return s + (typeof cp === 'number' ? cp * p.shares : p.totalCost)
-        }, 0)
-
-        const dividendIncome = dividends
-            .filter(d => d.date > effectiveStart && d.date <= customEnd)
-            .reduce((s, d) => s + d.cashDividend, 0)
-
-        // 期末總流入：持倉市值（含已實現損益已反映在現金，但此處 endPortfolioValue 僅為剩餘持倉，
-        // 故仍需加回區間已實現損益與股利作為回收價值）
-        const endValue = endPortfolioValue + realizedPnL + dividendIncome
-
-        if (startValue <= 0 || endValue <= 0) { setCustomCAGR(null); setPerfLoading(false); return }
-
-        // 組現金流：期初(負) + 區間出入金 + 期末(正)，以 XIRR 求年化（排除增資）
-        const cf: { date: string; amount: number }[] = [{ date: effectiveStart, amount: -startValue }]
-        cashflows
-            .filter(c => c.date > effectiveStart && c.date <= customEnd)
-            .forEach(c => cf.push({ date: c.date, amount: c.amount }))
-        cf.push({ date: customEnd, amount: endValue })
-
-        const xirr = calcXIRR(cf.sort((a, b) => a.date.localeCompare(b.date)))
-        if (xirr == null) { setCustomCAGR(null); setPerfLoading(false); return }
-
-        setCustomCAGR(xirr * 100)
-        setPerfLoading(false)
-    }, [customStart, customEnd, perfConfig])
+        try {
+            const session = captureUserSession()
+            const [snapshots, cashflows, configDoc] = await Promise.all([
+                fetchAssetSnapshots<AssetValuation>('asc'),
+                fetchCashflow<{ date: string; type: 'in' | 'out'; amount: number }>('asc'),
+                getDoc(session.doc(investDB, 'settings', 'performanceConfig')),
+            ])
+            session.assertActive()
+            if (requestId !== customRequestRef.current) return
+            const config = configDoc.exists() ? configDoc.data() : {}
+            const start = typeof config.startDate === 'string' && config.startDate > customStart ? config.startDate : customStart
+            if (start >= customEnd || customEnd > toLocalDateString()) {
+                setCustomMessage('請選擇截至今日的有效區間；績效起始設定不得晚於結束日')
+                return
+            }
+            // Historical values come from dated snapshots; today's endpoint may use current quotes.
+            let endSource = '當日資產快照'
+            if (!snapshots.some(s => s.date === customEnd) && customEnd === toLocalDateString()) {
+                const current = await buildTodaySnapshot()
+                session.assertActive()
+                if (requestId !== customRequestRef.current) return
+                if (current.snapshot.date !== customEnd || current.missing.length || current.stale.length) {
+                    setCustomMessage('今日淨值尚缺完整有效報價，請先更新所有持股現價')
+                    return
+                }
+                snapshots.push(current.snapshot)
+                endSource = '今日有效報價估值'
+            }
+            const result = calculateSnapshotAccountReturn({ snapshots, startDate: start, endDate: customEnd,
+                cashflows: cashflows.map(c => ({ date: c.date, amount: c.type === 'in' ? -c.amount : c.amount })) })
+            setCustomCAGR(result.annualized)
+            setCustomMessage(result.reason)
+            if (result.startValue !== null && result.endValue !== null) {
+                setCustomBasis(start + ' ～ ' + customEnd + '；期初 ' + result.startValue.toLocaleString() + '（當日資產快照），期末 ' + result.endValue.toLocaleString() + '（' + endSource + '）')
+            }
+        } catch (error) {
+            if (requestId === customRequestRef.current) setCustomMessage(error instanceof Error ? error.message : '無法計算區間報酬')
+        } finally { if (requestId === customRequestRef.current) setPerfLoading(false) }
+    }, [customStart, customEnd])
 
     // ── 計算自訂區間統計：只取區間內的資料重算 XIRR / MDD / 勝率 / 平均持有天數，
     //    確保整頁指標口徑一致，不會有些採全歷史、有些採區間的落差 ──
@@ -438,7 +384,7 @@ export default function YearReview() {
         if (!rangeStart || !rangeEnd || rangeStart >= rangeEnd) return
         setRangeLoading(true)
 
-        // ── 勝率／平均持有天數／MDD：只取區間內的已實現交易 ──
+        // 勝率／平均持有天數取區間已實現交易；MDD 另取區間每日快照淨值。
         const tradesInRange = realizedTrades
             .filter(r => r.date >= rangeStart && r.date <= rangeEnd)
             .sort((a, b) => a.date.localeCompare(b.date))
@@ -448,154 +394,60 @@ export default function YearReview() {
         const winRate = total > 0 ? (wins / total) * 100 : null
         const avgHoldingDays = total > 0 ? tradesInRange.reduce((s, r) => s + r.holdingDays, 0) / total : null
 
-        let running = 0
-        const curve: number[] = []
-        tradesInRange.forEach(r => { running += r.pnl; curve.push(running) })
-        const mdd = curve.length > 0 ? calcMDD(curve) : null
-
-        // ── XIRR：期初／期末持倉市值（用快照估算）＋ 區間內出入金 ──
-        const { dates: snapDates, snapshots: posSnaps, savedPrices } = posSnapshotRef.current
-        const allCfs = rawCashflowsRef.current
-
-        const inRangeCfs = allCfs.filter(cf => cf.date >= rangeStart && cf.date <= rangeEnd)
-
-        // 估算期初持倉市值（作為負現金流，代表「在這個時間點投入」）
-        const beforeSnap = snapDates.filter(d => d < rangeStart).sort()
-        const startSnapDate = beforeSnap[beforeSnap.length - 1]
-        let startPortfolioValue = 0
-        if (startSnapDate) {
-            const snap = posSnaps[startSnapDate]
-            Object.entries(snap).forEach(([code, { shares, avgCost, marginAmount }]) => {
-                if (shares <= 0) return
-                const cp = savedPrices[code]
-                startPortfolioValue += (typeof cp === 'number' ? cp * shares : avgCost * shares) - (marginAmount || 0)
-            })
-        }
-
-        // 估算期末持倉市值（作為正現金流，代表「在這個時間點回收」）
-        const afterSnap = snapDates.filter(d => d <= rangeEnd).sort()
-        const endSnapDate = afterSnap[afterSnap.length - 1]
-        let endPortfolioValue = 0
-        if (endSnapDate) {
-            const snap = posSnaps[endSnapDate]
-            Object.entries(snap).forEach(([code, { shares, avgCost, marginAmount }]) => {
-                if (shares <= 0) return
-                const cp = savedPrices[code]
-                endPortfolioValue += (typeof cp === 'number' ? cp * shares : avgCost * shares) - (marginAmount || 0)
-            })
-        }
-
-        const combined: { date: string; amount: number }[] = []
-        if (startPortfolioValue > 0) {
-            combined.push({ date: rangeStart, amount: -startPortfolioValue })
-        }
-        inRangeCfs.forEach(cf => combined.push({ date: cf.date, amount: cf.amount }))
-        if (endPortfolioValue > 0) {
-            combined.push({ date: rangeEnd, amount: endPortfolioValue })
-        }
-
-        const sorted = combined.sort((a, b) => a.date.localeCompare(b.date))
-        const xirr = sorted.length >= 2 ? calcXIRR(sorted) : null
-
-        setRangeStats({ xirr, mdd, winRate, wins, total, avgHoldingDays })
+        const snapshots = performanceSnapshotsRef.current.filter(s => s.date >= rangeStart && s.date <= rangeEnd)
+        const cashflows = performanceCashflowsRef.current
+        const result = calculateSnapshotAccountReturn({ snapshots, startDate: rangeStart, endDate: rangeEnd, cashflows })
+        const points = buildTimeWeightedReturns(snapshots, cashflows.map(c => ({ ...c, amount: -c.amount })), true, true)
+        // XIRR may have a boundary result or no unique root while NAV drawdown
+        // remains valid. Require the requested endpoints independently.
+        const mdd = points[0]?.date === rangeStart && points.at(-1)?.date === rangeEnd ? calculateReturnDrawdown(points) : null
+        setRangeMessage(result.reason || points.find(p => p.issue)?.issue || '')
+        setRangeStats({ xirr: result.annualized === null ? null : result.annualized / 100, mdd, winRate, wins, total, avgHoldingDays })
         setRangeLoading(false)
     }, [rangeStart, rangeEnd, realizedTrades])
 
     const loadPerformance = useCallback(async () => {
         setXirrLoading(true)
         try {
-            // ✅ 1-1：改走共用快取層（lib/investData）
-            const allTrades = await fetchTrades<TradeRecord>('asc')
-
-            interface CashflowRecord { date: string; type: 'in' | 'out'; amount: number }
-            const cashflows = await fetchCashflow<CashflowRecord>('asc')
-
-            const dividends = await fetchDividends<DividendRecord>('asc')
-
-            const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
-            const savedPrices: Record<string, number | string> = priceDoc.exists() ? priceDoc.data() : {}
-
-            const calculation = calcPositions(allTrades, dividends, { includeDailyHoldings: true })
-            const posDetail = calculation.holdings
+            const session = captureUserSession()
+            const [allTrades, dividends, cashflows, allSnapshotRows] = await Promise.all([
+                fetchTrades<TradeRecord>('asc'), fetchDividends<DividendRecord>('asc'),
+                fetchCashflow<{date: string; type: 'in' | 'out'; amount: number}>('asc'),
+                fetchAssetSnapshots<AssetValuation>('asc'),
+            ])
+            session.assertActive()
+            const today = toLocalDateString()
+            const snapshots = allSnapshotRows.filter(row => row.date <= today).sort((a, b) => a.date.localeCompare(b.date))
+            const received = receivedCashDividends(dividends, today)
+            performanceSnapshotsRef.current = snapshots
+            performanceCashflowsRef.current = cashflows.filter(c => c.date <= today).map(c => ({date: c.date, amount: c.type === 'in' ? -c.amount : c.amount}))
+            const calculation = calcPositions(allTrades, dividends, { asOf: today })
             const realized: RealizedTrade[] = calculation.realized.map(r => ({
                 date: r.date, code: r.code, name: r.name, pnl: r.realized,
                 costBasis: r.avgCost * r.shares, holdingDays: r.holdingDays || 0,
                 returnRate: r.returnRate * 100, category: r.category,
             }))
-            let runningEquity = 0
-            const equityCurve = realized.map(r => { runningEquity += r.pnl; return runningEquity })
-            const posSnapshots = calculation.dailyHoldings || {}
-            const snapDates = Object.keys(posSnapshots)
-
-            // 持倉區間 XIRR 採買入、賣出與股利收付；帳戶入金不能再列一次，避免重複投入。
-            const rawCfs: RawCashflow[] = []
-
-            // 現金流維持原始成交收付；配對僅改變成本歸屬。
-            for (const t of allTrades) {
-                rawCfs.push({ date: t.date, amount: t.type === 'buy' ? -t.total : t.total })
-            }
-
-            // 股利也加入原始現金流
-            // ⚠️ 此處刻意保留股利為獨立正向流：自訂區間 XIRR 的期初/期末值只含「持倉市值」、
-            //    不含現金，股利（與賣出收益）是已回收價值，必須以獨立流入帳才完整。
-            //    與全期 XIRR（期末含可用現金、股利不另列）口徑不同，是兩種模型各自自洽。
-            dividends.forEach(d => {
-                if (d.cashDividend > 0) rawCfs.push({ date: d.date, amount: d.cashDividend })
-            })
-
-            // 儲存供區間計算使用
-            rawCashflowsRef.current = rawCfs.sort((a, b) => a.date.localeCompare(b.date))
-            posSnapshotRef.current = {
-                dates: snapDates.sort(),
-                snapshots: posSnapshots,
-                savedPrices
-            }
-
-            // 初始化自訂區間日期（如果還沒設定）：取現金流與已實現交易中最早的日期到今天
-            const allRangeDates = [...rawCfs.map(cf => cf.date), ...realized.map(r => r.date)]
-            if (allRangeDates.length > 0) {
-                const earliest = allRangeDates.sort()[0]
-                setRangeStart(prev => prev || earliest)
-                setRangeEnd(prev => prev || toLocalDateString())
-            }
+            const points = buildTimeWeightedReturns(snapshots, performanceCashflowsRef.current.map(c => ({...c, amount: -c.amount})), true, true)
+            const valuationDates = snapshots.filter(s => !snapshotValuationIssue(s, s.date)).map(s => s.date)
+            setRangeStart(prev => prev || valuationDates[0] || today)
+            setRangeEnd(prev => prev || valuationDates.at(-1) || today)
 
             setRealizedTrades([...realized].reverse())
             const wins = realized.filter(r => r.pnl > 0.5).length
             setTotalWins(wins); setTotalTrades(realized.length)
             setWinRate(realized.length > 0 ? (wins / realized.length) * 100 : null)
             setAvgHoldingDays(realized.length > 0 ? realized.reduce((s, r) => s + r.holdingDays, 0) / realized.length : null)
-            setMdd(equityCurve.length > 0 ? calcMDD(equityCurve) : null)
-
-            // 全期 XIRR（終值用現價）
-            // 正負號 = XIRR 口徑：入金負、出金正、期末總淨值正
-            // ⚠️ 入金/出金是「帳戶層級」外部金流，期末回收值必須是帳戶總淨值 = 持倉市值 + 可用現金。
-            //    若只算持倉市值，賣股後留在帳上的現金與閒置入金都會被漏掉，
-            //    部位了結越多 XIRR 失真越大（極端：全數獲利了結未出金 → 解出極度負值）。
-            // ⚠️ 方案 A：calcAvailableCash 已含現金股利，故股利【不再】列為獨立正向流，否則重複計算。
-            const xirrBase: { date: string; amount: number }[] = []
-            cashflows.forEach(cf => { xirrBase.push({ date: cf.date, amount: cf.type === 'in' ? -cf.amount : cf.amount }) })
-
-            let endMV = 0, endCost = 0
-            Object.entries(posDetail).forEach(([code, p]) => {
-                if (p.shares > 0) {
-                    const cp = savedPrices[code] ?? null
-                    endMV += typeof cp === 'number' ? cp * p.shares : p.totalCost
-                    endCost += p.totalCost
-                }
-            })
-
-            const endCash = calcAvailableCash(cashflows, allTrades, dividends)
-
-            const today = toLocalDateString()
-            const mkXirr = (ev: number) => calcXIRR(
-                [...xirrBase, { date: today, amount: ev }].sort((a, b) => a.date.localeCompare(b.date))
-            )
-            const endDebt = Object.values(posDetail).reduce((sum, p) => sum + (p.marginAmount || 0), 0)
-            setXirr(mkXirr(endMV + endCash - endDebt)); setXirrCost(mkXirr(endCost + endCash - endDebt))
-
-            const allYrs = [...new Set(realized.map(r => parseInt(r.date.slice(0, 4))))].sort()
+            setMdd(calculateReturnDrawdown(points))
+            const endpoint = snapshots.at(-1)
+            const endpointIssue = snapshotValuationIssue(endpoint, endpoint?.date || today)
+                || (snapshots.filter(row => row.date === endpoint?.date).length > 1 ? '同一天有重複快照，請先核對紀錄' : null)
+            const flowRows = performanceCashflowsRef.current.filter(c => endpoint && c.date <= endpoint.date)
+            const rate = endpointIssue ? null : accountXirr([...flowRows, {date: endpoint!.date, amount: endpoint!.totalAssets}])
+            setXirr(rate)
+            setPerformanceMessage(endpointIssue || (rate === null ? '現金流無法求得單一報酬率' : '依截至 ' + endpoint!.date + ' 的每日快照估算'))
+            const allYrs = [...new Set([...realized.map(r => parseInt(r.date.slice(0, 4))), ...received.map(d => parseInt(d.date.slice(0, 4)))])].sort()
             const divByYear: Record<number, number> = {}
-            dividends.forEach(d => { const y = parseInt(d.date.slice(0, 4)); divByYear[y] = (divByYear[y] || 0) + d.cashDividend })
+            received.forEach(d => { const y = parseInt(d.date.slice(0, 4)); divByYear[y] = (divByYear[y] || 0) + d.cashDividend })
 
             setYearStats(allYrs.map(y => {
                 const yr = realized.filter(r => r.date.startsWith(String(y)))
@@ -603,11 +455,17 @@ export default function YearReview() {
                 const totalCb = yr.reduce((s, r) => s + r.costBasis, 0)
                 const totalD = divByYear[y] || 0
                 const w = yr.filter(r => r.pnl > 0.5).length
+                const dated = snapshots.filter(s => s.date <= today).sort((a, b) => a.date.localeCompare(b.date))
+                const yearValues = dated.filter(s => s.date.startsWith(String(y)))
+                const start = dated.filter(s => s.date.startsWith(String(y - 1))).at(-1) || yearValues[0]
+                const end = yearValues.at(-1)
+                const accountRate = start && end ? calculateSnapshotAccountReturn({ snapshots: dated,
+                    startDate: start.date, endDate: end.date, cashflows: performanceCashflowsRef.current }).annualized : null
                 return {
                     year: y, realized: totalR, dividend: totalD, total: totalR + totalD, costBasis: totalCb,
                     returnRate: totalCb > 0 ? (totalR / totalCb) * 100 : null,
-                    // ✅ 5-2：含息報酬率（分母同已實現成本基礎，與已實現報酬率可直接比較）
-                    totalReturnRate: totalCb > 0 ? ((totalR + totalD) / totalCb) * 100 : null,
+                    // Dividends from open holdings cannot use closed-trade costs as their denominator.
+                    totalReturnRate: accountRate,
                     winRate: yr.length > 0 ? (w / yr.length) * 100 : null, tradeCount: yr.length,
                 }
             }))
@@ -616,9 +474,10 @@ export default function YearReview() {
             for (const r of calculation.realized) {
                 heat[r.date.slice(0, 7)] = (heat[r.date.slice(0, 7)] || 0) + r.realized
             }
-            dividends.forEach(d => { heat[d.date.slice(0, 7)] = (heat[d.date.slice(0, 7)] || 0) + d.cashDividend })
+            received.forEach(d => { heat[d.date.slice(0, 7)] = (heat[d.date.slice(0, 7)] || 0) + d.cashDividend })
             setHeatmapData(heat)
-        } catch (err) { console.error(err) }
+        setHasLoaded(true)
+        } catch (err) { console.error(err); setXirr(null); setMdd(null); setPerformanceMessage(err instanceof Error ? err.message : '績效資料載入失敗'); setRangeStats(null) }
         setXirrLoading(false)
     }, [])
 
@@ -626,6 +485,7 @@ export default function YearReview() {
     useEffect(() => {
         let cancelled = false
         const run = async () => {
+            setRangeStats(null)
             await load()
         }
         if (!cancelled) void run()
@@ -656,29 +516,15 @@ export default function YearReview() {
         if (dates.length < 2) return null
         const startDate = dates[0]
         const endDate = dates[dates.length - 1]
-        const startValue = assetSnapshots[startDate] || 0
-        const endValue = assetSnapshots[endDate] || 0
-        if (startValue <= 0 || endValue <= 0) return null
-
-        const cashflows = allCashflowsRef.current
-
-        const cf: { date: string; amount: number }[] = [{ date: startDate, amount: -startValue }]
-        cashflows
-            .filter(c => c.date > startDate && c.date <= endDate)
-            .forEach(c => cf.push({ date: c.date, amount: c.amount }))
-        // ✅ 方案 A：快照的 cash 已含現金股利，股利不再列為獨立正向流，否則重複計算。
-        cf.push({ date: endDate, amount: endValue })
-
-        const xirr = calcXIRR(cf.sort((a, b) => a.date.localeCompare(b.date)))
-        return xirr != null ? xirr * 100 : null
+        return calculateSnapshotAccountReturn({ snapshots: performanceSnapshotsRef.current, startDate, endDate, cashflows: allCashflowsRef.current }).annualized
     }, [assetSnapshots])
 
     // ✅ 3-3：圖表資料衍生陣列包 useMemo（recharts 對 data 參考變動敏感，順便減少重繪）
     const perfChartData: BarChartEntry[] = useMemo(() => yearlyPerf.map(p => ({
         year: `${p.year}`,
-        '年度報酬率%': parseFloat(p.totalReturn.toFixed(2)),
+        '年度報酬率%': p.totalReturn === null ? null : Number(p.totalReturn.toFixed(2)),
         '年末資產': p.endValue,
-        fill: p.totalReturn >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
+        fill: (p.totalReturn ?? 0) >= 0 ? 'var(--c-positive)' : 'var(--c-danger)'
     })), [yearlyPerf])
 
     const filteredWithFill: MonthlyBarEntry[] = useMemo(() => filtered.map(m => ({
@@ -707,8 +553,8 @@ export default function YearReview() {
         .perf-table td { padding: 12px; border-bottom: 1px solid var(--c-border); color: var(--c-text); white-space: nowrap; }
       `}</style>
 
-            <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
-                <div style={{ marginBottom: '24px' }}>
+            <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1600px', margin: '0 auto' }}>
+                <div style={{ marginBottom: '16px' }}>
                     <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: '0 0 12px' }}>年度復盤</h1>
                     <div style={{ display: 'inline-flex', backgroundColor: 'var(--c-card)', padding: '4px', borderRadius: '8px', gap: '4px' }}>
                         <button style={tabBtn(tab === 'review')} onClick={() => setTab('review')}>損益分析</button>
@@ -717,7 +563,9 @@ export default function YearReview() {
                     </div>
                 </div>
 
-                {tab === 'review' && (
+                {loadError && <div role="alert" className="ui-load-error">{loadError} <button className="ui-button ui-button-secondary" disabled={loading} onClick={() => { rawDataLoadedRef.current = false; void load() }}>重新載入</button></div>}
+
+                {tab === 'review' && !loadError && (
                     <>
                         <div style={{ ...card, marginBottom: '20px', display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                             <div>
@@ -758,7 +606,8 @@ export default function YearReview() {
                             <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '20px' }}>
                                 {selectedYear} 年 {startMonth}–{endMonth} 月 損益分佈
                             </div>
-                            {loading ? <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>載入中...</div> : (
+                            {loading && hasLoaded && <p className="ui-refresh-status" role="status">資料更新中…</p>}
+                    {loading && !hasLoaded ? <LoadingState /> : (
                                 <ResponsiveContainer width="100%" height={300}>
                                     <BarChart data={filteredWithFill} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                                         <CartesianGrid strokeDasharray="3 3" stroke="var(--c-border)" />
@@ -813,11 +662,11 @@ export default function YearReview() {
                     </>
                 )}
 
-                {tab === 'snapshot' && (
+                {tab === 'snapshot' && !loadError && (
                     <>
                         <div style={{ marginBottom: '20px' }}>
                             <h2 style={{ fontSize: 'clamp(16px, 2vw, 20px)', fontWeight: 700, color: 'var(--c-text)', margin: '0 0 4px' }}>投資績效報告</h2>
-                            <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: 0 }}>基於資產趨勢快照計算，報酬率採 XIRR 已排除出入金（增資）影響</p>
+                            <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: 0 }}>帳戶年化報酬（XIRR）</p>
                         </div>
 
                         {Object.keys(assetSnapshots).length < 2 ? (
@@ -844,31 +693,31 @@ export default function YearReview() {
 
                                 <div style={{ ...card, marginBottom: '20px' }}>
                                     <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '4px' }}>自訂區間年化報酬（XIRR）</div>
-                                    <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '0 0 16px' }}>
-                                        依交易紀錄推算期初持倉成本與期末市值，並以 XIRR 排除區間內出入金影響
-                                        {perfConfig.startDate && <span style={{ color: 'var(--c-accent)' }}>　起{perfConfig.startDate}</span>}
-                                    </p>
+                                    <DisclosureNote summary="帳戶績效依快照與出入金估算。" style={{ margin: '0 0 12px' }}>歷史端點採當日保存的快照；今日無快照時採完整有效報價。出入金依實際轉帳日，股利與買賣已含於淨值。</DisclosureNote>
+                                    {perfConfig.startDate && <div style={{ fontSize: '12px', color: 'var(--c-accent)', marginBottom: '8px' }}>績效起始：{perfConfig.startDate}</div>}
                                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                                         <div>
                                             <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>起始日期</label>
-                                            <input type="date" style={inp} value={customStart} onChange={e => { setCustomStart(e.target.value); setCustomCAGR(null) }} />
+                                            <input type="date" style={inp} value={customStart} onChange={e => { setCustomStart(e.target.value); customRequestRef.current++; setPerfLoading(false); setCustomCAGR(null); setCustomMessage(''); setCustomBasis('') }} />
                                         </div>
                                         <div>
                                             <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>結束日期</label>
-                                            <input type="date" style={inp} value={customEnd} onChange={e => { setCustomEnd(e.target.value); setCustomCAGR(null) }} />
+                                            <input type="date" style={inp} value={customEnd} onChange={e => { setCustomEnd(e.target.value); customRequestRef.current++; setPerfLoading(false); setCustomCAGR(null); setCustomMessage(''); setCustomBasis('') }} />
                                         </div>
                                         <button onClick={calcCustomCAGR}
                                             disabled={perfLoading || !customStart || !customEnd || customStart >= customEnd}
-                                            style={{ backgroundColor: 'var(--c-accent)', border: 'none', borderRadius: '8px', padding: '8px 20px', color: '#fff', fontSize: '14px', cursor: 'pointer', opacity: (!customStart || !customEnd || customStart >= customEnd) ? 0.5 : 1 }}>
+                                            style={{ backgroundColor: 'var(--c-button-accent)', border: 'none', borderRadius: '8px', padding: '8px 20px', color: 'var(--c-on-accent)', fontSize: '14px', cursor: 'pointer', opacity: (!customStart || !customEnd || customStart >= customEnd) ? 0.5 : 1 }}>
                                             {perfLoading ? '計算中...' : '計算'}
                                         </button>
                                     </div>
+                                    {customMessage && <div role="status" style={{ marginTop: '12px', color: 'var(--c-warning)', fontSize: '13px' }}>{customMessage}</div>}
+                                    {customBasis && <div style={{ marginTop: '8px', color: 'var(--c-muted)', fontSize: '12px' }}>{customBasis}</div>}
                                     {customCAGR !== null && (
                                         <div style={{ marginTop: '16px', backgroundColor: customCAGR >= 0 ? 'rgba(0,200,150,0.1)' : 'rgba(255,87,87,0.1)', border: `1px solid ${customCAGR >= 0 ? 'rgba(0,200,150,0.3)' : 'rgba(255,87,87,0.3)'}`, borderRadius: '10px', padding: '16px 24px', display: 'inline-flex', flexDirection: 'column', gap: '4px' }}>
                                             <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>年化報酬（XIRR）</span>
                                             <span style={{ fontSize: '32px', fontWeight: 700, color: pnlColor(customCAGR) }}>{customCAGR >= 0 ? '+' : ''}{customCAGR.toFixed(2)}%</span>
                                             <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>
-                                                {perfConfig.startDate && perfConfig.startDate > customStart ? perfConfig.startDate : customStart} ～ {customEnd}　已排除出入金
+                                                365 天年化
                                             </span>
                                         </div>
                                     )}
@@ -898,12 +747,12 @@ export default function YearReview() {
                                             </thead>
                                             <tbody>
                                                 {yearlyPerf.map(p => (
-                                                    <tr key={p.year}>
+                                                    <tr key={p.year} title={p.reason || undefined}>
                                                         <td style={{ color: 'var(--c-accent)', fontWeight: 600 }}>{p.year}</td>
                                                         <td>${p.startValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
                                                         <td>${p.endValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
-                                                        <td style={{ color: pnlColor(p.totalReturn), fontWeight: 600 }}>{p.totalReturn >= 0 ? '+' : ''}{p.totalReturn.toFixed(2)}%</td>
-                                                        <td style={{ color: pnlColor(p.cagr), fontWeight: 600 }}>{p.cagr >= 0 ? '+' : ''}{p.cagr.toFixed(2)}%</td>
+                                                        <td style={{ color: p.totalReturn === null ? 'var(--c-muted)' : pnlColor(p.totalReturn), fontWeight: 600 }}>{p.totalReturn === null ? '—' : fmtPct(p.totalReturn)}</td>
+                                                        <td style={{ color: p.cagr === null ? 'var(--c-muted)' : pnlColor(p.cagr), fontWeight: 600 }}>{p.cagr === null ? '—' : fmtPct(p.cagr)}</td>
                                                     </tr>
                                                 ))}
                                                 {yearlyPerf.length > 0 && (() => {
@@ -945,12 +794,12 @@ export default function YearReview() {
                                             {xirr !== null ? fmtPct(xirr * 100) : '—'}
                                         </div>
                                         <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '6px' }}>
-                                            保守估（以成本）：{xirrCost !== null ? fmtPct(xirrCost * 100) : '—'}
+                                            {performanceMessage}
                                         </div>
                                         {/* ✅ XIRR 無法計算時說明原因，避免用戶誤以為功能故障 */}
                                         {xirr === null && !xirrLoading && (
                                             <div style={{ fontSize: '11px', color: 'var(--c-warning)', marginTop: '8px', lineHeight: 1.5 }}>
-                                                現金流方向不足（需同時有買入與賣出），或資料筆數不足，無法計算 XIRR。
+                                                {performanceMessage || '尚缺有效快照或現金流，無法計算 XIRR。'}
                                             </div>
                                         )}
                                     </div>
@@ -959,7 +808,7 @@ export default function YearReview() {
                                         <div style={{ fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 700, color: mdd !== null && mdd > 0.1 ? 'var(--c-danger)' : 'var(--c-text)' }}>
                                             {mdd !== null ? `-${(mdd * 100).toFixed(2)}%` : '—'}
                                         </div>
-                                        <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '6px' }}>依全歷史已實現損益曲線計算，如有久遠舊紀錄可用下方自訂區間</div>
+                                        <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '6px' }}>依每日快照排除出入金估算；估值或資金流資料不完整時顯示 —</div>
                                     </div>
                                     <div style={card}>
                                         <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>交易勝率</div>
@@ -982,10 +831,7 @@ export default function YearReview() {
                                 {/* ── 自訂區間統計（套用於整頁：XIRR / MDD / 勝率 / 平均持有天數） ── */}
                                 <div style={{ ...card, marginBottom: '20px' }}>
                                     <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '4px' }}>自訂區間統計</div>
-                                    <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '0 0 16px' }}>
-                                        指定一段時間區間，年化報酬率（XIRR）、最大回撤（MDD）、勝率、平均持有天數都只採計這段區間內的交易，
-                                        可排除帳戶閒置前的久遠舊紀錄，看到真實想檢視那段期間的表現。
-                                    </p>
+                                    <DisclosureNote summary="統計所選期間的交易。" style={{ margin: '0 0 12px' }}>XIRR 與回撤依所選期間的每日快照估算；勝率及持有天數使用期間交易。</DisclosureNote>
                                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                                         <div>
                                             <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>起始日期</label>
@@ -998,7 +844,7 @@ export default function YearReview() {
                                         <button
                                             onClick={calcRangeStats}
                                             disabled={rangeLoading || !rangeStart || !rangeEnd || rangeStart >= rangeEnd}
-                                            style={{ backgroundColor: 'var(--c-accent)', border: 'none', borderRadius: '8px', padding: '8px 20px', color: '#fff', fontSize: '14px', cursor: 'pointer', opacity: (!rangeStart || !rangeEnd || rangeStart >= rangeEnd) ? 0.5 : 1 }}>
+                                            style={{ backgroundColor: 'var(--c-button-accent)', border: 'none', borderRadius: '8px', padding: '8px 20px', color: 'var(--c-on-accent)', fontSize: '14px', cursor: 'pointer', opacity: (!rangeStart || !rangeEnd || rangeStart >= rangeEnd) ? 0.5 : 1 }}>
                                             {rangeLoading ? '計算中...' : '計算'}
                                         </button>
 
@@ -1040,6 +886,7 @@ export default function YearReview() {
                                     </div>
 
                                     {/* 區間統計結果：與上方全歷史卡片相同排版，方便對照 */}
+                                    {rangeMessage && <div role="status" style={{fontSize: '12px', color: 'var(--c-warning)', marginBottom: '8px'}}>{rangeMessage}</div>}
                                     {rangeStats && (
                                         <>
                                             <div className="perf-stats" style={{ marginTop: '20px' }}>
@@ -1086,7 +933,7 @@ export default function YearReview() {
                                                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                                                     <thead>
                                                         <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
-                                                            {['年度', '已實現損益', '股利收入', '合計', '已實現報酬率', '含息報酬率', '勝率', '交易筆數'].map(h => (
+                                                            {['年度', '已實現損益', '股利收入', '合計', '已實現報酬率', '帳戶年化報酬', '勝率', '交易筆數'].map(h => (
                                                                 <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--c-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>{h}</th>
                                                             ))}
                                                         </tr>
@@ -1103,7 +950,7 @@ export default function YearReview() {
                                                                         ? <span style={{ backgroundColor: y.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(y.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>{fmtPct(y.returnRate)}</span>
                                                                         : '—'}
                                                                 </td>
-                                                                {/* ✅ 5-2：含息報酬率（已實現價差＋股利，分母同已實現成本基礎） */}
+                                                                {/* Verified NAV endpoints use the same account XIRR as the annual review. */}
                                                                 <td style={{ padding: '12px' }}>
                                                                     {y.totalReturnRate !== null
                                                                         ? <span style={{ backgroundColor: y.totalReturnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(y.totalReturnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>{fmtPct(y.totalReturnRate)}</span>

@@ -1,0 +1,161 @@
+{
+  "mode": "local mocks; assertions prove existing defects",
+  "observations": [
+    {
+      "id": "F01",
+      "actual": [
+        "notes",
+        "trash"
+      ],
+      "expected": "include noteBodies and KMS settings; restore body and asset references"
+    },
+    {
+      "id": "F02-generated event",
+      "actual": [
+        "g"
+      ],
+      "expected": "no deletion without proof of local deletion"
+    },
+    {
+      "id": "F02-past local event",
+      "actual": [
+        "g"
+      ],
+      "expected": "no deletion without proof of local deletion"
+    },
+    {
+      "id": "F02-deselected type",
+      "actual": [
+        "g"
+      ],
+      "expected": "no deletion without proof of local deletion"
+    },
+    {
+      "id": "F03",
+      "actual": {
+        "repaid": 60000,
+        "remaining": 90000,
+        "sum": 150000
+      },
+      "expected": {
+        "originalDebt": 180000,
+        "remaining": 120000
+      }
+    },
+    {
+      "id": "F04",
+      "actual": -90.015758424715,
+      "expected": "about +10% for a one-year period"
+    },
+    {
+      "id": "F05",
+      "actual": {
+        "sharesToSell": 1000,
+        "proceeds": 100000
+      },
+      "expected": {
+        "maxShares": 100,
+        "maxProceeds": 10000
+      }
+    },
+    {
+      "id": "F06",
+      "actual": {
+        "deletedPaths": [
+          "users/fixture/notes/n/images/a.webp"
+        ],
+        "checkedCollections": [
+          "notes",
+          "trash"
+        ]
+      },
+      "expected": "retain asset referenced by noteBodies"
+    },
+    {
+      "id": "F07",
+      "actual": {
+        "readUsers": [
+          "a"
+        ],
+        "secondUserStatus": "already-covered"
+      },
+      "expected": "check user b independently"
+    },
+    {
+      "id": "F08",
+      "actual": {
+        "counts": {
+          "tag": 2
+        },
+        "rootCounts": {
+          "tag": 2
+        },
+        "totalNotes": 2,
+        "untagged": 0,
+        "updatedAt": "2026-09-07T07:57:04.606Z"
+      },
+      "expected": {
+        "totalNotes": 1,
+        "counts": {
+          "tag": 1
+        }
+      }
+    },
+    {
+      "id": "F09",
+      "actual": 0,
+      "expected": -100
+    },
+    {
+      "id": "F10",
+      "actual": {
+        "hasContentDocProperty": true,
+        "valueType": "undefined"
+      },
+      "expected": "omit undefined fields before Firestore write"
+    },
+    {
+      "id": "F11",
+      "actual": {
+        "storedPrices": {
+          "2317": 50,
+          "2330": 110,
+          "_updatedAt": "2026/9/7 下午3:57:04"
+        },
+        "snapshotTriggered": true
+      },
+      "expected": "failed quote remains stale; automatic NAV must reject it"
+    },
+    {
+      "id": "F12",
+      "actual": {
+        "cash": 5000,
+        "shares": 1100,
+        "netAssets": 115000
+      },
+      "expected": {
+        "cash": 0,
+        "shares": 1000,
+        "netAssets": 100000
+      }
+    },
+    {
+      "id": "F13",
+      "actual": {
+        "first": "a/trades/0",
+        "last": "b/trades/400"
+      },
+      "expected": "all writes pinned to initial user or abort on account change"
+    },
+    {
+      "id": "F14",
+      "actual": {
+        "enabled": true,
+        "requestedDeletion": [
+          "users/fixture-b/notes/n/images/fixture.webp"
+        ]
+      },
+      "expected": "validate owner and allowed path before privileged deletion"
+    }
+  ]
+}

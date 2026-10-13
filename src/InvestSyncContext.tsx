@@ -1,3 +1,7 @@
+import { invalidateCalendarEvents, invalidateTasks, invalidateTaskProjects } from './lib/plannerData'
+import DisclosureNote from './components/DisclosureNote'
+import { formatSyncTime } from './lib/syncPresentation'
+import { invalidateQuoteUniverse } from './lib/quoteUniverse'
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { onSnapshot, type Unsubscribe } from 'firebase/firestore'
@@ -14,6 +18,7 @@ import {
 type SyncStatus = 'connecting' | 'live' | 'error'
 
 interface InvestSyncValue {
+    reconnect: () => void
     version: number
     status: SyncStatus
     lastSyncedAt: string
@@ -22,11 +27,15 @@ interface InvestSyncValue {
 
 const COLLECTIONS = [
     'trades', 'dividends', 'cashflow', 'assetSnapshots', 'settings',
+    'tasks', 'taskProjects', 'calendarEvents',
+    'calendarWatchList', 'investorMeetingOverrides',
     'watchlist', 'sentiments', 'industryMap', 'industryRelations',
 ] as const
 type SyncedCollection = typeof COLLECTIONS[number]
 
 const LABELS: Record<SyncedCollection, string> = {
+    calendarWatchList: '行事曆關注清單', investorMeetingOverrides: '個人法說會',
+    tasks: '任務', taskProjects: '任務專案', calendarEvents: '行事曆',
     trades: '買賣紀錄',
     dividends: '除權息',
     cashflow: '出入金',
@@ -39,6 +48,7 @@ const LABELS: Record<SyncedCollection, string> = {
 }
 
 const InvestSyncContext = createContext<InvestSyncValue>({
+    reconnect: () => {},
     version: 0,
     status: 'connecting',
     lastSyncedAt: '',
@@ -46,13 +56,18 @@ const InvestSyncContext = createContext<InvestSyncValue>({
 })
 
 function invalidateCollection(name: SyncedCollection) {
-    if (name === 'trades') invalidateTrades()
+    if (['trades', 'watchlist', 'sentiments', 'industryMap'].includes(name)) invalidateQuoteUniverse()
+    if (name === 'tasks') invalidateTasks()
+    else if (name === 'taskProjects') invalidateTaskProjects()
+    else if (name === 'calendarEvents') invalidateCalendarEvents()
+    else if (name === 'trades') invalidateTrades()
     else if (name === 'dividends') invalidateDividends()
     else if (name === 'cashflow') invalidateCashflow()
     else if (name === 'assetSnapshots') invalidateAssetSnapshots()
 }
 
 export function InvestSyncProvider({ children }: { children: ReactNode }) {
+    const [connectionAttempt, setConnectionAttempt] = useState(0)
     const [version, setVersion] = useState(0)
     const [status, setStatus] = useState<SyncStatus>('connecting')
     const [lastSyncedAt, setLastSyncedAt] = useState('')
@@ -62,8 +77,12 @@ export function InvestSyncProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         let collectionUnsubs: Unsubscribe[] = []
+        let generation = 0
 
         const stopCollections = () => {
+            generation++
+            if (timerRef.current) clearTimeout(timerRef.current)
+            pendingCollectionsRef.current.clear()
             collectionUnsubs.forEach(unsubscribe => unsubscribe())
             collectionUnsubs = []
         }
@@ -77,31 +96,42 @@ export function InvestSyncProvider({ children }: { children: ReactNode }) {
 
             setStatus('connecting')
             let readyCount = 0
+            const currentGeneration = generation
+            const errors = new Set<SyncedCollection>()
+            const serverReady = new Set<SyncedCollection>()
             collectionUnsubs = COLLECTIONS.map(name => {
                 let initialSnapshot = true
-                return onSnapshot(userCol(investDB, name), () => {
+                return onSnapshot(userCol(investDB, name), { includeMetadataChanges: true }, snapshot => {
+                    if (generation !== currentGeneration) return
+                    errors.delete(name)
+                    if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) serverReady.delete(name)
+                    else serverReady.add(name)
+                    setStatus(errors.size ? 'error' : serverReady.size === COLLECTIONS.length ? 'live' : 'connecting')
+                    const initial = initialSnapshot
                     if (initialSnapshot) {
                         initialSnapshot = false
                         readyCount += 1
-                        if (readyCount === COLLECTIONS.length) {
-                            setStatus('live')
-                            setLastSyncedAt(new Date().toLocaleString('zh-TW'))
+                        if (serverReady.size === COLLECTIONS.length) {
+                            setLastSyncedAt(new Date().toISOString())
                         }
-                        return
                     }
+                    if (!initial && snapshot.docChanges().length === 0) return
 
                     invalidateCollection(name)
                     pendingCollectionsRef.current.add(name)
                     if (timerRef.current) clearTimeout(timerRef.current)
                     timerRef.current = setTimeout(() => {
+                        if (generation !== currentGeneration) return
                         const changed = [...pendingCollectionsRef.current]
                         pendingCollectionsRef.current.clear()
                         setChangedCollection(changed.map(item => LABELS[item]).join('、'))
-                        setLastSyncedAt(new Date().toLocaleString('zh-TW'))
+                        if (serverReady.size === COLLECTIONS.length) setLastSyncedAt(new Date().toISOString())
                         setVersion(current => current + 1)
-                        setStatus('live')
+                        setStatus(errors.size ? 'error' : readyCount === COLLECTIONS.length && serverReady.size === COLLECTIONS.length ? 'live' : 'connecting')
                     }, 120)
                 }, error => {
+                    if (generation !== currentGeneration) return
+                    errors.add(name)
                     console.error(`[InvestSync] ${name} subscription failed`, error)
                     setStatus('error')
                 })
@@ -113,9 +143,9 @@ export function InvestSyncProvider({ children }: { children: ReactNode }) {
             stopCollections()
             if (timerRef.current) clearTimeout(timerRef.current)
         }
-    }, [])
+    }, [connectionAttempt])
 
-    const value = useMemo(() => ({ version, status, lastSyncedAt, changedCollection }), [changedCollection, lastSyncedAt, status, version])
+    const value = useMemo(() => ({ version, status, lastSyncedAt, changedCollection, reconnect: () => setConnectionAttempt(value => value + 1) }), [changedCollection, lastSyncedAt, status, version])
     return <InvestSyncContext.Provider value={value}>{children}</InvestSyncContext.Provider>
 }
 
@@ -124,13 +154,16 @@ export function useInvestSync() {
 }
 
 export function InvestSyncStatus() {
-    const { version, status, lastSyncedAt, changedCollection } = useInvestSync()
+    const { status, lastSyncedAt, changedCollection } = useInvestSync()
     const color = status === 'live' ? 'var(--c-positive)' : status === 'error' ? 'var(--c-danger)' : 'var(--c-warning)'
-    const label = status === 'live' ? '即時同步' : status === 'error' ? '同步異常' : '連線中'
+    const label = status === 'live' ? '已同步' : status === 'error' ? '同步異常' : '連線中'
+    const time = formatSyncTime(lastSyncedAt)
+    const indicator = <span className="invest-sync-status__dot" aria-hidden="true" style={{ backgroundColor: color, boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 12%, transparent)` }} />
     return (
-        <div title={changedCollection ? `最近更新：${changedCollection}` : '投資資料同步狀態'} style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '6px', padding: '6px clamp(16px, 3vw, 32px) 0', color: 'var(--c-muted)', fontSize: '10px' }}>
-            <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: color, boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 12%, transparent)` }} />
-            <span>{label} v{version}{lastSyncedAt ? ` · ${lastSyncedAt}` : ''}</span>
+        <div className="invest-sync-status" title={changedCollection ? `最近更新：${changedCollection}` : '投資資料同步狀態'}>
+            {time ? <DisclosureNote className="invest-sync-status__note" summary={<>{indicator}<span>{`${label} · ${status === 'live' ? '' : '上次 '}${time.short}`}</span></>} style={{ margin: 0, fontSize: '10px', maxWidth: '100%' }}>
+                最後同步：{time.full}（台灣時間）
+            </DisclosureNote> : <span className="invest-sync-status__label">{indicator}<span>{label}</span></span>}
         </div>
     )
 }

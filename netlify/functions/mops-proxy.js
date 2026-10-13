@@ -1,3 +1,5 @@
+import { invokeEventHandler } from '../lib/http-function.js'
+import { authorizeApi, apiError, apiHeaders, cachedApi } from '../lib/api-access.js'
 // netlify/functions/mops-proxy.js
 // 財報日 / 法說會查詢，四層架構：
 //   1. 富聯網法說會時間表（全市場靜態 HTML，最穩定）
@@ -5,16 +7,11 @@
 //   3. TWSE 重大訊息 API（t187ap04_L，當日資料）
 //   4. 固定法則推算（依台灣財報截止日）
 
-export const handler = async (event) => {
-    const headers = {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type',
-        'Content-Type': 'application/json',
-    }
+export const handleEvent = async (event) => {
+    const headers = apiHeaders
+    const denied = await authorizeApi(event, 'mops')
+    if (denied) return denied
 
-    if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 200, headers, body: '' }
-    }
 
     const { stockNo, year, month } = event.queryStringParameters || {}
 
@@ -26,6 +23,7 @@ export const handler = async (event) => {
         }
     }
 
+    if (!/^[A-Za-z0-9]{2,10}$/.test(stockNo) || !/^20\d{2}$/.test(year) || !/^(0?[1-9]|1[0-2])$/.test(month)) return apiError(400, '日期或代號格式不正確')
     const y = parseInt(year)
     const m = parseInt(month)
 
@@ -293,4 +291,7 @@ function estimateEarningsDate(year, month) {
         11: `${year}-11-14`,
     }
     return earningsMonths[month] ? [earningsMonths[month]] : []
+}
+export default async function (request) {
+    return invokeEventHandler(request, handleEvent)
 }

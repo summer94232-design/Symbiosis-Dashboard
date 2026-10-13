@@ -1,6 +1,7 @@
-import { writeBatch } from 'firebase/firestore'
+import { purgeKmsTrash } from './kmsPurge'
+import { runTransaction } from 'firebase/firestore'
 import { kmsDB } from './firebase'
-import { userDoc } from './userDB'
+import { captureUserSession } from './userDB'
 import { fetchKmsNotes, fetchKmsTrash, invalidateAllKmsData } from './kmsData'
 
 interface RepairNote {
@@ -33,12 +34,14 @@ export interface KmsRepairResult {
  * Ambiguous content conflicts are never rewritten automatically.
  */
 export async function repairKmsConsistency(now = new Date()): Promise<KmsRepairResult> {
+  const session = captureUserSession()
   invalidateAllKmsData()
   const [notes, trash] = await Promise.all([
     fetchKmsNotes<RepairNote>(),
     fetchKmsTrash<RepairTrash>(),
   ])
 
+  session.assertActive()
   const noteIds = new Set(notes.map(note => note.id))
   const linksById = new Map(notes.map(note => [
     note.id,
@@ -73,6 +76,7 @@ export async function repairKmsConsistency(now = new Date()): Promise<KmsRepairR
   }
 
   const trashToDelete = new Set<string>()
+  const expired = new Set<string>()
   let removedTrashCollisions = 0
   let removedExpiredTrash = 0
   for (const item of trash) {
@@ -83,34 +87,35 @@ export async function repairKmsConsistency(now = new Date()): Promise<KmsRepairR
     }
     const deletedAt = typeof item.deletedAt === 'string' ? Date.parse(item.deletedAt) : NaN
     if (!Number.isNaN(deletedAt) && now.getTime() - deletedAt > 30 * 86400000) {
-      trashToDelete.add(item.id)
-      removedExpiredTrash++
+      expired.add(item.id)
     }
   }
 
-  let batch = writeBatch(kmsDB)
-  let operations = 0
-  const flush = async () => {
-    if (!operations) return
-    await batch.commit()
-    batch = writeBatch(kmsDB)
-    operations = 0
-  }
-
-  for (const noteId of changedNotes) {
-    batch.update(userDoc(kmsDB, 'notes', noteId), {
-      links: linksById.get(noteId) ?? [],
-      updatedAt: now.toISOString(),
+  if (changedNotes.size + trashToDelete.size > 449) throw new Error('修復範圍超過單次安全上限，請分開處理。')
+  await runTransaction(kmsDB, async tx => {
+    session.assertActive()
+    const current = await Promise.all(notes.map(note => tx.get(session.doc(kmsDB, 'notes', note.id))))
+    const collisions = await Promise.all([...trashToDelete].map(id => tx.get(session.doc(kmsDB, 'trash', id))))
+    session.assertActive()
+    current.forEach((snapshot, index) => {
+      const original = notes[index]
+      if (!snapshot.exists() || JSON.stringify(snapshot.data().links || []) !== JSON.stringify(original.links || []) || snapshot.data().updatedAt !== original.updatedAt) {
+        throw new Error('筆記已被其他操作修改，請重新執行健康檢查。')
+      }
     })
-    operations++
-    if (operations >= 400) await flush()
+    for (const noteId of changedNotes) tx.update(session.doc(kmsDB, 'notes', noteId), {
+      links: linksById.get(noteId) ?? [], updatedAt: now.toISOString(),
+      graphRevision: (Number(notes.find(note => note.id === noteId)?.graphRevision) || 0) + 1,
+    })
+    // Only the duplicate trash document is removed; never its shared body or attachments.
+    collisions.forEach(snapshot => { if (snapshot.exists()) tx.delete(snapshot.ref) })
+  })
+  for (const id of expired) {
+    session.assertActive()
+    await purgeKmsTrash(id, session)
+    removedExpiredTrash++
   }
-  for (const trashId of trashToDelete) {
-    batch.delete(userDoc(kmsDB, 'trash', trashId))
-    operations++
-    if (operations >= 400) await flush()
-  }
-  await flush()
+  session.assertActive()
   invalidateAllKmsData()
 
   return {

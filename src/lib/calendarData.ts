@@ -1,4 +1,5 @@
-export interface CalendarEvent {
+import type { EventTiming } from './calendarTiming'
+export interface CalendarEvent extends EventTiming {
     id: string
     date: string        // YYYY-MM-DD
     title: string
@@ -6,9 +7,14 @@ export interface CalendarEvent {
     description?: string
     url?: string
     stockCode?: string
+    googleSyncConflict?: 'remote-deleted' | null
+    googleEventId?: string | null
+    updatedAt?: string
 }
 
 // FOMC 會議日期 2025-2026
+// Only mark a year covered after its complete annual schedule is maintained here.
+export const FOMC_COVERED_YEARS: number[] = [2025, 2026]
 export const FOMC_DATES: CalendarEvent[] = [
     { id: 'fomc-2025-01', date: '2025-01-29', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
     { id: 'fomc-2025-03', date: '2025-03-19', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
@@ -17,7 +23,7 @@ export const FOMC_DATES: CalendarEvent[] = [
     { id: 'fomc-2025-07', date: '2025-07-30', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
     { id: 'fomc-2025-09', date: '2025-09-17', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
     { id: 'fomc-2025-10', date: '2025-10-29', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
-    { id: 'fomc-2025-12', date: '2025-12-17', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+    { id: 'fomc-2025-12', date: '2025-12-10', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
     { id: 'fomc-2026-01', date: '2026-01-28', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
     { id: 'fomc-2026-03', date: '2026-03-18', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
     { id: 'fomc-2026-04', date: '2026-04-29', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
@@ -25,8 +31,18 @@ export const FOMC_DATES: CalendarEvent[] = [
     { id: 'fomc-2026-07', date: '2026-07-29', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
     { id: 'fomc-2026-09', date: '2026-09-16', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
     { id: 'fomc-2026-10', date: '2026-10-28', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
-    { id: 'fomc-2026-12', date: '2026-12-16', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
+    { id: 'fomc-2026-12', date: '2026-12-09', title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布' },
 ]
+
+/** Called only after the entire official year has passed validation. */
+export function applyFomcCalendar(year: number, dates: string[]) {
+    const events: CalendarEvent[] = dates.map(date => ({ id: `fomc-${date.slice(0, 7)}`, date, title: 'FOMC 會議結果', type: 'fomc', description: '聯準會利率決策公布（官方預定日程，可能調整）' }))
+    const retained = FOMC_DATES.filter(event => !event.date.startsWith(`${year}-`))
+    FOMC_DATES.splice(0, FOMC_DATES.length, ...retained, ...events)
+    FOMC_DATES.sort((a, b) => a.date.localeCompare(b.date))
+    if (!FOMC_COVERED_YEARS.includes(year)) FOMC_COVERED_YEARS.push(year)
+    FOMC_COVERED_YEARS.sort((a, b) => a - b)
+}
 
 // 重要科技活動
 export const TECH_EVENTS: CalendarEvent[] = [

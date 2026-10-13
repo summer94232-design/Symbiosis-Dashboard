@@ -1,3 +1,5 @@
+import { authenticatedFetch } from './authenticatedFetch'
+import { captureUserSession } from './userDB'
 // src/lib/foreignQuote.ts
 // 外國股票（日股、美股）報價查詢
 // 透過 Netlify Function foreign-quote 呼叫 Yahoo Finance，避免 CORS 問題
@@ -20,15 +22,23 @@ export async function getForeignQuotes(
 ): Promise<Record<string, number | null>> {
     if (symbols.length === 0) return {}
 
-    try {
-        const res = await fetch(
-            `/.netlify/functions/foreign-quote?type=quote&symbols=${encodeURIComponent(symbols.join(','))}`
-        )
-        if (!res.ok) throw new Error(`foreign-quote HTTP ${res.status}`)
-        const data = await res.json()
-        return data as Record<string, number | null>
-    } catch (err) {
-        console.error('[foreignQuote] 查詢失敗:', err)
-        return Object.fromEntries(symbols.map(s => [s, null]))
+    const session = captureUserSession()
+    const result: Record<string, number | null> = {}
+    const unique = [...new Set(symbols)]
+    const signal = AbortSignal.timeout(8000)
+    for (let start = 0; start < unique.length; start += 20) {
+        try {
+            const res = await authenticatedFetch(
+                `/.netlify/functions/foreign-quote?type=quote&symbols=${encodeURIComponent(unique.slice(start, start + 20).join(','))}`, session, { signal }
+            )
+            if (!res.ok) throw new Error(`foreign-quote HTTP ${res.status}`)
+            const data = await res.json()
+            Object.assign(result, data)
+        } catch (error) {
+            session.assertActive()
+            if (!Object.keys(result).length) throw error
+            break // A later timeout must not erase earlier successful batches.
+        }
     }
+    return result
 }

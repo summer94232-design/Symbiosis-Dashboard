@@ -1,0 +1,56 @@
+[
+  {
+    "temporaryTouchActionFix": false,
+    "events": [
+      "pointerdown",
+      "pointermove",
+      "pointermove",
+      "pointermove",
+      "pointercancel"
+    ],
+    "writes": [],
+    "orders": [
+      [
+        "users/fixture-A/tasks/t1",
+        0
+      ],
+      [
+        "users/fixture-A/tasks/t2",
+        1
+      ]
+    ]
+  },
+  {
+    "temporaryTouchActionFix": true,
+    "events": [
+      "pointerdown",
+      "pointermove",
+      "pointermove",
+      "pointermove",
+      "pointermove",
+      "pointermove",
+      "pointermove",
+      "pointermove",
+      "pointermove",
+      "pointermove",
+      "pointermove",
+      "pointermove",
+      "pointermove",
+      "pointerup"
+    ],
+    "writes": [
+      "update users/fixture-A/tasks/t2",
+      "update users/fixture-A/tasks/t1"
+    ],
+    "orders": [
+      [
+        "users/fixture-A/tasks/t1",
+        1
+      ],
+      [
+        "users/fixture-A/tasks/t2",
+        0
+      ]
+    ]
+  }
+]

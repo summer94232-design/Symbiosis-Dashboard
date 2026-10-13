@@ -1,0 +1,57 @@
+{
+  "version": "v26.10.3.12",
+  "questionCount": 12,
+  "answerCount": 12,
+  "metricsText": "完成 12 輪 · 最後送入 2121 字",
+  "visibleAnswerCharacters": 11475,
+  "layouts": [
+    {
+      "name": "desktop",
+      "width": 1366,
+      "height": 900,
+      "actualHeight": 900,
+      "actualWidth": 1366,
+      "answerOverflow": false,
+      "composerFits": true,
+      "pageOverflow": false,
+      "panelFits": true
+    },
+    {
+      "name": "portrait",
+      "width": 390,
+      "height": 844,
+      "actualHeight": 844,
+      "actualWidth": 390,
+      "answerOverflow": false,
+      "composerFits": true,
+      "pageOverflow": false,
+      "panelFits": true
+    },
+    {
+      "name": "landscape",
+      "width": 844,
+      "height": 390,
+      "actualHeight": 390,
+      "actualWidth": 844,
+      "answerOverflow": false,
+      "composerFits": true,
+      "pageOverflow": false,
+      "panelFits": true
+    },
+    {
+      "name": "narrow",
+      "width": 320,
+      "height": 568,
+      "actualHeight": 568,
+      "actualWidth": 320,
+      "answerOverflow": false,
+      "composerFits": true,
+      "pageOverflow": false,
+      "panelFits": true
+    }
+  ],
+  "realModelCalls": 0,
+  "realDatabaseReads": 0,
+  "realDatabaseWrites": 0,
+  "reloadPreserved": true
+}

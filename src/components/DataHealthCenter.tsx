@@ -1,3 +1,4 @@
+import { confirmAction } from '../ui/dialogs'
 import { useEffect, useState } from 'react'
 import { Activity, AlertCircle, AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react'
 import { analyzeDataHealth, type HealthReport, type HealthSeverity } from '../lib/dataHealth'
@@ -156,7 +157,7 @@ export default function DataHealthCenter() {
   ) ?? false
 
   const repairKms = async () => {
-    if (!confirm('將移除失效連結、補齊反向連結、清除與有效筆記重複的垃圾桶資料，以及刪除超過 30 天的垃圾資料。確定執行？')) return
+    if (!await confirmAction('將移除失效連結、補齊反向連結、清除與有效筆記重複的垃圾桶資料，以及刪除超過 30 天的垃圾資料。確定執行？')) return
     setRepairing(true)
     setRepairMessage('')
     setError('')
@@ -175,7 +176,7 @@ export default function DataHealthCenter() {
   const applySelectedRepairs = async () => {
     const selected = repairCandidates.filter(candidate => candidate.fixable && selectedRepairs.has(candidate.key))
     if (!selected.length) return
-    if (!confirm(`將套用 ${selected.length} 項已勾選修正；未勾選資料不會變更。確定繼續？`)) return
+    if (!await confirmAction(`將套用 ${selected.length} 項已勾選修正；未勾選資料不會變更。確定繼續？`)) return
     setRepairing(true); setError(''); setRepairMessage('')
     try {
       const grouped = new Map<string, { collection: RepairCollection; recordId: string; patch: Record<string, unknown> }>()
@@ -229,11 +230,11 @@ export default function DataHealthCenter() {
             <div style={{ display: 'grid', gap: '7px', marginTop: '10px' }}>
               {repairCandidates.map(candidate => (
                 <label key={candidate.key} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px', alignItems: 'start', padding: '9px', border: '1px solid var(--c-border)', borderRadius: '8px', opacity: candidate.fixable ? 1 : 0.65 }}>
-                  <input type="checkbox" disabled={!candidate.fixable || repairing} checked={selectedRepairs.has(candidate.key)} onChange={event => setSelectedRepairs(current => { const next = new Set(current); event.target.checked ? next.add(candidate.key) : next.delete(candidate.key); return next })} />
+                  <input type="checkbox" disabled={!candidate.fixable || repairing} checked={selectedRepairs.has(candidate.key)} onChange={event => setSelectedRepairs(current => { const next = new Set(current); if (event.target.checked) next.add(candidate.key); else next.delete(candidate.key); return next })} />
                   <span><strong style={{ color: 'var(--c-text)', fontSize: '12px' }}>{candidate.title}</strong><br /><span style={{ color: 'var(--c-danger)', fontSize: '11px' }}>原：{candidate.before}</span><br /><span style={{ color: candidate.fixable ? 'var(--c-positive)' : 'var(--c-warning)', fontSize: '11px' }}>建議：{candidate.after}</span></span>
                 </label>
               ))}
-              <button onClick={() => void applySelectedRepairs()} disabled={repairing || selectedRepairs.size === 0} style={{ border: 0, borderRadius: '8px', padding: '9px 12px', background: 'var(--c-accent)', color: '#fff', cursor: selectedRepairs.size ? 'pointer' : 'not-allowed', opacity: selectedRepairs.size ? 1 : 0.5 }}>套用已選修正（{selectedRepairs.size}）</button>
+              <button onClick={() => void applySelectedRepairs()} disabled={repairing || selectedRepairs.size === 0} style={{ border: 0, borderRadius: '8px', padding: '9px 12px', background: 'var(--c-button-accent)', color: 'var(--c-on-accent)', cursor: selectedRepairs.size ? 'pointer' : 'not-allowed', opacity: selectedRepairs.size ? 1 : 0.5 }}>套用已選修正（{selectedRepairs.size}）</button>
             </div>
           )}
         </div>

@@ -1,0 +1,16 @@
+.preview-toolbar {
+  height: 34px; display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 0 10px; background: var(--c-sidebar); color: var(--c-muted);
+  border-bottom: 1px solid var(--c-border); font-size: 11px;
+}
+.preview-toolbar small { font-size: 10px; margin-left: 5px; }
+.preview-toolbar select { min-width: 0; max-width: 180px; padding: 2px 5px; border-radius: 5px; font-size: 11px; }
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+.app-shell, .app-sidebar { height: calc(100dvh - 34px); }
+.app-shell { position: relative; inset: auto; }
+.app-sidebar.mobile { top: 34px !important; }
+@media (max-width: 480px) {
+  .preview-toolbar { padding: 0 6px; font-size: 10px; }
+  .preview-toolbar small { display: none; }
+  .preview-toolbar select { max-width: 154px; font-size: 10px; }
+}

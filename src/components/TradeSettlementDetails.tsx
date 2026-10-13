@@ -1,10 +1,10 @@
 import { useId, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { isETF, type TradeRecord } from '../lib/calc'
+import { securityTaxRate, type TradeRecord } from '../lib/calc'
 import { inp, lbl } from '../ui/styles'
 import './tradeSettlementDetails.css'
 
-type SettlementForm = Pick<TradeRecord, 'type' | 'code' | 'shares' | 'fee' | 'tax' | 'total' | 'isMargin'>
+type SettlementForm = Pick<TradeRecord, 'date' | 'type' | 'code' | 'shares' | 'fee' | 'tax' | 'total' | 'isMargin'>
 
 export default function TradeSettlementDetails({ form, onChange }: {
     form: SettlementForm
@@ -13,7 +13,8 @@ export default function TradeSettlementDetails({ form, onChange }: {
     const id = useId()
     const [expanded, setExpanded] = useState(false)
     const feeNote = form.shares > 0 && form.shares < 1000 ? '零股6折，最低1元' : '6折自動計算'
-    const taxNote = form.type === 'sell' ? (isETF(form.code) ? 'ETF千分之一' : '千分之三') : '買入免稅'
+    const rate = securityTaxRate(form.code, form.date || undefined)
+    const taxNote = form.type === 'sell' ? (rate === 0 ? '稅率 0%' : rate === 0.001 ? '主動／被動ETF 0.1%' : '個股 0.3%') : '買入免稅'
     const amountNote = form.isMargin ? (form.type === 'buy' ? '（自備款）' : '（已扣償還）') : ''
     const amountColor = !form.total ? 'var(--c-text)' : form.type === 'buy' ? 'var(--c-danger)' : 'var(--c-positive)'
 

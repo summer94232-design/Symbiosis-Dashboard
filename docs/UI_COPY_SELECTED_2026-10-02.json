@@ -1,0 +1,312 @@
+{
+  "version": "v26.10.2.3",
+  "removed": 15,
+  "shortened": 22,
+  "adjusted": 1,
+  "changes": [
+    {
+      "id": "N001",
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "before": "股票市值 ÷ 自有資金；無現價時加註「（以成本估算）」",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N002",
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "before": "輸入目標水位，快速換算應買賣金額與股數",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N005",
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "before": "未計入手續費、證交稅與成交滑價；融資帳戶以自有資金口徑計算。",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N010",
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "before": "依成交日計入買賣收付，含尚未交割款項；此數字與交割銀行當下可提領餘額不同。台股一般按 T+2 營業日交割，請以元大交割款查詢確認金額與日期；實際入金仍按轉帳日期記錄。",
+      "after": "成交日帳面現金，含未交割款；不等於銀行可提領餘額。交割款以元大查詢為準。",
+      "action": "縮短"
+    },
+    {
+      "id": "N011",
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "before": "市值 − 含買進手續費的持倉成本 − 預估賣出手續費與交易稅，不含股息。賣出手續費依元大庫存畫面採未折扣費率 0.1425%，零股最低 1 元、整股最低 20 元。股數、市值與損益均含出借股票；預估費稅不扣現金或資產市值。有券商沖抵明細時依指定買進批次，其餘採先進先出；部分賣出尾差留在剩餘成本，歷史資料差異另行核對；融資尚未扣預估利息，個股報酬率以自備款為分母。",
+      "after": "市值扣含費成本及預估賣出費稅，不含股息；含出借股票。預估手續費未折扣；券商指定批次優先，其餘先進先出。融資未扣利息。",
+      "action": "縮短"
+    },
+    {
+      "id": "N012",
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "before": "賣出價 − 賣出當時的先進先出批次成本（含配股攤薄），與歷史損益頁口徑一致；年度回顧的 XIRR 為另一種口徑，數字不同屬正常。",
+      "after": "賣出淨收入扣批次成本，與歷史損益一致；不同於 XIRR。",
+      "action": "縮短"
+    },
+    {
+      "id": "N013",
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "before": "更新股票現價、除權息預告、今日資產快照與法說會資料",
+      "after": "更新現價、除權息、快照與法說會",
+      "action": "縮短"
+    },
+    {
+      "id": "N014",
+      "page": "儀表板",
+      "file": "src/pages/invest/Dashboard.tsx",
+      "before": "融資損益率（以自備款 $〔金額〕為基準）／現股損益率",
+      "after": "融資報酬率（自備款口徑）／現股報酬率",
+      "action": "縮短"
+    },
+    {
+      "id": "N016",
+      "page": "買賣紀錄",
+      "file": "src/components/DayTradePanel.tsx",
+      "before": "已依同日、同股票的現股整張買賣自動沖抵，不必逐筆確認；剩餘股數才納入一般庫存成本。這是依成交資料推算的帳本結果，券商實際認列、標的資格與費稅仍須以對帳單為準。零股、鉅額、融資及已排除交易不自動配對。",
+      "after": "同股同日的現股整張自動沖抵，剩餘列庫存；零股、鉅額、融資及排除交易不配對，以券商認列為準。",
+      "action": "縮短"
+    },
+    {
+      "id": "N020",
+      "page": "買賣紀錄",
+      "file": "src/components/TradeSettlementDetails.tsx",
+      "before": "交易稅：債券ETF停徵／ETF千分之一／千分之三／買入免稅",
+      "after": "個股 0.3%／主動／被動ETF 0.1%／買入免稅；既有零稅率商品顯示「稅率 0%」",
+      "action": "調整常用商品說明"
+    },
+    {
+      "id": "N031",
+      "page": "股票持倉",
+      "file": "src/pages/invest/Holdings.tsx",
+      "before": "市值 − 含買進手續費的持倉成本 − 預估賣出手續費與交易稅，不含股息。賣出手續費依元大庫存畫面採未折扣費率 0.1425%，零股最低 1 元、整股最低 20 元。股數、市值與損益均含出借股票；預估費稅不扣現金或資產市值。有券商沖抵明細時依指定買進批次，其餘採先進先出；部分賣出尾差留在剩餘成本，歷史資料差異另行核對；融資尚未扣預估利息，個股報酬率以自備款為分母。",
+      "after": "市值扣含費成本及預估賣出費稅，不含股息；含出借股票。預估手續費未折扣；券商指定批次優先，其餘先進先出。融資未扣利息。",
+      "action": "縮短"
+    },
+    {
+      "id": "N032",
+      "page": "股票持倉",
+      "file": "src/pages/invest/Holdings.tsx",
+      "before": "未實現損益 ÷ 持倉總成本（含融資借款的全額成本）。下方表格的個股報酬率對融資部位改以自備款為分母，兩者口徑不同。",
+      "after": "整體：未實現損益 ÷ 全額成本；融資個股：以自備款計算。",
+      "action": "縮短"
+    },
+    {
+      "id": "N035",
+      "page": "資產趨勢",
+      "file": "src/pages/invest/AssetTrend.tsx",
+      "before": "自動績效：預設收盤後入金",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N038",
+      "page": "資產趨勢",
+      "file": "src/pages/invest/AssetTrend.tsx",
+      "before": "比較起點：〔變動資料〕｜資料來源：Fugle MarketData｜近似 TWR",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N039",
+      "page": "資產趨勢",
+      "file": "src/pages/invest/AssetTrend.tsx",
+      "before": "點「自動帶入」會從 Firebase 計算目前持倉市值與現金，並自動扣除融資借款",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N043",
+      "page": "歷史損益",
+      "file": "src/pages/invest/HistoryPnL.tsx",
+      "before": "已實現損益與股利紀錄",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N045",
+      "page": "歷史損益",
+      "file": "src/pages/invest/HistoryPnL.tsx",
+      "before": "賣出淨收入扣除成本：自動沖抵／人工指定的當沖使用配對買入成本，庫存優先依券商指定批次，其餘使用先進先出批次成本（含費稅、配股攤薄）。部分當沖會拆為兩筆損益列。與 XIRR、TWR 的報酬率口徑不同。",
+      "after": "賣出淨收入扣成本；成本依當沖配對、券商指定或先進先出，含費稅與配股攤薄。部分當沖拆列，與 XIRR／TWR 不同。",
+      "action": "縮短"
+    },
+    {
+      "id": "N047",
+      "page": "歷史損益",
+      "file": "src/pages/invest/HistoryPnL.tsx",
+      "before": "價差優先採券商指定批次，其餘為先進先出批次成本口徑（與已實現損益表一致）。股利含仍持有部位領到的現金股利；含息報酬率分母為已實現成本基礎，從未賣出的存股部位無分母故顯示 —。股票股利不計入金額（已透過攤薄反映在均價）。",
+      "after": "已實現價差＋期間現金股利；報酬率以已實現成本為分母，無賣出顯示 —。股票股利反映於均價。",
+      "action": "縮短"
+    },
+    {
+      "id": "N049",
+      "page": "除權息",
+      "file": "src/pages/invest/Dividend.tsx",
+      "before": "更新現價時一起查詢。未來除權息按目前持股試算；已到除權息日則按前一日持股計算。確認實領後才入帳。",
+      "after": "更新現價時查預告；未到期按現持股，到期按前日持股。確認實領才入帳。",
+      "action": "縮短"
+    },
+    {
+      "id": "N056",
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "before": "摘要：依帳戶淨值與出入金計算；歷史日期需有快照。；展開：採期初／期末帳戶淨值與期間出入金計算；買賣回收本金、現金股利已含於淨值，不另加總。歷史端點須有當日快照；今日無快照時使用完整有效報價計算。起始設定視為當日結束時的淨值。",
+      "after": "摘要：帳戶績效依淨值與出入金計算。；展開：歷史端點需當日快照；今日無快照時採完整報價。起始淨值按日終，股利與買賣已含於淨值。",
+      "action": "縮短"
+    },
+    {
+      "id": "N059",
+      "page": "年度復盤",
+      "file": "src/pages/invest/YearReview.tsx",
+      "before": "摘要：只統計所選期間的交易。；展開：指定一段時間區間，年化報酬率（XIRR）、最大回撤（MDD）、勝率、平均持有天數都只採計這段區間內的交易， 可排除帳戶閒置前的久遠舊紀錄，看到真實想檢視那段期間的表現。",
+      "after": "摘要：統計所選期間的交易。；展開：XIRR、回撤、勝率及持有天數均限所選期間。",
+      "action": "縮短"
+    },
+    {
+      "id": "N066",
+      "page": "融資管理",
+      "file": "src/pages/invest/MarginManager.tsx",
+      "before": "整戶融資維持率監控 · 加碼試算",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N073",
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "before": "設定水位與占比，試算調整交易。",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N074",
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "before": "先決定股票部位，再選擇這次允許的調整方式。",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N075",
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "before": "可加入目前沒有持有、但想納入配置的股票。",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N078",
+      "page": "組合水位試算",
+      "file": "src/pages/invest/PortfolioPlanner.tsx",
+      "before": "摘要：估算未含滑價；方案限此帳號／裝置，未納入 JSON 備份。；展開：試算以目前資料與參考價估算，可選擇整股或整張交易；費稅採系統共用費率，尚未計入滑價與實際成交限制，執行前請再核對券商資料。儲存方案僅供目前裝置的此登入帳號使用，不包含於系統 JSON 備份。",
+      "after": "摘要：未含滑價；方案僅存此帳號／裝置。；展開：採參考價與系統費稅估算，交易前請核對券商；方案不含於 JSON 備份。",
+      "action": "縮短"
+    },
+    {
+      "id": "N082",
+      "page": "產業地圖－股票／題材",
+      "file": "src/pages/invest/IndustryMap.tsx",
+      "before": "摘要：關係會同步至脈絡圖。；展開：在此加入的上下游會直接寫入脈絡圖；詳細的供應內容、或既有關係的刪除，請到「脈絡圖」分頁管理。",
+      "after": "摘要：關係同步至脈絡圖。；展開：供應內容與刪除關係，請至「脈絡圖」管理。",
+      "action": "縮短"
+    },
+    {
+      "id": "N087",
+      "page": "產業地圖－脈絡圖",
+      "file": "src/pages/invest/IndustryChainView.tsx",
+      "before": "摘要：由左至右：上游 → 下游；點股票追蹤關係。；展開：以你追蹤的股票為節點，由左到右呈現供應鏈：左邊是上游、右邊是下游，箭頭由供應商指向客戶。點任一節點即可重新聚焦、沿鏈往下追。關係類型可自由填寫，不限產業。 點連線可刪除該關係；目前顯示 〔變動資料〕 層，可在上方調整。",
+      "after": "摘要：上游 → 下游；點股票追蹤。；展開：箭頭由供應商指向客戶；點連線刪除關係。顯示 〔層數〕 層，可調整。",
+      "action": "縮短"
+    },
+    {
+      "id": "N092",
+      "page": "選股追蹤",
+      "file": "src/pages/invest/Watchlist.tsx",
+      "before": "歷史資料更新中；遇到限流會排隊等待，請稍候。",
+      "after": "歷史資料更新中，限流時等待。",
+      "action": "縮短"
+    },
+    {
+      "id": "N094",
+      "page": "觀點追蹤",
+      "file": "src/pages/invest/SentimentTracker.tsx",
+      "before": "記錄每次對股票的看多/看空，追蹤波段判斷勝率",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N102",
+      "page": "賣出追蹤",
+      "file": "src/pages/invest/SoldTracker.tsx",
+      "before": "觀察賣出後的股票後續走勢，反省操作決策",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N105",
+      "page": "對帳核對",
+      "file": "src/pages/invest/BrokerReconciliation.tsx",
+      "before": "月中截圖暫核對，月底 PDF 完成月結；不修改交易。",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N118",
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "before": "匯入資料、匯出報表與完整備份",
+      "after": "",
+      "action": "移除"
+    },
+    {
+      "id": "N128",
+      "page": "設定與備份",
+      "file": "src/pages/invest/InvestSettings.tsx",
+      "before": "摘要：備份範圍與還原方式；展開：包含投資紀錄、全部設定、觀點／賣出追蹤、選股、產業地圖、行事曆、任務，以及 KMS 筆記正文、附件引用、回收桶與標籤排序。 還原以文件 ID 覆蓋，可重複執行、不產生重複資料；JSON 僅保留圖片與附件的雲端引用。還原前會列出差異供確認。",
+      "after": "摘要：備份範圍與還原方式；展開：含全系統資料與附件引用，不含附件檔案；同 ID 覆蓋、不重複新增，還原前可確認差異。",
+      "action": "縮短"
+    },
+    {
+      "id": "N148",
+      "page": "知識圖譜",
+      "file": "src/pages/kms/KMSGraph.tsx",
+      "before": "摘要：點標籤展開，點筆記查看；節點可拖曳。；展開：點擊標籤展開 · 子標籤再點一次顯示筆記 · 可拖曳節點 · 取消根標籤只隱藏根節點",
+      "after": "摘要：點標籤展開、筆記查看；可拖曳。；展開：子標籤展開筆記；移除根標籤只隱藏根節點。",
+      "action": "縮短"
+    },
+    {
+      "id": "N150",
+      "page": "知識圖譜",
+      "file": "src/pages/kms/KMSGraph.tsx",
+      "before": "頂層標籤（點擊移除根節點） 子標籤（點擊展開筆記） 子標籤（浮動中，根標籤已隱藏） 筆記（點擊查看）",
+      "after": "根標籤（隱藏）；子標籤（展開筆記）；浮動子標籤；筆記（查看）",
+      "action": "縮短"
+    },
+    {
+      "id": "N153",
+      "page": "月曆／行程編輯",
+      "file": "src/pages/calendar/CalendarHome.tsx",
+      "before": "支援 .xlsx / .xls 格式，必要欄位（順序不限）： 股票代號、股票名稱、法說會日期 日期格式：YYYY-MM-DD、YYYY/MM/DD 或 Excel 日期格式 皆可 ※ 匯入的日期會與 Firestore 既有資料合併（不覆蓋）",
+      "after": ".xlsx／.xls 必填：股票代號、股票名稱、法說會日期。日期：YYYY-MM-DD、YYYY/MM/DD 或 Excel 日期。合併匯入，不覆蓋。",
+      "action": "縮短"
+    },
+    {
+      "id": "N166",
+      "page": "法說會關注清單／設定",
+      "file": "src/pages/calendar/CalendarSettings.tsx",
+      "before": "連結 Google 帳號後，可以把未來半年的行事曆事件（法說會、除權息、個人行程等）手動同步到你的 Google 行事曆。",
+      "after": "連結 Google 後，可手動同步未來半年行程。",
+      "action": "縮短"
+    }
+  ]
+}

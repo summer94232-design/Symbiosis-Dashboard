@@ -1,0 +1,4 @@
+{
+  "indexes": [],
+  "fieldOverrides": [{ "collectionGroup": "fulltextShards", "fieldPath": "data", "indexes": [] }]
+}

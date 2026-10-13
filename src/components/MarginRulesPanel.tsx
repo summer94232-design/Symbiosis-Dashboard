@@ -83,7 +83,7 @@ export default function MarginRulesPanel({ rules, onSaved }: Props) {
           <button onClick={addStockRate} style={{ border: '1px solid var(--c-border)', background: 'var(--c-bg)', color: 'var(--c-text)', borderRadius: '8px', padding: '8px 13px', cursor: 'pointer' }}>新增</button>
         </div>
         {message && <div style={{ marginTop: '9px', fontSize: '11px', color: message.startsWith('已儲存') ? 'var(--c-positive)' : 'var(--c-warning)' }}>{message}</div>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px' }}><button onClick={() => void save()} disabled={saving} style={{ border: 0, background: 'var(--c-accent)', color: '#fff', borderRadius: '8px', padding: '9px 15px', cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', opacity: saving ? 0.65 : 1 }}><Save size={14} />{saving ? '儲存中…' : '儲存規則'}</button></div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px' }}><button onClick={() => void save()} disabled={saving} style={{ border: 0, background: 'var(--c-button-accent)', color: 'var(--c-on-accent)', borderRadius: '8px', padding: '9px 15px', cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', opacity: saving ? 0.65 : 1 }}><Save size={14} />{saving ? '儲存中…' : '儲存規則'}</button></div>
       </div>}
       <style>{`@media (max-width: 700px) { .margin-rules-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; } } @media (max-width: 430px) { .margin-stock-rate-row { grid-template-columns: 1fr 1fr !important; } .margin-stock-rate-row button { grid-column: 1 / -1; } }`}</style>
     </section>

@@ -1,0 +1,1043 @@
+{
+  "desktop": [
+    {
+      "characters": 754,
+      "error": false,
+      "headings": [
+        "儀表板",
+        "資金與風險",
+        "資產分布",
+        "目前持倉",
+        "行程與任務"
+      ],
+      "label": "投資・儀表板",
+      "overflow": false,
+      "path": "/invest"
+    },
+    {
+      "characters": 270,
+      "error": false,
+      "headings": [
+        "買賣紀錄"
+      ],
+      "label": "投資・買賣紀錄",
+      "overflow": false,
+      "path": "/invest/trades"
+    },
+    {
+      "characters": 380,
+      "error": false,
+      "headings": [
+        "股票持倉"
+      ],
+      "label": "投資・股票持倉",
+      "overflow": false,
+      "path": "/invest/holdings"
+    },
+    {
+      "characters": 395,
+      "error": false,
+      "headings": [
+        "資產趨勢"
+      ],
+      "label": "投資・資產趨勢",
+      "overflow": false,
+      "path": "/invest/trend"
+    },
+    {
+      "characters": 78,
+      "error": false,
+      "headings": [],
+      "label": "投資・產業地圖",
+      "overflow": false,
+      "path": "/invest/industry"
+    },
+    {
+      "characters": 133,
+      "error": false,
+      "headings": [
+        "自選股追蹤"
+      ],
+      "label": "投資・選股追蹤",
+      "overflow": false,
+      "path": "/invest/watchlist"
+    },
+    {
+      "characters": 849,
+      "error": false,
+      "headings": [
+        "組合水位試算"
+      ],
+      "label": "投資・組合水位試算",
+      "overflow": false,
+      "path": "/invest/portfolio-planner"
+    },
+    {
+      "characters": 168,
+      "error": false,
+      "headings": [
+        "融資管理"
+      ],
+      "label": "投資・融資管理",
+      "overflow": false,
+      "path": "/invest/margin"
+    },
+    {
+      "characters": 82,
+      "error": false,
+      "headings": [
+        "觀點追蹤"
+      ],
+      "label": "投資・觀點追蹤",
+      "overflow": false,
+      "path": "/invest/sentiment"
+    },
+    {
+      "characters": 154,
+      "error": false,
+      "headings": [
+        "每日簡報"
+      ],
+      "label": "投資・每日重點",
+      "overflow": false,
+      "path": "/invest/brief"
+    },
+    {
+      "characters": 168,
+      "error": false,
+      "headings": [
+        "賣出追蹤"
+      ],
+      "label": "投資・賣出追蹤",
+      "overflow": false,
+      "path": "/invest/sold-tracker"
+    },
+    {
+      "characters": 109,
+      "error": false,
+      "headings": [
+        "對帳核對"
+      ],
+      "label": "投資・對帳核對",
+      "overflow": false,
+      "path": "/invest/reconciliation"
+    },
+    {
+      "characters": 125,
+      "error": false,
+      "headings": [
+        "歷史損益"
+      ],
+      "label": "投資・歷史損益",
+      "overflow": false,
+      "path": "/invest/history"
+    },
+    {
+      "characters": 147,
+      "error": false,
+      "headings": [
+        "出入金"
+      ],
+      "label": "投資・出入金",
+      "overflow": false,
+      "path": "/invest/cashflow"
+    },
+    {
+      "characters": 273,
+      "error": false,
+      "headings": [
+        "除權息"
+      ],
+      "label": "投資・除權息",
+      "overflow": false,
+      "path": "/invest/dividend"
+    },
+    {
+      "characters": 489,
+      "error": false,
+      "headings": [
+        "年度復盤"
+      ],
+      "label": "投資・年度復盤",
+      "overflow": false,
+      "path": "/invest/review"
+    },
+    {
+      "characters": 629,
+      "error": false,
+      "headings": [
+        "設定與備份"
+      ],
+      "label": "投資・設定與備份",
+      "overflow": false,
+      "path": "/invest/settings"
+    },
+    {
+      "characters": 72,
+      "error": false,
+      "headings": [
+        "知識庫"
+      ],
+      "label": "知識・知識庫",
+      "overflow": false,
+      "path": "/kms"
+    },
+    {
+      "characters": 77,
+      "error": false,
+      "headings": [
+        "標籤管理"
+      ],
+      "label": "知識・標籤管理",
+      "overflow": false,
+      "path": "/kms/tags"
+    },
+    {
+      "characters": 190,
+      "error": false,
+      "headings": [
+        "匯出至 NotebookLM"
+      ],
+      "label": "知識・匯出筆記",
+      "overflow": false,
+      "path": "/kms/export"
+    },
+    {
+      "characters": 48,
+      "error": false,
+      "headings": [
+        "知識圖譜"
+      ],
+      "label": "知識・知識圖譜",
+      "overflow": false,
+      "path": "/kms/graph"
+    },
+    {
+      "characters": 32,
+      "error": false,
+      "headings": [
+        "垃圾桶"
+      ],
+      "label": "知識・垃圾桶",
+      "overflow": false,
+      "path": "/kms/trash"
+    },
+    {
+      "characters": 242,
+      "error": false,
+      "headings": [
+        "財經行事曆"
+      ],
+      "label": "行事曆・月曆",
+      "overflow": false,
+      "path": "/calendar"
+    },
+    {
+      "characters": 131,
+      "error": false,
+      "headings": [
+        "任務管理"
+      ],
+      "label": "行事曆・任務管理",
+      "overflow": false,
+      "path": "/calendar/tasks"
+    },
+    {
+      "characters": 140,
+      "error": false,
+      "headings": [
+        "法說會關注清單"
+      ],
+      "label": "行事曆・法說會關注清單",
+      "overflow": false,
+      "path": "/calendar/settings"
+    }
+  ],
+  "mobile": [
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/trades",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/holdings",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/trend",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/industry",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/watchlist",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/portfolio-planner",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/margin",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/sentiment",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/brief",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/sold-tracker",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/reconciliation",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/history",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/cashflow",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/dividend",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/review",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/settings",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms/tags",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms/export",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms/graph",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms/trash",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/calendar",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/calendar/tasks",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 852,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/calendar/settings",
+      "width": 393
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/trades",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/holdings",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/trend",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/industry",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/watchlist",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/portfolio-planner",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/margin",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/sentiment",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": true,
+      "overflow": false,
+      "path": "/invest/brief",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/sold-tracker",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/reconciliation",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/history",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/cashflow",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/dividend",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/review",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/settings",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms/tags",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms/export",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms/graph",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms/trash",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/calendar",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/calendar/tasks",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 568,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/calendar/settings",
+      "width": 320
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/trades",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/holdings",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/trend",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/industry",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/watchlist",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/portfolio-planner",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/margin",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/sentiment",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/brief",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/sold-tracker",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/reconciliation",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/history",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/cashflow",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/dividend",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/review",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/invest/settings",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms/tags",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms/export",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms/graph",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/kms/trash",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/calendar",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/calendar/tasks",
+      "width": 844
+    },
+    {
+      "blank": false,
+      "error": false,
+      "height": 390,
+      "mainOverflow": false,
+      "overflow": false,
+      "path": "/calendar/settings",
+      "width": 844
+    }
+  ],
+  "frame": [
+    {
+      "documentOverflow": false,
+      "path": "/invest",
+      "shellBottom": 852.47998046875,
+      "shellTop": 34,
+      "toolbarTop": 0,
+      "viewportHeight": 852,
+      "width": 393
+    },
+    {
+      "documentOverflow": false,
+      "path": "/kms",
+      "shellBottom": 852.47998046875,
+      "shellTop": 34,
+      "toolbarTop": 0,
+      "viewportHeight": 852,
+      "width": 393
+    },
+    {
+      "documentOverflow": false,
+      "path": "/calendar/tasks",
+      "shellBottom": 852.47998046875,
+      "shellTop": 34,
+      "toolbarTop": 0,
+      "viewportHeight": 852,
+      "width": 393
+    },
+    {
+      "documentOverflow": false,
+      "path": "/invest",
+      "shellBottom": 568.3200073242188,
+      "shellTop": 34,
+      "toolbarTop": 0,
+      "viewportHeight": 568,
+      "width": 320
+    },
+    {
+      "documentOverflow": false,
+      "path": "/kms",
+      "shellBottom": 568.3200073242188,
+      "shellTop": 34,
+      "toolbarTop": 0,
+      "viewportHeight": 568,
+      "width": 320
+    },
+    {
+      "documentOverflow": false,
+      "path": "/calendar/tasks",
+      "shellBottom": 568.3200073242188,
+      "shellTop": 34,
+      "toolbarTop": 0,
+      "viewportHeight": 568,
+      "width": 320
+    },
+    {
+      "documentOverflow": false,
+      "path": "/invest",
+      "shellBottom": 390.3999938964844,
+      "shellTop": 34,
+      "toolbarTop": 0,
+      "viewportHeight": 390,
+      "width": 844
+    },
+    {
+      "documentOverflow": false,
+      "path": "/kms",
+      "shellBottom": 390.3999938964844,
+      "shellTop": 34,
+      "toolbarTop": 0,
+      "viewportHeight": 390,
+      "width": 844
+    },
+    {
+      "documentOverflow": false,
+      "path": "/calendar/tasks",
+      "shellBottom": 390.3999938964844,
+      "shellTop": 34,
+      "toolbarTop": 0,
+      "viewportHeight": 390,
+      "width": 844
+    },
+    {
+      "documentOverflow": false,
+      "path": "/invest",
+      "shellBottom": 900.47998046875,
+      "shellTop": 34,
+      "toolbarTop": 0,
+      "viewportHeight": 900,
+      "width": 1280
+    },
+    {
+      "documentOverflow": false,
+      "path": "/kms",
+      "shellBottom": 900.47998046875,
+      "shellTop": 34,
+      "toolbarTop": 0,
+      "viewportHeight": 900,
+      "width": 1280
+    },
+    {
+      "documentOverflow": false,
+      "path": "/calendar/tasks",
+      "shellBottom": 900.47998046875,
+      "shellTop": 34,
+      "toolbarTop": 0,
+      "viewportHeight": 900,
+      "width": 1280
+    }
+  ]
+}

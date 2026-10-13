@@ -14,11 +14,11 @@ export const pnlColor = (v: number): string => v >= 0 ? 'var(--c-positive)' : 'v
 
 /**
  * 金額格式化（沿用 YearReview 既有行為）：
- * 正數帶 +、取絕對值加千分位、無小數。負值不帶 − 號，靠 pnlColor 紅色表達方向。
- * 例：fmtMoney(12345.6) → "+$12,346"、fmtMoney(-5000) → "$5,000"
+ * 正數帶 +、取絕對值加千分位、無小數。負值帶 - 號，搭配 pnlColor 表達方向。
+ * 例：fmtMoney(12345.6) → "+$12,346"、fmtMoney(-5000) → "-$5,000"
  */
 export const fmtMoney = (v: number): string =>
-    `${v >= 0 ? '+' : ''}$${Math.abs(v).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`
+    `${v >= 0 ? '+' : '-'}$${Math.abs(v).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`
 
 /**
  * 百分比格式化（沿用 YearReview 既有行為）：正數帶 +，固定兩位小數。

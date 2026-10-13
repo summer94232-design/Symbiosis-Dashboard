@@ -7,6 +7,7 @@ Symbiosis 是以 React、TypeScript、Firebase 與 Netlify 建置的個人管理
 ### 投資管理
 
 - 買賣、股利、出入金、持倉、歷史損益與年度復盤。
+- 更新現價時在背景更新官方除權息預告；依持股試算資格，確認實領後入帳。現價採跨裝置額度控管，附加同步不阻塞報價結果。
 - 台股現股、零股、ETF 與融資交易的費稅、成本及收付計算。
 - 同帳戶、同日、同股票的現股整張交易自動判定當沖；支援部分當沖、先賣後買與人工例外處理。
 - 券商月結單 PDF／圖片本機辨識，核對股數、現金、融資償還與費稅差異。
@@ -23,6 +24,12 @@ Symbiosis 是以 React、TypeScript、Firebase 與 Netlify 建置的個人管理
 - Google Calendar 同步與 Netlify Functions proxy。
 
 詳細操作方式請參考 [系統操作手冊](docs/SYSTEM_MANUAL.md)，現股當沖規則請參考 [現股自動沖抵](docs/DAY_TRADES.md)。
+
+目前正式版本：`v26.10.6.2`。已發布報價代理等待時間修正、每日快照趨勢模式及新帳號授權；一般趨勢不再要求收盤確認，新保存的報價仍須當日有效。已核對正式資產、三個帳號的後端授權及十檔報價，詳見 [最新發布紀錄](docs/RELEASE_2026-10-06_v26.10.6.2.md)、[備份與還原](docs/SYSTEM_MANUAL.md#413-json-備份與還原操作)及 [故障處理](docs/SYSTEM_MANUAL.md#13-故障處理)。年度日程維持 Netlify 每週日台灣時間 08:00 自動檢查，除權息沒有新增排程。
+
+年度資料最後成功時間及 A1–A11 UI 文字精簡已於先前發布上線。詳見 [更新時間顯示](docs/ANNUAL_STATUS_2026-09-30.md)與 [文字精簡修改紀錄](docs/UI_TEXT_CHANGES_2026-09-30.md)。B1–B7 維持原樣。
+
+10/04–10/05 帳務與 AI 修正已隨前次 `v26.10.5.1` 上線，本次沿用。包含八項稽核問題、年度報酬分母，以及融資配股 FIFO 成本、舊分類修復受阻、全損回撤漏值、未來快照和重複期末快照等修正。保留原版配色、緊湊手機排版及隱藏的手動精確 TWR；詳見 [前次發布](docs/RELEASE_2026-10-06.md)、[八項修正複查報告](docs/AUDIT_RECHECK_2026-10-05.md)與 [10/04 修正報告](docs/AUDIT_FIXES_2026-10-04.md)。
 
 ## 本機開發
 
@@ -58,7 +65,7 @@ VITE_KMS_MESSAGING_SENDER_ID
 VITE_KMS_APP_ID
 ```
 
-目前部分前端功能另讀取 `VITE_FUGLE_API_KEY`、`VITE_GEMINI_API_KEY` 與 `VITE_GOOGLE_CLIENT_ID`。所有 `VITE_` 變數都會進入瀏覽器 bundle，不應存放可授予管理權限的秘密；將額度型 API 完整改為驗證後端 proxy 仍列在安全路線圖中。
+前端另讀取公開 OAuth client ID `VITE_GOOGLE_CLIENT_ID`。所有 `VITE_` 變數都會進入瀏覽器 bundle；Fugle 與 Gemini 用量金鑰使用驗證後端，請勿再設為 `VITE_FUGLE_API_KEY` 或 `VITE_GEMINI_API_KEY`。
 
 Netlify Functions 使用：
 
@@ -66,9 +73,14 @@ Netlify Functions 使用：
 GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
 NEWS_API_KEY
+FUGLE_API_KEY
+GEMINI_API_KEY
+API_FIREBASE_PROJECT_ID
+API_ALLOWED_UIDS
+API_FIREBASE_SERVICE_ACCOUNT
 ```
 
-請將實際值設在本機 `.env` 或部署平台的環境變數中，不要提交憑證檔與金鑰。
+請將實際值設在本機 `.env` 或部署平台的環境變數中，不要提交憑證檔與金鑰。`API_*` 為共用身分驗證與額度設定；Fugle 報價及歷史資料需要伺服器端 `FUGLE_API_KEY`。本批只調整本機設定；正式環境須在取得部署同意後配置，並先輪替曾放入前端的舊 Fugle 金鑰。
 
 ## 驗證
 
@@ -79,12 +91,15 @@ npm run lint
 npm run test:kms-rules
 ```
 
-- `npm test` 目前執行 122 項核心、財務矩陣、當沖與交易列表測試。
-- `npm run build` 執行 TypeScript project build 與 Vite production build。
-- 完整 ESLint 在 2026-09-01 的基線為 73 errors、10 warnings，尚未達到發布門檻；不要把 build 通過誤認為 lint 已通過。
-- KMS rules 測試需要 Firebase emulator；正式資料遷移前另依 [KMS 遷移手冊](docs/KMS_MIGRATION.md) 操作。
+- `npm test` 涵蓋帳務、匯入還原、帳號隔離、KMS、行事曆、報價與函式測試，結束後另執行函式執行環境檢查；測試筆數以當次輸出為準。
+- `npm run build` 先檢查函式執行環境，再執行 TypeScript project build 與 Vite production build。
+- 2026-10-05 複查主要測試 804 項及 posttest 3／5／6 項全部通過；最後表單空值修正後，35 項聚焦測試、build 及 lint 再次通過，lint 零警告。build 的大型 chunk 提示仍需後續效能改善。測試範圍重疊，詳見複查報告。
+- `npm run test:emulators` 檢查資料與規則的整合情境；本批 17 項全部通過，涵蓋帳號隔離、帳本、舊融資配股修復與超賣拒絕、KMS／Storage 及備份還原。`npm run test:kms-rules` 另提供 KMS 規則檢查。需要 Java 21 與 Firebase emulator；本批使用官方可攜式 JRE 加入該次命令的 PATH，沒有改全機設定。此結果不表示正式規則已部署。
+- 正式資料遷移前另依 [KMS 遷移手冊](docs/KMS_MIGRATION.md) 操作；CI 定義見 `.github/workflows/data-safety-checks.yml`，workflow 存在不代表遠端執行已通過。
 
 ## 部署
+
+每批修改先完成本機驗證，再取得使用者對該批的明確部署同意；以下是部署參考指令，不會自動執行。先前同意不授權後續批次。
 
 前端與 Netlify Functions：
 
@@ -104,6 +119,9 @@ KMS 規則與函式涉及跨 Firebase UID、正式資料遷移及計費方案。
 ## 文件索引
 
 - [系統操作手冊](docs/SYSTEM_MANUAL.md)
+- [2026-10-04 系統檢查與功能說明](docs/SYSTEM_REPORT_2026-10-04.md)
+- [2026-10-04 修正與驗證結果](docs/AUDIT_FIXES_2026-10-04.md)
+- [2026-10-05 八項修正的回歸複查](docs/AUDIT_RECHECK_2026-10-05.md)
 - [現股自動沖抵](docs/DAY_TRADES.md)
 - [KMS 遷移手冊](docs/KMS_MIGRATION.md)
 - [優化路線圖](docs/OPTIMIZATION_ROADMAP.md)
@@ -114,7 +132,9 @@ KMS 規則與函式涉及跨 Firebase UID、正式資料遷移及計費方案。
 
 - 停止在瀏覽器保存可解密的帳號密碼，並清除既有 `saved_accounts`。
 - 確認投資與 KMS 正式環境規則、UID 遷移及排程函式部署狀態。
-- 修正完整 ESLint 基線並建立自動執行 typecheck、lint、tests、rules tests 與 build 的 CI。
-- 將額度型第三方 API 與 Google OAuth token 完整移到驗證後端。
+- 確認 CI 在遠端的執行結果，並完成正式環境驗證；本批本機 emulator 已通過。
+- 在核准部署時配置 Fugle 後端金鑰、輪替舊金鑰，並完成真實行情／Google／AI 服務驗收。
+- 追蹤尚無相容修補的上游依賴公告；正式依賴剩 4 個 moderate 相依項目，包含開發工具時另有 3 個 high 相依項目。詳見本批修正報告與原始 audit 結果。
+- JSON 備份仍只有 Storage 圖片／附件引用；原檔需另外保存。每日快照仍依賴開啟系統。年度 FOMC／交割休假改由 Netlify 排程維護；尚未公布、來源格式改變或失敗時保留前次資料與缺年提醒。
 
 完整優先順序以 [優化路線圖](docs/OPTIMIZATION_ROADMAP.md) 為準。

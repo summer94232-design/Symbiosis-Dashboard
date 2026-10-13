@@ -1,11 +1,16 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
-import { getDocs, setDoc, deleteDoc } from 'firebase/firestore'
+import { buttonFill } from '../../ui/styles'
+import { confirmAction } from '../../ui/dialogs'
+import { saveIndustryEntry } from '../../lib/batchOperations'
+import DisclosureNote from '../../components/DisclosureNote'
+import { useSafeMutation } from '../../lib/useSafeMutation'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { getDocs, deleteDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { captureUserSession } from '../../lib/userDB'
 import { Plus, X, Search, Pencil, Trash2, ChevronDown, ChevronRight, Map, Tag, Loader, Landmark } from 'lucide-react'
 import { ChainView } from './IndustryChainView'
 import { usePrices } from '../../PriceContext'
-import { useMarketCap } from '../../MarketCapContext'
+import { useMarketCap } from '../../lib/marketCapContext'
 import { calcMarketCap, formatMarketCap } from '../../lib/marketCap'
 import { useInvestSync } from '../../InvestSyncContext'
 
@@ -50,7 +55,7 @@ const card: React.CSSProperties = {
     backgroundColor: 'var(--c-card)',
     border: '1px solid var(--c-border)',
     borderRadius: '12px',
-    padding: '20px',
+    padding: 'var(--ui-card-padding, 20px)',
 }
 const inp: React.CSSProperties = {
     backgroundColor: 'var(--c-bg)',
@@ -64,14 +69,14 @@ const inp: React.CSSProperties = {
     boxSizing: 'border-box',
 }
 const btn = (color: string): React.CSSProperties => ({
-    backgroundColor: color,
+    backgroundColor: buttonFill(color),
     border: 'none',
     borderRadius: '8px',
     padding: '8px 16px',
-    color: '#fff',
+    color: /border|transparent|sidebar|card/.test(color) ? 'var(--c-text)' : /^var\(--c-(accent|positive|danger|warning|purple)\)$/.test(color) ? 'var(--c-on-accent)' : '#fff',
     fontSize: '13px',
     cursor: 'pointer',
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
     gap: '6px',
 })
@@ -181,13 +186,14 @@ function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
 
     const handleSave = async () => {
         if (!canSave) return
+        if (saving) return
         setSaving(true)
-        await onSave({ code: code.trim(), name: name.trim(), market, themes, note: note.trim() || undefined }, { up: upCodes, down: downCodes })
-        setSaving(false)
+        try { await onSave({ code: code.trim(), name: name.trim(), market, themes, note: note.trim() || undefined }, { up: upCodes, down: downCodes })
+        } finally { setSaving(false) }
     }
 
     return (
-        <div style={{ ...card, marginBottom: '20px' }}>
+        <fieldset disabled={saving} style={{ ...card, margin: '0 0 20px', minWidth: 0, pointerEvents: saving ? 'none' : undefined }}>
             <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--c-accent)', marginBottom: '16px' }}>
                 {isEditing ? `編輯：${initial.code}` : '新增股票'}
             </div>
@@ -196,8 +202,8 @@ function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
                 <div style={{ display: 'flex', gap: '6px' }}>
                     {MARKETS.map(m => (
                         <button key={m.key} type="button" onClick={() => setMarket(m.key)} style={{
-                            background: market === m.key ? 'var(--c-accent)' : 'var(--c-card)',
-                            color: market === m.key ? '#fff' : 'var(--c-text)',
+                            background: market === m.key ? 'var(--c-button-accent)' : 'var(--c-card)',
+                            color: market === m.key ? 'var(--c-on-accent)' : 'var(--c-text)',
                             border: '1px solid var(--c-border)', borderRadius: '8px',
                             padding: '6px 16px', fontSize: '13px', cursor: 'pointer',
                         }}>{m.label}</button>
@@ -245,7 +251,7 @@ function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
                     <select value="" onChange={e => { const c = e.target.value; if (c && !upCodes.includes(c)) setUpCodes(p => [...p, c]) }} style={inp}>
                         <option value="">＋加入上游…</option>
                         {allStocks.filter(s => s.code !== code && !upCodes.includes(s.code)).map(s => (
-                            <option key={s.code} value={s.code}>{s.code}　{s.name}〔{marketLabel(s.market)}〕</option>
+                            <option key={s.code} value={s.code}>{s.code} {s.name}〔{marketLabel(s.market)}〕</option>
                         ))}
                     </select>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
@@ -262,7 +268,7 @@ function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
                     <select value="" onChange={e => { const c = e.target.value; if (c && !downCodes.includes(c)) setDownCodes(p => [...p, c]) }} style={inp}>
                         <option value="">＋加入下游…</option>
                         {allStocks.filter(s => s.code !== code && !downCodes.includes(s.code)).map(s => (
-                            <option key={s.code} value={s.code}>{s.code}　{s.name}〔{marketLabel(s.market)}〕</option>
+                            <option key={s.code} value={s.code}>{s.code} {s.name}〔{marketLabel(s.market)}〕</option>
                         ))}
                     </select>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
@@ -275,9 +281,7 @@ function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
                     </div>
                 </div>
             </div>
-            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '12px', marginTop: '-4px' }}>
-                在此加入的上下游會直接寫入脈絡圖；詳細的供應內容、或既有關係的刪除，請到「脈絡圖」分頁管理。
-            </div>
+            <DisclosureNote summary="關係同步至脈絡圖。" style={{ margin: '-4px 0 12px', fontSize: '11px' }}>供應內容與刪除關係，請至「脈絡圖」管理。</DisclosureNote>
             <div style={{ marginBottom: '16px' }}>
                 <label style={{ fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }}>備註</label>
                 <input style={inp} value={note} onChange={e => setNote(e.target.value)} placeholder="" />
@@ -288,7 +292,7 @@ function StockForm({ initial, allThemes, allStocks, onSave, onCancel }: {
                 </button>
                 <button onClick={onCancel} style={btn('var(--c-muted)')}>取消</button>
             </div>
-        </div>
+        </fieldset>
     )
 }
 
@@ -303,11 +307,6 @@ function RelationView({ entries }: { entries: StockEntry[] }) {
     const focusEntry = focusCode ? entries.find(e => e.code === focusCode) : null
 
     // 所有題材（排序）
-    const allThemes = useMemo(() => {
-        const s = new Set<string>()
-        entries.forEach(e => e.themes.forEach(t => s.add(t)))
-        return Array.from(s).sort((a, b) => a.localeCompare(b, 'zh-TW'))
-    }, [entries])
 
     // 關聯結果：依共同題材數排序，可再依 filterTheme 篩選
     const relatedEntries = useMemo(() => {
@@ -333,7 +332,7 @@ function RelationView({ entries }: { entries: StockEntry[] }) {
 
     const selectEntry = (e: StockEntry) => {
         setFocusCode(e.code)
-        setSearchQ(`${e.code}　${e.name}`)
+        setSearchQ(`${e.code} ${e.name}`)
         setShowDropdown(false)
         setFilterTheme(null)
     }
@@ -359,8 +358,8 @@ function RelationView({ entries }: { entries: StockEntry[] }) {
         <div>
             {/* ── 搜尋列 ── */}
             <div style={{ position: 'relative', marginBottom: '16px' }}>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <div style={{ position: 'relative', flex: 1, maxWidth: '420px' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                    <div style={{ position: 'relative', flex: '1 1 240px', minWidth: 0, maxWidth: '420px' }}>
                         <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--c-muted)', pointerEvents: 'none' }} />
                         <input
                             ref={inputRef}
@@ -386,7 +385,7 @@ function RelationView({ entries }: { entries: StockEntry[] }) {
 
                 {/* 下拉選單 */}
                 {showDropdown && dropdownItems.length > 0 && (
-                    <div style={{ position: 'absolute', top: '100%', left: 0, width: '420px', zIndex: 20, backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '10px', marginTop: '4px', overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
+                    <div style={{ position: 'absolute', top: '100%', left: 0, width: 'min(420px, 100%)', zIndex: 20, backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '10px', marginTop: '4px', overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
                         {dropdownItems.map(e => (
                             <div key={e.code} onMouseDown={() => selectEntry(e)}
                                 style={{ padding: '9px 14px', cursor: 'pointer', display: 'flex', gap: '10px', alignItems: 'center', borderBottom: '1px solid var(--c-border)' }}
@@ -411,7 +410,7 @@ function RelationView({ entries }: { entries: StockEntry[] }) {
                     <div style={{ fontSize: '14px' }}>搜尋一支股票，查看與哪些股票有共同題材</div>
                 </div>
             ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: '16px', alignItems: 'start' }}>
+                <div className="industry-relation-layout" style={{ display: 'grid', gridTemplateColumns: '220px minmax(0, 1fr)', gap: '16px', alignItems: 'start' }}>
 
                     {/* ── 左欄：目標股票資訊 + 題材篩選 ── */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -439,8 +438,8 @@ function RelationView({ entries }: { entries: StockEntry[] }) {
                                     <button onClick={() => setFilterTheme(null)} style={{
                                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                                         padding: '5px 8px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '12px',
-                                        backgroundColor: !filterTheme ? 'var(--c-accent)' : 'transparent',
-                                        color: !filterTheme ? '#fff' : 'var(--c-muted)',
+                                        backgroundColor: !filterTheme ? 'var(--c-button-accent)' : 'transparent',
+                                        color: !filterTheme ? 'var(--c-on-accent)' : 'var(--c-muted)',
                                     }}>
                                         <span>全部顯示</span>
                                         <span style={{ fontSize: '11px' }}>{relatedEntries.length + (filterTheme ? entries.filter(e => e.code !== focusEntry.code && e.themes.filter(t => focusEntry.themes.includes(t)).length > 0 && !e.themes.includes(filterTheme!)).length : 0)}</span>
@@ -474,9 +473,9 @@ function RelationView({ entries }: { entries: StockEntry[] }) {
                                 {filterTheme ? `沒有同時包含「${filterTheme}」題材的關聯股票` : '尚無其他股票與此股票有共同題材'}
                             </div>
                         ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0px', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--c-border)' }}>
+                            <div className="industry-relation-results" style={{ display: 'flex', flexDirection: 'column', gap: '0px', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--c-border)' }}>
                                 {/* 表頭 */}
-                                <div style={{ display: 'grid', gridTemplateColumns: '100px 90px 1fr 1fr', gap: '0', backgroundColor: 'var(--c-sidebar)', padding: '8px 14px', borderBottom: '1px solid var(--c-border)' }}>
+                                <div className="industry-relation-head" style={{ display: 'grid', gridTemplateColumns: '100px 90px 1fr 1fr', gap: '0', backgroundColor: 'var(--c-sidebar)', padding: '8px 14px', borderBottom: '1px solid var(--c-border)' }}>
                                     <span style={{ fontSize: '11px', color: 'var(--c-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>代號</span>
                                     <span style={{ fontSize: '11px', color: 'var(--c-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>共同</span>
                                     <span style={{ fontSize: '11px', color: 'var(--c-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>共同題材</span>
@@ -485,7 +484,7 @@ function RelationView({ entries }: { entries: StockEntry[] }) {
 
                                 {/* 每筆關聯 */}
                                 {relatedEntries.map(({ entry: e, sharedThemes, uniqueThemes }, idx) => (
-                                    <div key={e.code} style={{
+                                    <div className="industry-relation-row" key={e.code} style={{
                                         display: 'grid', gridTemplateColumns: '100px 90px 1fr 1fr',
                                         gap: '0', padding: '9px 14px', alignItems: 'start',
                                         backgroundColor: idx % 2 === 0 ? 'var(--c-card)' : 'var(--c-bg)',
@@ -502,20 +501,20 @@ function RelationView({ entries }: { entries: StockEntry[] }) {
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', paddingTop: '2px' }}>
                                             <div style={{
                                                 width: '28px', height: '28px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                backgroundColor: sharedThemes.length >= 3 ? 'var(--c-accent)' : sharedThemes.length === 2 ? 'var(--c-positive)' : 'var(--c-muted)',
-                                                fontSize: '13px', fontWeight: 800, color: '#fff', flexShrink: 0,
+                                                backgroundColor: sharedThemes.length >= 3 ? 'var(--c-button-accent)' : sharedThemes.length === 2 ? 'var(--c-positive)' : 'var(--c-muted)',
+                                                fontSize: '13px', fontWeight: 800, color: 'var(--c-on-accent)', flexShrink: 0,
                                             }}>
                                                 {sharedThemes.length}
                                             </div>
                                         </div>
 
                                         {/* 共同題材 */}
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', paddingTop: '2px' }}>
+                                        <div data-label="共同題材" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', paddingTop: '2px' }}>
                                             {sharedThemes.map(t => <ThemeBadge key={t} label={t} size='sm' />)}
                                         </div>
 
                                         {/* 其他題材（淡色） */}
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', paddingTop: '2px' }}>
+                                        <div data-label="其他題材" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', paddingTop: '2px' }}>
                                             {uniqueThemes.map(t => (
                                                 <span key={t} style={{ fontSize: '11px', color: 'var(--c-muted)', background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '1px 7px', whiteSpace: 'nowrap' }}>{t}</span>
                                             ))}
@@ -537,9 +536,10 @@ type ViewMode = 'stock' | 'theme' | 'graph' | 'chain'
 type SortKey = 'code' | 'name' | 'themes'
 
 export default function IndustryMap() {
+    const mutation = useSafeMutation()
     const { version: syncVersion } = useInvestSync()
     const { prices, updatePrices: ctxUpdatePrices, priceLoading } = usePrices()
-    const { shares: sharesData, sharesLoading, updateShares } = useMarketCap()
+    const { shares: sharesData, sharesLoading, sharesError, updateShares } = useMarketCap()
     const [entries, setEntries] = useState<StockEntry[]>([])
     const [loading, setLoading] = useState(true)
     const [viewMode, setViewMode] = useState<ViewMode>('theme')
@@ -554,16 +554,29 @@ export default function IndustryMap() {
 
     // 市值資料（僅台股；股數來自 MOPS 公開資料，透過全站共用 MarketCapContext 取得，與選股追蹤頁連動）
 
-    const load = async () => {
-        setLoading(true)
-        const snap = await getDocs(userCol(investDB, 'industryMap'))
-        const data = snap.docs.map(d => ({ code: d.id, ...d.data() } as StockEntry))
-        data.sort((a, b) => a.code.localeCompare(b.code))
-        setEntries(data)
-        setLoading(false)
-    }
+    const [loadError, setLoadError] = useState('')
+    const loadRevision = useRef(0)
+    const load = useCallback(async () => {
+        const request = ++loadRevision.current
+        try {
+            const session = captureUserSession()
 
-    useEffect(() => { void load() }, [syncVersion])
+            const snap = await getDocs(session.col(investDB, 'industryMap'))
+            if (request !== loadRevision.current) return
+            session.assertActive()
+            const data = snap.docs.map(d => ({ code: d.id, ...d.data() } as StockEntry))
+            data.sort((a, b) => a.code.localeCompare(b.code))
+            setEntries(data)
+            setLoadError('')
+        } catch (error) {
+            if (request === loadRevision.current) setLoadError(error instanceof Error ? error.message : '資料載入失敗，請重新整理後重試。')
+        } finally {
+            if (request === loadRevision.current) setLoading(false)
+        }
+    }, [])
+
+    const cancelLoad = useCallback(() => { loadRevision.current++ }, [])
+    useEffect(() => { void load(); return cancelLoad }, [load, cancelLoad, syncVersion])
 
     const allThemes = useMemo(() => {
         const s = new Set<string>()
@@ -603,24 +616,23 @@ export default function IndustryMap() {
     }, [entries, searchQ, selectedTheme, sortBy, marketFilter])
 
     const handleSave = async (entry: StockEntry, rels: { up: string[]; down: string[] }) => {
-        await setDoc(userDoc(investDB, 'industryMap', entry.code), {
-            name: entry.name, market: entry.market || 'TW', themes: entry.themes, ...(entry.note ? { note: entry.note } : {}),
+        await mutation.run(async session => {
+            await saveIndustryEntry(entry, rels, editEntry, session)
+            setShowForm(false); setEditEntry(null)
+            await load()
         })
-        // 上下游關係：用確定性 id（from__to）避免重複；merge 不覆蓋既有的 label/type
-        const relId = (from: string, to: string) => `${from}__${to}`.replace(/\//g, '_')
-        await Promise.all([
-            ...rels.up.map(c => setDoc(userDoc(investDB, 'industryRelations', relId(c, entry.code)), { from: c, to: entry.code }, { merge: true })),
-            ...rels.down.map(c => setDoc(userDoc(investDB, 'industryRelations', relId(entry.code, c)), { from: entry.code, to: c }, { merge: true })),
-        ])
-        setShowForm(false); setEditEntry(null); load()
     }
 
     const handleDelete = async (code: string) => {
-        if (!confirm(`確定要移除 ${code}？`)) return
-        await deleteDoc(userDoc(investDB, 'industryMap', code)); load()
+        if (!await confirmAction(`確定要移除 ${code}？`)) return
+        await mutation.run(async session => {
+            await deleteDoc(session.doc(investDB, 'industryMap', code))
+            session.assertActive()
+            await load()
+        })
     }
 
-    const openEdit = (entry: StockEntry) => { setEditEntry(entry); setShowForm(false) }
+    const openEdit = (entry: StockEntry) => { if (mutation.busy) return; setEditEntry(entry); setShowForm(false) }
 
     const handleThemeClick = (t: string) => {
         setSelectedTheme(prev => prev === t ? null : t)
@@ -628,7 +640,7 @@ export default function IndustryMap() {
     }
 
     const toggleTheme = (t: string) => {
-        setExpandedThemes(prev => { const next = new Set(prev); next.has(t) ? next.delete(t) : next.add(t); return next })
+        setExpandedThemes(prev => { const next = new Set(prev); if (next.has(t)) next.delete(t); else next.add(t); return next })
     }
     // 全部展開／全部收合（以目前可見的題材為準）
     const anyCollapsed = visibleThemes.some(t => !expandedThemes.has(t))
@@ -637,7 +649,6 @@ export default function IndustryMap() {
     // ★ 更新市值（僅台股）：抓現價（全站共用 PriceContext）+ 已發行股數（全站共用 MarketCapContext）
     const handleUpdateMarketCap = async () => {
         const twCodes = entries.filter(e => (e.market || 'TW') === 'TW').map(e => e.code)
-        if (twCodes.length === 0) return
         try {
             await Promise.all([
                 ctxUpdatePrices(twCodes),
@@ -650,6 +661,7 @@ export default function IndustryMap() {
 
     return (
         <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
+            {(mutation.error || loadError || sharesError) && <p role="alert" style={{ color: 'var(--c-danger)' }}>{mutation.error || loadError || sharesError}</p>}
             <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
             {/* 標題列 */}
@@ -675,7 +687,7 @@ export default function IndustryMap() {
                         <Landmark size={14} style={{ animation: (sharesLoading || priceLoading) ? 'spin 1s linear infinite' : 'none' }} />
                         {(sharesLoading || priceLoading) ? '載入中…' : '更新市值'}
                     </button>
-                    <button onClick={() => { setShowForm(v => !v); setEditEntry(null) }} style={btn(showForm ? 'var(--c-muted)' : 'var(--c-accent)')}>
+                    <button disabled={mutation.busy} onClick={() => { setShowForm(v => !v); setEditEntry(null) }} style={btn(showForm ? 'var(--c-muted)' : 'var(--c-accent)')}>
                         {showForm ? <X size={14} /> : <Plus size={14} />}{showForm ? '收起' : '新增'}
                     </button>
                 </div>
@@ -756,8 +768,8 @@ export default function IndustryMap() {
                             <span style={{ fontSize: '12px', color: 'var(--c-muted)', whiteSpace: 'nowrap' }}>排序</span>
                             {(['code', 'name', 'themes'] as SortKey[]).map(k => (
                                 <button key={k} onClick={() => setSortBy(k)} style={{
-                                    background: sortBy === k ? 'var(--c-accent)' : 'var(--c-card)',
-                                    color: sortBy === k ? '#fff' : 'var(--c-text)',
+                                    background: sortBy === k ? 'var(--c-button-accent)' : 'var(--c-card)',
+                                    color: sortBy === k ? 'var(--c-on-accent)' : 'var(--c-text)',
                                     border: '1px solid var(--c-border)', borderRadius: '8px',
                                     padding: '6px 12px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap',
                                 }}>
@@ -770,8 +782,8 @@ export default function IndustryMap() {
                             <span style={{ fontSize: '12px', color: 'var(--c-muted)', whiteSpace: 'nowrap' }}>市場</span>
                             {(['ALL', 'TW', 'US', 'JP'] as (Market | 'ALL')[]).map(k => (
                                 <button key={k} onClick={() => setMarketFilter(k)} style={{
-                                    background: marketFilter === k ? 'var(--c-accent)' : 'var(--c-card)',
-                                    color: marketFilter === k ? '#fff' : 'var(--c-text)',
+                                    background: marketFilter === k ? 'var(--c-button-accent)' : 'var(--c-card)',
+                                    color: marketFilter === k ? 'var(--c-on-accent)' : 'var(--c-text)',
                                     border: '1px solid var(--c-border)', borderRadius: '8px',
                                     padding: '6px 12px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap',
                                 }}>

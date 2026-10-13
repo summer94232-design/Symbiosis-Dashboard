@@ -1,7 +1,12 @@
-import { useState, useEffect } from 'react'
+import { card, inp, btn } from '../../ui/styles'
+import { confirmAction } from '../../ui/dialogs'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import AnnualDataNotice from '../../components/AnnualDataNotice'
+import AnnualCalendarStatus from '../../components/AnnualCalendarStatus'
+import { googleSyncDateRange } from '../../lib/annualDataCoverage'
 import { getDocs, setDoc, deleteDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { userDoc, captureUserSession } from '../../lib/userDB'
 import { Plus, Trash2, Search, Link2, Unlink, CheckCircle2 } from 'lucide-react'
 import { EVENT_LABELS, EVENT_COLORS } from '../../lib/calendarData'
 import {
@@ -15,9 +20,18 @@ import {
     type SyncEventType,
 } from '../../lib/googleCalendar'
 
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
+
+// Validate the original browser request and Firebase session before saving the callback.
+async function initializeGoogleConnection() {
+    const session = captureUserSession()
+    const redirect = await parseGoogleAuthRedirect()
+    session.assertActive()
+    if (redirect?.refreshToken) await saveGoogleCalendarAuth(redirect.refreshToken, session)
+    session.assertActive()
+    const auth = await getGoogleCalendarAuth()
+    session.assertActive()
+    return { auth, connected: Boolean(redirect?.refreshToken), error: redirect?.error }
+}
 
 export default function CalendarSettings() {
     const [watchList, setWatchList] = useState<{ code: string; name: string }[]>([])
@@ -25,6 +39,8 @@ export default function CalendarSettings() {
     const [newName, setNewName] = useState('')
     const [stockDict, setStockDict] = useState<Record<string, string>>({})
     const [search, setSearch] = useState('')
+    const [loadError, setLoadError] = useState('')
+    const connectionRequest = useRef<ReturnType<typeof initializeGoogleConnection> | null>(null)
 
     // ── Google 行事曆連結狀態 ────────────────────────────────────────
     const [gcalAuth, setGcalAuth] = useState<GoogleCalendarAuth | null>(null)
@@ -32,42 +48,39 @@ export default function CalendarSettings() {
     const [gcalMessage, setGcalMessage] = useState<string | null>(null)
     const [gcalError, setGcalError] = useState<string | null>(null)
 
-    const loadGcalAuth = async () => {
-        try {
-            const auth = await getGoogleCalendarAuth()
-            setGcalAuth(auth)
-        } catch (err) {
-            console.error('loadGcalAuth 失敗：', err)
-        }
-        setGcalLoading(false)
-    }
-
     // 處理 Google 導回的 URL fragment（連結成功／失敗都會導回這頁）
     useEffect(() => {
-        const redirect = parseGoogleAuthRedirect()
-        if (!redirect) { loadGcalAuth(); return }
-
-        if (redirect.error) {
-            setGcalError(redirect.error)
-            setGcalLoading(false)
-            return
-        }
-        if (redirect.refreshToken) {
-            saveGoogleCalendarAuth(redirect.refreshToken)
-                .then(() => { setGcalMessage('✅ Google 帳號連結成功'); loadGcalAuth() })
-                .catch(err => { console.error('saveGoogleCalendarAuth 失敗：', err); setGcalError('儲存連結狀態失敗，請重試') })
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        let active = true
+        connectionRequest.current ??= initializeGoogleConnection()
+        void connectionRequest.current.then(({ auth, connected, error }) => {
+            if (!active) return
+            setGcalAuth(auth)
+            if (error) setGcalError(error)
+            if (connected) setGcalMessage('✅ Google 帳號連結成功')
+        }).catch(error => {
+            if (active) setGcalError(error instanceof Error ? error.message : '讀取連結狀態失敗，請重試')
+        }).finally(() => { if (active) setGcalLoading(false) })
+        return () => { active = false }
     }, [])
 
-    const handleConnectGoogle = () => {
-        window.location.href = getGoogleCalendarAuthUrl()
+    const handleConnectGoogle = async () => {
+        if (gcalLoading) return
+        setGcalLoading(true)
+        setGcalError(null)
+        try { window.location.href = await getGoogleCalendarAuthUrl() }
+        catch (error) {
+            setGcalError(error instanceof Error ? error.message : '無法連結 Google，請稍後重試')
+            setGcalLoading(false)
+        }
     }
 
     const handleDisconnectGoogle = async () => {
-        if (!confirm('確定要取消連結 Google 帳號？下次要同步時需要重新授權。')) return
-        await disconnectGoogleCalendar()
-        setGcalAuth(null)
+        if (!await confirmAction('確定要取消連結 Google 帳號？下次要同步時需要重新授權。')) return
+        setGcalLoading(true)
+        setGcalError(null)
+        try { await disconnectGoogleCalendar(); setGcalAuth(null) }
+        catch { setGcalError('取消連結未完成，請確認登入帳號後重試。') }
+        finally { setGcalLoading(false) }
     }
 
     const handleToggleSyncType = async (type: SyncEventType) => {
@@ -78,21 +91,29 @@ export default function CalendarSettings() {
         setGcalAuth({ ...gcalAuth, syncTypes: next })
         try {
             await setGoogleCalendarSyncTypes(next)
-        } catch (err) {
-            console.error('setGoogleCalendarSyncTypes 失敗：', err)
+        } catch {
+            setGcalAuth(gcalAuth)
+            setGcalError('同步選項儲存失敗，請確認登入帳號後重試。')
         }
     }
 
-    const load = async () => {
-        const snap = await getDocs(userCol(investDB, 'calendarWatchList'))
-        setWatchList(snap.docs.map(d => ({ code: d.id, name: d.data().name || d.id })))
-        const dictSnap = await getDocs(userCol(investDB, 'stockDict'))
-        const dict: Record<string, string> = {}
-        dictSnap.docs.forEach(d => { dict[d.id] = d.data().name })
-        setStockDict(dict)
-    }
+    const load = useCallback(async () => {
+        try {
+            const session = captureUserSession()
+            const [snap, dictSnap] = await Promise.all([
+                getDocs(session.col(investDB, 'calendarWatchList')),
+                getDocs(session.col(investDB, 'stockDict')),
+            ])
+            session.assertActive()
+            setWatchList(snap.docs.map(d => ({ code: d.id, name: d.data().name || d.id })))
+            const dict: Record<string, string> = {}
+            dictSnap.docs.forEach(d => { dict[d.id] = d.data().name })
+            setStockDict(dict)
+            setLoadError('')
+        } catch { setLoadError('關注清單載入失敗，請重新整理後重試。') }
+    }, [])
 
-    useEffect(() => { load() }, [])
+    useEffect(() => { void load() }, [load])
 
     const handleAdd = async () => {
         if (!newCode.trim()) return
@@ -117,15 +138,17 @@ export default function CalendarSettings() {
     )
 
     return (
-        <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '800px', margin: '0 auto' }}>
-            <div style={{ marginBottom: '24px' }}>
+        <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '800px', margin: '0 auto' }}>
+            <div style={{ marginBottom: '16px' }}>
                 <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>法說會關注清單</h1>
+                {loadError && <p role="alert" style={{ color: 'var(--c-danger)' }}>{loadError}</p>}
                 <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>設定要追蹤法說會的股票，行事曆會自動顯示相關法說會</p>
             </div>
 
             {/* Google 行事曆連結 */}
             <div style={{ ...card, marginBottom: '16px' }}>
                 <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '12px' }}>Google 行事曆同步</div>
+                <AnnualDataNotice fomcRange={gcalAuth?.syncTypes.includes('fomc') ? googleSyncDateRange() : undefined} />
 
                 {gcalMessage && (
                     <div style={{ backgroundColor: 'rgba(0,200,150,0.10)', border: '1px solid rgba(0,200,150,0.35)', borderRadius: '8px', padding: '8px 14px', marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
@@ -144,21 +167,22 @@ export default function CalendarSettings() {
                     <div style={{ fontSize: '13px', color: 'var(--c-muted)' }}>載入中…</div>
                 ) : !gcalAuth ? (
                     <div>
-                        <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '0 0 12px' }}>
-                            連結 Google 帳號後，可以把未來半年的行事曆事件（法說會、除權息、個人行程等）手動同步到你的 Google 行事曆。
-                        </p>
+                        <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '0 0 12px' }}>連結 Google 後，可手動同步未來半年行程。</p>
                         <button onClick={handleConnectGoogle} style={btn('#4285f4')}>
                             <Link2 size={14} />連結 Google 帳號
                         </button>
                     </div>
                 ) : (
                     <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
                             <CheckCircle2 size={16} color="var(--c-positive)" />
                             <span style={{ fontSize: '13px', color: 'var(--c-text)' }}>
                                 已連結（{new Date(gcalAuth.connectedAt).toLocaleDateString('zh-TW')}）
                             </span>
-                            <button onClick={handleDisconnectGoogle} style={{ ...btn('var(--c-border)'), padding: '4px 10px', fontSize: '12px', marginLeft: 'auto' }}>
+                            <button onClick={handleConnectGoogle} style={{ ...btn('#4285f4'), padding: '8px 10px', fontSize: '12px', marginLeft: 'auto' }}>
+                                <Link2 size={12} />重新授權
+                            </button>
+                            <button onClick={handleDisconnectGoogle} style={{ ...btn('var(--c-border)'), padding: '8px 10px', fontSize: '12px' }}>
                                 <Unlink size={12} />取消連結
                             </button>
                         </div>
@@ -226,6 +250,7 @@ export default function CalendarSettings() {
                     </div>
                 )}
             </div>
+            <AnnualCalendarStatus />
         </div>
     )
 }

@@ -1,0 +1,46 @@
+[
+  {
+    "name": "desktop",
+    "before": {
+      "right": 1242.2399673461914
+    },
+    "accent": "#8b9ef5",
+    "buttonBackground": "rgb(139, 158, 245)",
+    "scrollWidth": 1280,
+    "summaryRight": 1242.2399673461914,
+    "width": 1280
+  },
+  {
+    "name": "portrait",
+    "before": {
+      "right": 375.8400039672851
+    },
+    "accent": "#8b9ef5",
+    "buttonBackground": "rgb(139, 158, 245)",
+    "scrollWidth": 393,
+    "summaryRight": 375.8400039672851,
+    "width": 393
+  },
+  {
+    "name": "narrow",
+    "before": {
+      "right": 304.23999786376953
+    },
+    "accent": "#8b9ef5",
+    "buttonBackground": "rgb(139, 158, 245)",
+    "scrollWidth": 320,
+    "summaryRight": 304.23999786376953,
+    "width": 320
+  },
+  {
+    "name": "landscape",
+    "before": {
+      "right": 813.0799942016602
+    },
+    "accent": "#8b9ef5",
+    "buttonBackground": "rgb(139, 158, 245)",
+    "scrollWidth": 844,
+    "summaryRight": 813.0799942016602,
+    "width": 844
+  }
+]

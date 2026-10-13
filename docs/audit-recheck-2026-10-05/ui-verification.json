@@ -1,0 +1,40 @@
+{
+  "scenario": "isolated legacy credit dividend, repaired through the actual Dividend form",
+  "layouts": [
+    {
+      "name": "desktop",
+      "alertLeft": 32,
+      "alertRight": 1248,
+      "bodyWidth": 1280,
+      "message": "2026-09-05 2330 賣出超過該類別可用庫存，請在股利頁核對元大配股中的融資股數 重新載入",
+      "viewport": 1280
+    },
+    {
+      "name": "portrait",
+      "alertLeft": 12,
+      "alertRight": 381.6000061035156,
+      "bodyWidth": 393,
+      "message": "2026-09-05 2330 賣出超過該類別可用庫存，請在股利頁核對元大配股中的融資股數 重新載入",
+      "viewport": 393
+    },
+    {
+      "name": "landscape",
+      "alertLeft": 25.31999969482422,
+      "alertRight": 818.839958190918,
+      "bodyWidth": 844,
+      "message": "2026-09-05 2330 賣出超過該類別可用庫存，請在股利頁核對元大配股中的融資股數 重新載入",
+      "viewport": 844
+    },
+    {
+      "name": "narrow",
+      "alertLeft": 10,
+      "alertRight": 310,
+      "bodyWidth": 320,
+      "message": "2026-09-05 2330 賣出超過該類別可用庫存，請在股利頁核對元大配股中的融資股數 重新載入",
+      "viewport": 320
+    }
+  ],
+  "repairedAnnualProfit": 9857,
+  "errorAbsent": true,
+  "profitVisible": true
+}

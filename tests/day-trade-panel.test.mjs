@@ -15,7 +15,7 @@ const presentationUrl = url(compile('../src/lib/dayTradePresentation.ts'))
 // Render the real component without authorizing or performing any cloud writes.
 const cloudStubUrl = url(`
     const blocked = () => { throw new Error('Cloud calls are forbidden in presentation tests') }
-    export const getDocs = blocked, runTransaction = blocked, userCol = blocked, invalidateTrades = blocked, investDB = {};
+    export const getDocsFromServer = blocked, commitLedgerWrites = blocked, captureUserSession = blocked, invalidateTrades = blocked, investDB = {};
 `)
 const componentCode = compile('../src/components/DayTradePanel.tsx')
     .replace(/(['"])react\1/g, JSON.stringify(import.meta.resolve('react')))
@@ -23,7 +23,8 @@ const componentCode = compile('../src/components/DayTradePanel.tsx')
     .replace("'../lib/calc'", JSON.stringify(calcUrl))
     .replace("'../lib/dayTradePresentation'", JSON.stringify(presentationUrl))
     .replace("'../ui/styles'", JSON.stringify(url(compile('../src/ui/styles.ts'))))
-    .replace(/(['"])(firebase\/firestore|\.\.\/lib\/(firebase|userDB|investData))\1/g, JSON.stringify(cloudStubUrl))
+    .replace("'../ui/dialogs'", JSON.stringify(url(compile('../src/ui/dialogs.ts'))))
+    .replace(/(['"])(firebase\/firestore|\.\.\/lib\/(firebase|userDB|investData|ledgerWrites))\1/g, JSON.stringify(cloudStubUrl))
 const { default: DayTradePanel } = await import(url(componentCode))
 const { getDayTradeAttention } = await import(presentationUrl)
 const trade = overrides => {

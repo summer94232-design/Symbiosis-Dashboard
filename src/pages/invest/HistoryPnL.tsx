@@ -1,5 +1,7 @@
-import { useState, useEffect, useMemo } from 'react'
-import { calcPositions, type TradeRecord, type DividendRecord, type RealizedRecord } from '../../lib/calc'
+import LoadingState from '../../components/LoadingState'
+import { captureUserSession } from '../../lib/userDB'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { calcPositions, receivedCashDividends, type TradeRecord, type DividendRecord, type RealizedRecord } from '../../lib/calc'
 import { fetchTrades, fetchDividends } from '../../lib/investData'
 import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
@@ -62,6 +64,7 @@ export default function HistoryPnL() {
     const [records, setRecords] = useState<RealizedRecord[]>([])
     const [dividends, setDividends] = useState<DividendRecord[]>([])
     const [loading, setLoading] = useState(true)
+    const [hasLoaded, setHasLoaded] = useState(false)
     const [tab, setTab] = useState<'realized' | 'dividend' | 'bystock'>('realized')
     const [search, setSearch] = useState('')
 
@@ -70,23 +73,36 @@ export default function HistoryPnL() {
     const [customFrom, setCustomFrom] = useState('')
     const [customTo, setCustomTo] = useState('')
 
-    const load = async () => {
-        setLoading(true)
+    const [loadError, setLoadError] = useState('')
+    const loadRevision = useRef(0)
+    const load = useCallback(async () => {
+        const request = ++loadRevision.current
         try {
+            const session = captureUserSession()
+
             // ✅ 1-1：改走共用快取層（lib/investData）
             const [trades, dividendRecords] = await Promise.all([
                 fetchTrades<TradeRecord>('asc'),
                 fetchDividends<DividendRecord>('desc'),
             ])
-            setDividends(dividendRecords)
-            const { realized } = calcPositions(trades, dividendRecords)
+            if (request !== loadRevision.current) return
+            session.assertActive()
+            const today = toLocalDateString()
+            setDividends(receivedCashDividends(dividendRecords, today))
+            const { realized } = calcPositions(trades, dividendRecords, { asOf: today })
             // 最新賣出日期在最前面（降冪）
             setRecords([...realized].sort((a, b) => b.date.localeCompare(a.date)))
-        } catch (err) { console.error(err) }
-        setLoading(false)
-    }
+            setLoadError('')
+            setHasLoaded(true)
+        } catch (error) {
+            if (request === loadRevision.current) setLoadError(error instanceof Error ? error.message : '資料載入失敗，請重新整理後重試。')
+        } finally {
+            if (request === loadRevision.current) setLoading(false)
+        }
+    }, [])
 
-    useEffect(() => { void load() }, [syncVersion])
+    const cancelLoad = useCallback(() => { loadRevision.current++ }, [])
+    useEffect(() => { void load(); return cancelLoad }, [load, cancelLoad, syncVersion])
 
     // ── 解析生效中的時間範圍 ──────────────────────────────────────────
     const { from: activeFrom, to: activeTo } = useMemo(() => {
@@ -95,12 +111,12 @@ export default function HistoryPnL() {
         return getPresetDates(range)
     }, [range, customFrom, customTo])
 
-    const inRange = (date: string) => {
+    const inRange = useCallback((date: string) => {
         if (!activeFrom && !activeTo) return true
         if (activeFrom && date < activeFrom) return false
         if (activeTo && date > activeTo) return false
         return true
-    }
+    }, [activeFrom, activeTo])
 
     // ── 篩選（搜尋 + 時間範圍） ──────────────────────────────────────
     const filteredRecords = useMemo(() =>
@@ -110,7 +126,7 @@ export default function HistoryPnL() {
                 r.name.includes(search)
             return matchSearch && inRange(r.date)
         }),
-        [records, search, activeFrom, activeTo]
+        [records, search, inRange]
     )
 
     const filteredDividends = useMemo(() =>
@@ -120,7 +136,7 @@ export default function HistoryPnL() {
                 d.name.includes(search)
             return matchSearch && inRange(d.date)
         }),
-        [dividends, search, activeFrom, activeTo]
+        [dividends, search, inRange]
     )
 
     // ── 5-2：個股級績效（含息）──
@@ -187,6 +203,7 @@ export default function HistoryPnL() {
 
     return (
         <>
+            {loadError && <p role="alert" style={{ color: 'var(--c-danger)' }}>資料載入失敗：{loadError}</p>}
             <style>{`
                 .history-stats { display: grid; gap: 12px; grid-template-columns: repeat(5, 1fr); margin-bottom: 20px; }
                 @media (max-width: 1100px) { .history-stats { grid-template-columns: repeat(3, 1fr); } }
@@ -203,20 +220,17 @@ export default function HistoryPnL() {
                 .date-inp:focus { border-color: var(--c-accent); }
             `}</style>
 
-            <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
+            <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1600px', margin: '0 auto' }}>
 
                 {/* ── 標題與 Tab 切換 ── */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <div className="history-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <div>
                         <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>歷史損益</h1>
-                        <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>
-                            已實現損益與股利紀錄
-                            {isFiltered && <span style={{ marginLeft: '8px', color: 'var(--c-accent)' }}>・篩選中</span>}
-                        </p>
+                        
                     </div>
 
                     {/* ── Tab（帶筆數） ── */}
-                    <div style={{ display: 'flex', gap: '4px', backgroundColor: 'var(--c-card)', padding: '4px', borderRadius: '8px', width: 'fit-content' }}>
+                    <div className="history-tabs" style={{ display: 'flex', gap: '4px', backgroundColor: 'var(--c-card)', padding: '4px', borderRadius: '8px', width: 'fit-content' }}>
                         {[
                             { key: 'realized', label: `已實現損益（${filteredRecords.length}）` },
                             { key: 'dividend', label: `股利紀錄（${filteredDividends.length}）` },
@@ -272,7 +286,7 @@ export default function HistoryPnL() {
                         <div key={label} style={card}>
                             <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '6px', display: 'flex', alignItems: 'center' }}>
                                 {label}
-                                {(label === '累計已實現損益' || label === '區間已實現損益') && <InfoHint text="賣出淨收入扣除成本：自動沖抵／人工指定的當沖使用配對買入成本，其餘使用移動平均成本（含費稅、配股攤薄）。部分當沖會拆為兩筆損益列。與 XIRR、TWR 的報酬率口徑不同。" />}
+                                {(label === '累計已實現損益' || label === '區間已實現損益') && <InfoHint text="賣出淨收入扣成本；成本依當沖配對、券商指定或先進先出，含費稅與配股攤薄。部分當沖拆列，與 XIRR／TWR 不同。" />}
                                 {label === '平均報酬率' && <InfoHint text="各筆已實現交易報酬率的簡單平均（每筆等權、非金額加權），大額與小額交易權重相同。" />}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -302,7 +316,7 @@ export default function HistoryPnL() {
 
                         {/* 自訂日期輸入 */}
                         {range === 'custom' && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <div className="history-custom-dates" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <input type="date" className="date-inp"
                                     value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
                                 <span style={{ color: 'var(--c-muted)', fontSize: '12px' }}>～</span>
@@ -344,8 +358,9 @@ export default function HistoryPnL() {
                 {/* ── 已實現損益表格 ── */}
                 {tab === 'realized' && (
                     <div style={card}>
-                        {loading ? (
-                            <div style={{ textAlign: 'center', padding: '60px', color: 'var(--c-muted)' }}>載入中...</div>
+                        {loading && hasLoaded && <p className="ui-refresh-status" role="status">資料更新中…</p>}
+                {loading && !hasLoaded ? (
+                            <LoadingState />
                         ) : filteredRecords.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '60px', color: 'var(--c-muted)' }}>
                                 <div style={{ fontSize: '32px', marginBottom: '12px' }}>📭</div>
@@ -354,7 +369,7 @@ export default function HistoryPnL() {
                             </div>
                         ) : (
                             <div style={{ overflowX: 'auto' }}>
-                                <table className="history-table">
+                                <table className="history-table history-realized">
                                     <thead>
                                         <tr>
                                             {['賣出日期', '代號', '名稱', '股數', '均買價', '賣出價', '已實現損益', '報酬率'].map(h => (
@@ -398,18 +413,18 @@ export default function HistoryPnL() {
                                 {filteredRecords.length > 1 && (
                                     <div style={{ marginTop: '16px', padding: '12px 16px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', display: 'flex', gap: '28px', flexWrap: 'wrap', alignItems: 'center' }}>
                                         <div>
-                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>合計　</span>
+                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>合計 </span>
                                             <span style={{ fontSize: '15px', fontWeight: 700, color: pnlColor(totalRealized) }}>
                                                 {totalRealized >= 0 ? '+' : ''}${totalRealized.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
                                             </span>
                                         </div>
                                         <div>
-                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>勝率　</span>
+                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>勝率 </span>
                                             <span style={{ fontSize: '14px', fontWeight: 600, color: winRate >= 50 ? 'var(--c-positive)' : 'var(--c-danger)' }}>{winRate.toFixed(1)}%</span>
                                             <span style={{ fontSize: '11px', color: 'var(--c-muted)', marginLeft: '6px' }}>{winCount} 勝 {loseCount} 敗</span>
                                         </div>
                                         <div>
-                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>平均報酬率　</span>
+                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>平均報酬率 </span>
                                             <span style={{ fontSize: '14px', fontWeight: 600, color: pnlColor(avgReturn) }}>
                                                 {avgReturn >= 0 ? '+' : ''}{avgReturn.toFixed(2)}%
                                             </span>
@@ -431,7 +446,7 @@ export default function HistoryPnL() {
                             </div>
                         ) : (
                             <div style={{ overflowX: 'auto' }}>
-                                <table className="history-table">
+                                <table className="history-table history-dividend">
                                     <thead>
                                         <tr>
                                             {['日期', '代號', '名稱', '現金股利', '股票股利', '備註'].map(h => (
@@ -465,13 +480,13 @@ export default function HistoryPnL() {
                                 {filteredDividends.length > 1 && (
                                     <div style={{ marginTop: '16px', padding: '12px 16px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', display: 'flex', gap: '28px', flexWrap: 'wrap' }}>
                                         <div>
-                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>現金股利合計　</span>
+                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>現金股利合計 </span>
                                             <span style={{ fontSize: '15px', fontWeight: 700, color: 'var(--c-positive)' }}>
                                                 ${totalDividend.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}
                                             </span>
                                         </div>
                                         <div>
-                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>筆數　</span>
+                                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>筆數 </span>
                                             <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>{filteredDividends.length} 筆</span>
                                         </div>
                                     </div>
@@ -486,7 +501,7 @@ export default function HistoryPnL() {
                     <div style={card}>
                         <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '12px', display: 'flex', alignItems: 'center' }}>
                             含息總損益 = 已實現價差 + 篩選區間內的現金股利
-                            <InfoHint text="價差為移動平均成本口徑（與已實現損益表一致）。股利含仍持有部位領到的現金股利；含息報酬率分母為已實現成本基礎，從未賣出的存股部位無分母故顯示 —。股票股利不計入金額（已透過攤薄反映在均價）。" />
+                            <InfoHint text="已實現價差＋期間現金股利；報酬率以已實現成本為分母，無賣出顯示 —。股票股利反映於均價。" />
                         </div>
                         {stockPerf.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '60px', color: 'var(--c-muted)' }}>
@@ -495,7 +510,7 @@ export default function HistoryPnL() {
                             </div>
                         ) : (
                             <div style={{ overflowX: 'auto' }}>
-                                <table className="history-table">
+                                <table className="history-table history-by-stock">
                                     <thead>
                                         <tr>
                                             {['代號', '名稱', '賣出筆數', '勝率', '已實現價差', '累計股利', '含息總損益', '含息報酬率'].map(h => (

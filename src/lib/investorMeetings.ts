@@ -1,6 +1,7 @@
-import { collection, getDoc, getDocs, query, setDoc, where, writeBatch } from 'firebase/firestore'
+import { authenticatedFetch } from './authenticatedFetch'
+import { collection, getDocs, query, runTransaction, where, writeBatch } from 'firebase/firestore'
 import { investDB } from './firebase'
-import { userCol, userDoc } from './userDB'
+import { captureUserSession } from './userDB'
 import {
   mergeInvestorMeetings,
   normalizeMeetingDates as validDates,
@@ -14,7 +15,7 @@ export interface YahooInvestorMeetingSyncResult {
   changedGroups: number
 }
 
-let yahooSyncInFlight: Promise<YahooInvestorMeetingSyncResult> | null = null
+const yahooSyncInFlight = new Map<string, Promise<YahooInvestorMeetingSyncResult>>()
 
 interface InvestorMeetingOverride {
   stockCode: string
@@ -26,6 +27,7 @@ interface InvestorMeetingOverride {
 }
 
 export async function fetchInvestorMeetings(yearMonths: string[]): Promise<InvestorMeetingRecord[]> {
+  const session = captureUserSession()
   const months = [...new Set(yearMonths)].filter(month => /^\d{4}-\d{2}$/.test(month))
   if (!months.length) return []
 
@@ -35,11 +37,12 @@ export async function fetchInvestorMeetings(yearMonths: string[]): Promise<Inves
       where('yearMonth', '==', month),
     )))),
     Promise.all(months.map(month => getDocs(query(
-      userCol(investDB, 'investorMeetingOverrides'),
+      session.col(investDB, 'investorMeetingOverrides'),
       where('yearMonth', '==', month),
     )))),
   ])
 
+  session.assertActive()
   const globalRows: InvestorMeetingRecord[] = globalSnaps.flatMap(snap => snap.docs.map(docSnap => {
     const data = docSnap.data()
     return {
@@ -67,7 +70,7 @@ export async function fetchInvestorMeetings(yearMonths: string[]): Promise<Inves
 }
 
 /** Adds dates only to the current user's override collection; global data remains backend-only. */
-export async function addInvestorMeetingDates(inputs: InvestorMeetingInput[]): Promise<number> {
+export async function addInvestorMeetingDates(inputs: InvestorMeetingInput[], session = captureUserSession()): Promise<number> {
   const grouped = new Map<string, InvestorMeetingInput>()
   inputs.forEach(input => {
     const dates = validDates(input.dates)
@@ -81,48 +84,44 @@ export async function addInvestorMeetingDates(inputs: InvestorMeetingInput[]): P
   })
 
   const entries = [...grouped.entries()]
-  const snapshots = await Promise.all(entries.map(([id]) =>
-    getDoc(userDoc(investDB, 'investorMeetingOverrides', id))
-  ))
-  const now = new Date().toISOString()
-  const writes = entries.map(([id, input], index) => {
-    const ref = userDoc(investDB, 'investorMeetingOverrides', id)
-    const snap = snapshots[index]
-    const current = snap.exists() ? snap.data() as InvestorMeetingOverride : null
-    const addedDates = [...new Set([...validDates(current?.addedDates), ...input.dates])].sort()
-    const addedSet = new Set(input.dates)
-    const removedDates = validDates(current?.removedDates).filter(date => !addedSet.has(date))
-    const stockName = input.stockName || input.stockCode
-    if (current
-      && JSON.stringify(addedDates) === JSON.stringify(validDates(current.addedDates))
-      && JSON.stringify(removedDates) === JSON.stringify(validDates(current.removedDates))
-      && current.stockCode === input.stockCode
-      && (current.stockName || current.stockCode) === stockName) return null
-    return {
-      ref,
-      data: {
-        stockCode: input.stockCode,
-        stockName,
-        yearMonth: input.yearMonth,
-        addedDates,
-        removedDates,
-        updatedAt: now,
-      },
+  let completed = 0
+  for (let start = 0; start < entries.length; start += 400) {
+    session.assertActive()
+    const group = entries.slice(start, start + 400)
+    try {
+      completed += await runTransaction(investDB, async transaction => {
+        const refs = group.map(([id]) => session.doc(investDB, 'investorMeetingOverrides', id))
+        const snapshots = await Promise.all(refs.map(ref => transaction.get(ref)))
+        session.assertActive()
+        let changed = 0
+        group.forEach(([, input], index) => {
+          const current = snapshots[index].data() as InvestorMeetingOverride | undefined
+          const addedDates = [...new Set([...validDates(current?.addedDates), ...input.dates])].sort()
+          const addedSet = new Set(input.dates)
+          const removedDates = validDates(current?.removedDates).filter(date => !addedSet.has(date))
+          const stockName = input.stockName || input.stockCode
+          if (current && JSON.stringify(addedDates) === JSON.stringify(validDates(current.addedDates)) && JSON.stringify(removedDates) === JSON.stringify(validDates(current.removedDates)) && current.stockName === stockName) return
+          transaction.set(refs[index], { stockCode: input.stockCode, stockName, yearMonth: input.yearMonth, addedDates, removedDates, updatedAt: new Date().toISOString() })
+          changed++
+        })
+        return changed
+      })
+      session.assertActive()
+    } catch (error) {
+      throw new Error(`法說會更新未完成，已確認更新 ${completed} 組；可重試同一份資料，不會重複新增。${error instanceof Error ? error.message : ''}`)
     }
-  }).filter((write): write is NonNullable<typeof write> => write !== null)
-  for (let start = 0; start < writes.length; start += 400) {
-    const batch = writeBatch(investDB)
-    writes.slice(start, start + 400).forEach(write => batch.set(write.ref, write.data))
-    await batch.commit()
   }
-  return writes.length
+  return completed
 }
 
 /** Yahoo 手動同步的共用入口；儀表板與行事曆同時觸發時只會執行一次。 */
 export function syncYahooInvestorMeetings(): Promise<YahooInvestorMeetingSyncResult> {
-  if (yahooSyncInFlight) return yahooSyncInFlight
-  yahooSyncInFlight = (async () => {
-    const response = await fetch('/.netlify/functions/yahoo-calendar-proxy')
+  const session = captureUserSession()
+  const existing = yahooSyncInFlight.get(session.uid)
+  if (existing) return existing
+  const request = (async () => {
+    const response = await authenticatedFetch('/.netlify/functions/yahoo-calendar-proxy', session)
+    session.assertActive()
     if (!response.ok) throw new Error(`proxy HTTP ${response.status}`)
     const json = await response.json() as { error?: string; events?: Array<{ code: string; name: string; date: string }> }
     if (json.error) throw new Error(json.error)
@@ -140,20 +139,24 @@ export function syncYahooInvestorMeetings(): Promise<YahooInvestorMeetingSyncRes
         dates: [...new Set([...(current?.dates ?? []), event.date])].sort(),
       })
     }
-    const changedGroups = await addInvestorMeetingDates([...groups.values()])
+    const changedGroups = await addInvestorMeetingDates([...groups.values()], session)
     return { fetched: list.length, changedGroups }
-  })().finally(() => { yahooSyncInFlight = null })
-  return yahooSyncInFlight
+  })().finally(() => { if (yahooSyncInFlight.get(session.uid) === request) yahooSyncInFlight.delete(session.uid) })
+  yahooSyncInFlight.set(session.uid, request)
+  return request
 }
 
 /** Hides a global date or removes a personal date without modifying the global collection. */
 export async function removeInvestorMeetingDate(stockCode: string, stockName: string, isoDate: string): Promise<void> {
   const yearMonth = isoDate.slice(0, 7)
   const id = `${stockCode}-${yearMonth}`
-  const ref = userDoc(investDB, 'investorMeetingOverrides', id)
-  const snap = await getDoc(ref)
+  const session = captureUserSession()
+  const ref = session.doc(investDB, 'investorMeetingOverrides', id)
+  await runTransaction(investDB, async transaction => {
+  const snap = await transaction.get(ref)
+  session.assertActive()
   const current = snap.exists() ? snap.data() as InvestorMeetingOverride : null
-  await setDoc(ref, {
+  transaction.set(ref, {
     stockCode,
     stockName: stockName || current?.stockName || stockCode,
     yearMonth,
@@ -161,13 +164,19 @@ export async function removeInvestorMeetingDate(stockCode: string, stockName: st
     removedDates: [...new Set([...validDates(current?.removedDates), isoDate])].sort(),
     updatedAt: new Date().toISOString(),
   })
+  })
+  session.assertActive()
 }
 
 export async function clearInvestorMeetingOverrides(): Promise<void> {
-  const snap = await getDocs(userCol(investDB, 'investorMeetingOverrides'))
+  const session = captureUserSession()
+  const snap = await getDocs(session.col(investDB, 'investorMeetingOverrides'))
+  session.assertActive()
   for (let start = 0; start < snap.docs.length; start += 400) {
     const batch = writeBatch(investDB)
     snap.docs.slice(start, start + 400).forEach(docSnap => batch.delete(docSnap.ref))
+    session.assertActive()
     await batch.commit()
+    session.assertActive()
   }
 }

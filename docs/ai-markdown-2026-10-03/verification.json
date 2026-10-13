@@ -1,0 +1,54 @@
+{
+  "version": "v26.10.3.11",
+  "data": "fixture-only",
+  "modelCalls": 0,
+  "databaseCalls": 0,
+  "layouts": [
+    {
+      "name": "desktop",
+      "width": 1366,
+      "height": 900,
+      "actionsAligned": true,
+      "answerOverflow": false,
+      "headingPresent": true,
+      "pageOverflow": false,
+      "panelFits": true,
+      "tablePresent": true
+    },
+    {
+      "name": "portrait",
+      "width": 390,
+      "height": 844,
+      "actionsAligned": true,
+      "answerOverflow": false,
+      "headingPresent": true,
+      "pageOverflow": false,
+      "panelFits": true,
+      "tablePresent": true
+    },
+    {
+      "name": "landscape",
+      "width": 844,
+      "height": 390,
+      "actionsAligned": true,
+      "answerOverflow": false,
+      "headingPresent": true,
+      "pageOverflow": false,
+      "panelFits": true,
+      "tablePresent": true
+    },
+    {
+      "name": "narrow",
+      "width": 320,
+      "height": 568,
+      "actionsAligned": true,
+      "answerOverflow": false,
+      "headingPresent": true,
+      "pageOverflow": false,
+      "panelFits": true,
+      "tablePresent": true
+    }
+  ],
+  "copiedTextClean": true,
+  "sourceLinksPreserved": true
+}

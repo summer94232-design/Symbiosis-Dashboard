@@ -1,15 +1,21 @@
+import { card, inp, lbl, btn } from '../../ui/styles'
+import { publishAiNote } from '../../lib/aiPageContext'
+import { confirmAction, alertAction } from '../../ui/dialogs'
+import { searchKmsFullText, invalidateKmsFullText, type KmsSearchProgress } from '../../lib/kmsFullTextIndex'
+import { mutateLinkedKmsNote } from '../../lib/kmsNoteLinks'
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { JSONContent } from '@tiptap/react'
-import { doc, getDocs, query, where, writeBatch } from 'firebase/firestore'
+import { doc, getDocs, query, where } from 'firebase/firestore'
 import { kmsDB, investDB } from '../../lib/firebase'
 import { userCol, userDoc } from '../../lib/userDB'
 import { buildKmsTagStatsFromSummaries, fetchKmsNoteBody, fetchKmsNoteSummaries, fetchKmsNoteSummary, fetchKmsTagOrder, fetchKmsTagStats, hasUsableKmsTagStats, invalidateKmsNotes, invalidateKmsTrash, searchKmsNoteSummaries, KMS_UNTAGGED_KEY, type KmsTagStats } from '../../lib/kmsData'
 import { buildKmsSearchTerms, buildKmsTagPaths } from '../../lib/kmsSearch'
 // ✅ 1-2：共用 CSV 解析模組
-import { parseCSVLine } from '../../lib/csv'
+import { importKmsNotes } from '../../lib/kmsImport'
+import { captureUserSession } from '../../lib/userDB'
 import { generateHashtags, findRelatedNotes } from '../../lib/gemini'
-import { getQuote, extractPrice } from '../../lib/fugle'
+import { usePrices } from '../../PriceContext'
 import { toLocalDateString } from '../../lib/date'
 import { cleanupStaleNoteImageDrafts, deleteNoteImageAssets, deleteStoragePath, finalizeNoteImageAssets, prepareAndUploadNoteImage, uploadPrivateNoteFile, type NoteImageAsset } from '../../lib/kmsImages'
 import { migrateLegacyKmsNote, needsLegacyNoteMigration } from '../../lib/kmsLegacyMigration'
@@ -34,6 +40,7 @@ interface Note {
     assets?: NoteImageAsset[]
     hashtags: string[]
     links?: string[]
+    graphRevision?: number
     createdAt: string
     updatedAt: string
 }
@@ -51,18 +58,14 @@ interface NoteBody {
 }
 
 const empty: Note = { title: '', content: '', type: 'note', hashtags: [], links: [], createdAt: '', updatedAt: '' }
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }
-const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
-const TYPE_ICONS: Record<string, any> = { note: FileText, url: Link, image: Image, file: FileText }
+const TYPE_ICONS: Record<string, typeof FileText> = { note: FileText, url: Link, image: Image, file: FileText }
 const TYPE_LABELS: Record<string, string> = { note: '文字筆記', url: '網址收藏', image: '圖片', file: '文件' }
 const TYPE_COLORS: Record<string, string> = { note: 'var(--c-accent)', url: 'var(--c-positive)', image: 'var(--c-warning)', file: '#a78bfa' }
 type UploadSource = 'cover' | 'file' | 'editor' | 'migration'
 
 function noteBody(note: Note): NoteBody {
-    return { content: note.content || '', contentDoc: note.contentDoc, assets: note.assets || [] }
+    return { content: note.content || '', ...(note.contentDoc === undefined ? {} : { contentDoc: note.contentDoc }), assets: note.assets || [] }
 }
 
 function noteSummary(note: Note): Note {
@@ -161,6 +164,7 @@ const NOTE_TEMPLATES: NoteTemplate[] = [
 // ────────────────────────────────────────────────────────
 
 export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }: Props) {
+    const { ensurePrices, getCachedQuote } = usePrices()
     const [searchParams] = useSearchParams()
     const [notes, setNotes] = useState<Note[]>([])
     const [bodies, setBodies] = useState<Record<string, NoteBody>>({})
@@ -168,12 +172,22 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
     const [pageLoading, setPageLoading] = useState(false)
     const [metadataReady, setMetadataReady] = useState(false)
     const [remoteResults, setRemoteResults] = useState<Note[] | null>(null)
+    const [remoteQuery, setRemoteQuery] = useState('')
+    const [searchProgress, setSearchProgress] = useState<KmsSearchProgress | null>(null)
+    const [searchLoading, setSearchLoading] = useState(false)
+    const [searchRefresh, setSearchRefresh] = useState(0)
+    const searchRequest = useRef(0)
+    useEffect(() => () => { ++searchRequest.current }, [])
     const [showForm, setShowForm] = useState(false)
     const [editingId, setEditingId] = useState<string | null>(null)
     const [form, setForm] = useState<Note>(empty)
     const [loading, setLoading] = useState(false)
     const [aiLoading, setAiLoading] = useState(false)
     const [aiLinkLoading, setAiLinkLoading] = useState(false)
+    const [aiNotice, setAiNotice] = useState('')
+    const aiActionLock = useRef(false)
+    const aiDraftRevision = useRef(0)
+    useEffect(() => { aiDraftRevision.current++; setAiNotice('') }, [form, editingId, showForm])
     const [search, setSearch] = useState('')
     const [expandedId, setExpandedId] = useState<string | null>(null)
     const [newTag, setNewTag] = useState('')
@@ -187,6 +201,11 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
     const [migrationStatus, setMigrationStatus] = useState('')
     const [draftNoteId, setDraftNoteId] = useState('')
     const [originalAssets, setOriginalAssets] = useState<NoteImageAsset[]>([])
+    useEffect(() => {
+        if (showForm) return publishAiNote(editingId || '', form.title, form.content)
+        const note = (remoteResults ?? notes).find(n => n.id === expandedId)
+        if (note) return publishAiNote(note.id || '', note.title, bodies[note.id || '']?.content || note.content || '')
+    }, [showForm, editingId, form.title, form.content, expandedId, remoteResults, notes, bodies])
     const [sessionUploadedAssets, setSessionUploadedAssets] = useState<NoteImageAsset[]>([])
     const [originalFileStoragePath, setOriginalFileStoragePath] = useState('')
     const [sessionUploadedFilePath, setSessionUploadedFilePath] = useState('')
@@ -201,6 +220,7 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
     const [showImport, setShowImport] = useState(false)
     const [importMsg, setImportMsg] = useState('')
     const [importing, setImporting] = useState(false)
+    const noteImportLock = useRef(false)
     // ── 模板下拉 ─────────────────────────────────────────────────────────
     const [showTemplateMenu, setShowTemplateMenu] = useState(false)
     const [templateLoading, setTemplateLoading] = useState(false)
@@ -280,7 +300,7 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
     }
 
     const handleMobileCardClick = (event: React.MouseEvent<HTMLDivElement>, note: Note) => {
-        if (!window.matchMedia('(max-width: 767px)').matches) return
+        if (!window.matchMedia('(max-width: 767px), (max-width: 950px) and (pointer: coarse) and (orientation: landscape)').matches) return
         const target = event.target as HTMLElement
         if (target.closest('button, a, input, textarea, select, label, [data-note-card-interactive]')) return
         if (window.getSelection()?.toString()) return
@@ -290,41 +310,61 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
     useEffect(() => { load() }, [])
 
     useEffect(() => {
-        if (!search && !selectedTag) {
-            setRemoteResults(null)
-            return
-        }
-        if (!metadataReady) {
-            setRemoteResults(null)
-            return
-        }
+        const requestId = ++searchRequest.current
+        setSearchProgress(null)
+        setActionError(previous => previous.startsWith('搜尋失敗') ? '' : previous)
+        if ((!search.trim() && !selectedTag) || (!search.trim() && !metadataReady)) { setRemoteResults(null); setSearchLoading(false); return }
+        let active = true
         const timer = window.setTimeout(() => {
-            searchKmsNoteSummaries<Note>(search, search ? '' : selectedTag)
-                .then(setRemoteResults)
-                .catch(error => {
-                    console.error('跨分頁搜尋失敗', error)
-                    setActionError('跨分頁搜尋失敗；舊筆記需先建立搜尋索引。')
-                })
+            setSearchLoading(true)
+            const request = search.trim()
+                ? searchKmsFullText<Note>(search)
+                : searchKmsNoteSummaries<Note>('', selectedTag).then(rows => ({ rows, scanned: 0, readAttempts: 0, asOf: '' }))
+            request.then(result => {
+                if (active && requestId === searchRequest.current) {
+                    setRemoteResults(result.rows); setRemoteQuery(search)
+                    if (search.trim()) setSearchProgress(result)
+                    setActionError(previous => previous.startsWith('搜尋失敗') ? '' : previous)
+                }
+            }).catch(error => {
+                if (active && requestId === searchRequest.current) { setRemoteResults(null); setActionError(`搜尋失敗：${error instanceof Error ? error.message : '請稍後重試'}`) }
+            }).finally(() => { if (active && requestId === searchRequest.current) setSearchLoading(false) })
         }, 250)
-        return () => window.clearTimeout(timer)
-    }, [search, selectedTag, metadataReady])
+        return () => { active = false; window.clearTimeout(timer) }
+    }, [search, selectedTag, metadataReady, searchRefresh])
+
+    const routeNoteId = searchParams.get('note')
+    const openedRouteNote = useRef<string | null>(null)
+    useEffect(() => {
+        if (!routeNoteId) { openedRouteNote.current = null; return }
+        if (pageLoading || openedRouteNote.current === routeNoteId) return
+        let active = true
+        const openRouteNote = async () => {
+            try {
+                const note = notes.find(row => row.id === routeNoteId) ?? await fetchKmsNoteSummary<Note>(routeNoteId)
+                if (!active || !note) return
+                const body = await fetchKmsNoteBody<NoteBody>(routeNoteId)
+                if (!active) return
+                openedRouteNote.current = routeNoteId
+                setBodies(current => ({ ...current, [routeNoteId]: body }))
+                setNotes(current => current.some(row => row.id === routeNoteId) ? current : [note, ...current])
+                // Opening a route is idempotent; it must not toggle an already open note closed.
+                setExpandedId(routeNoteId)
+            } catch {
+                if (active) setActionError('指定筆記載入失敗，請重新整理後重試。')
+            }
+        }
+        void openRouteNote()
+        return () => { active = false }
+    }, [routeNoteId, notes, pageLoading])
 
     useEffect(() => {
-        const noteId = searchParams.get('note')
-        const note = notes.find(row => row.id === noteId)
-        if (note) {
-            void handleExpand(note)
-            setTimeout(() => {
-                const el = noteRefs.current[noteId!]
-                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-            }, 300)
-        } else if (noteId && !pageLoading) {
-            void fetchKmsNoteSummary<Note>(noteId).then(summary => {
-                if (summary) setNotes(current => current.some(row => row.id === summary.id) ? current : [summary, ...current])
-            }).catch(error => console.error('載入指定筆記摘要失敗', error))
-        }
-        // 只在路由指定的筆記首次出現在目前分頁時處理。
-    }, [searchParams, notes.length])
+        if (!expandedId || expandedId !== routeNoteId) return
+        const timer = window.setTimeout(() => {
+            noteRefs.current[expandedId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }, 300)
+        return () => window.clearTimeout(timer)
+    }, [expandedId, routeNoteId])
 
     // ── 套用模板 ──────────────────────────────────────────────────────────
     // 交易日誌（dynamic）會額外帶入：
@@ -354,17 +394,15 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
         // 1) 市場快照：抓加權指數 IX0001 即時收盤 + 當日漲跌幅
         let snapshotLine = '市場快照：大盤指數（載入失敗，請手動填寫）'
         try {
-            const quote = await getQuote('IX0001')
-            const price = extractPrice(quote)
+            const prices = await ensurePrices(['IX0001'])
+            const price = prices.IX0001
+            const quote = getCachedQuote('IX0001')
             if (price != null) {
                 // 漲跌幅：優先用 Fugle 回傳的 changePercent；
                 // 若無則以 (現價 − 參考價) / 參考價 自行計算
                 let pctStr = ''
-                let pct: number | null =
+                const pct: number | null =
                     typeof quote?.changePercent === 'number' ? quote.changePercent : null
-                if (pct == null && typeof quote?.referencePrice === 'number' && quote.referencePrice > 0) {
-                    pct = ((price - quote.referencePrice) / quote.referencePrice) * 100
-                }
                 if (pct != null) {
                     pctStr = ` (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`
                 }
@@ -419,25 +457,38 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
     // ─────────────────────────────────────────────────────────────────────
 
     const handleAutoTag = async () => {
-        if (!form.content && !form.title && !form.url) return
-        setAiLoading(true)
-        const tags = await generateHashtags(form.content || form.url || '', form.title, allTags)
-        setForm(f => ({ ...f, hashtags: tags }))
-        setAiLoading(false)
+        if (aiActionLock.current || !form.content && !form.title && !form.url) return
+        aiActionLock.current = true
+        setAiLoading(true); setAiNotice('')
+        const revision = aiDraftRevision.current
+        try {
+            const session = captureUserSession()
+            const tags = await generateHashtags(form.content || form.url || '', form.title, allTags)
+            session.assertActive()
+            if (revision !== aiDraftRevision.current) { setAiNotice('筆記已切換或修改，這次建議未套用，可重新分析。'); return }
+            if (tags.length) setForm(f => f === form ? { ...f, hashtags: [...new Set([...f.hashtags,...tags])] } : f)
+            else setAiNotice('沒有取得新的標籤建議，原標籤仍保留。')
+        } catch (error) { if (revision === aiDraftRevision.current) setAiNotice(error instanceof Error ? error.message : 'AI 分析失敗，原標籤仍保留。') }
+        finally { aiActionLock.current = false; setAiLoading(false) }
     }
 
     // AI 自動找相關筆記
     const handleAILinks = async () => {
-        if (!form.title && !form.content) return
-        setAiLinkLoading(true)
-        const otherNotes = notes
-            .filter(n => n.id !== editingId)
-            .map(n => ({ id: n.id!, title: n.title, content: n.content || '' }))
-        const relatedIds = await findRelatedNotes(form.title, form.content, otherNotes)
-        // 合併現有連結
-        const merged = [...new Set([...(form.links || []), ...relatedIds])]
-        setForm(f => ({ ...f, links: merged }))
-        setAiLinkLoading(false)
+        if (aiActionLock.current || !form.title && !form.content) return
+        aiActionLock.current = true
+        setAiLinkLoading(true); setAiNotice('')
+        const revision = aiDraftRevision.current
+        try {
+            const session = captureUserSession()
+            const otherNotes = notes.filter(n => n.id && n.id !== editingId && n.type !== 'image' && n.type !== 'file')
+                .map(n => ({ id: n.id!, title: n.title, content: n.content || '' }))
+            const relatedIds = await findRelatedNotes(form.title, form.content, otherNotes)
+            session.assertActive()
+            if (revision !== aiDraftRevision.current) { setAiNotice('筆記已切換或修改，這次建議未套用，可重新分析。'); return }
+            if (relatedIds.length) setForm(f => f === form ? { ...f, links: [...new Set([...(f.links || []),...relatedIds])] } : f)
+            else setAiNotice('目前提供的候選筆記沒有取得相關連結建議，原連結仍保留。')
+        } catch (error) { if (revision === aiDraftRevision.current) setAiNotice(error instanceof Error ? error.message : 'AI 分析失敗，原連結仍保留。') }
+        finally { aiActionLock.current = false; setAiLinkLoading(false) }
     }
 
     const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -503,7 +554,7 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
 
     const closeNoteForm = async () => {
         if (uploadsActive) {
-            alert('檔案仍在處理中，請等上傳完成後再關閉。')
+            void alertAction('檔案仍在處理中，請等上傳完成後再關閉。')
             return
         }
         if (sessionUploadedAssets.length) {
@@ -535,12 +586,6 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
         const now = new Date().toISOString()
         let savedId = editingId
 
-        // 雙向連結：更新被連結的筆記也加入反向連結
-        const oldLinks = editingId ? (notes.find(n => n.id === editingId)?.links || []) : []
-        const newLinks = form.links || []
-        const addedLinks = newLinks.filter(id => !oldLinks.includes(id))
-        const removedLinks = oldLinks.filter(id => !newLinks.includes(id))
-
         const noteRef = editingId
             ? userDoc(kmsDB, 'notes', editingId)
             : userDoc(kmsDB, 'notes', draftNoteId || doc(userCol(kmsDB, 'notes')).id)
@@ -548,36 +593,15 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
         const savedNote: Note = editingId
             ? { ...form, id: editingId, updatedAt: now }
             : { ...form, id: noteRef.id, createdAt: now, updatedAt: now }
-        const linkedUpdates: Record<string, string[]> = {}
-
-        for (const linkedId of addedLinks) {
-            const linkedNote = notes.find(n => n.id === linkedId)
-            if (linkedNote && linkedId !== noteRef.id) {
-                linkedUpdates[linkedId] = [...new Set([...(linkedNote.links || []), noteRef.id])]
-            }
-        }
-        for (const linkedId of removedLinks) {
-            const linkedNote = notes.find(n => n.id === linkedId)
-            if (linkedNote) {
-                linkedUpdates[linkedId] = (linkedNote.links || []).filter(id => id !== noteRef.id)
-            }
-        }
-
-        if (Object.keys(linkedUpdates).length > 449) {
-            alert('這則筆記的關聯數超過單次安全更新上限（449），請先減少連結後再儲存。')
-            return
-        }
-
-        // 筆記本體與所有反向連結在同一批次提交：全部成功或全部失敗。
-        const batch = writeBatch(kmsDB)
         const summary = noteSummary(savedNote)
         const body = noteBody(savedNote)
-        batch.set(noteRef, summary)
-        batch.set(userDoc(kmsDB, 'noteBodies', noteRef.id), body)
-        Object.entries(linkedUpdates).forEach(([linkedId, links]) => {
-            batch.update(userDoc(kmsDB, 'notes', linkedId), { links, updatedAt: now })
+        const { links, linkedUpdates, updatedAt, graphRevision } = await mutateLinkedKmsNote({
+            id: noteRef.id, mode: 'save', summary, body,
+            isNew: !editingId, expectedUpdatedAt: form.updatedAt, expectedGraphRevision: form.graphRevision,
         })
-        await batch.commit()
+        summary.links = links
+        summary.updatedAt = updatedAt
+        summary.graphRevision = graphRevision
         await finalizeNoteImageAssets(savedNote.assets || []).catch(error => {
             console.warn('圖片草稿標記清理失敗，稍後會由自動清理重新確認', error)
         })
@@ -613,6 +637,7 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
         setAllTags(Array.from(newTagsSet).sort())
 
         invalidateKmsNotes()
+        await load()
         onNotesChanged()
         setSearch('')
         setSelectedTag((form.hashtags?.length ?? 0) === 0 ? KMS_UNTAGGED_KEY : form.hashtags[0])
@@ -627,7 +652,7 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
         }
         } catch (error) {
             console.error(error)
-            setActionError('筆記儲存失敗，內容仍保留在表單中，請稍後重試。')
+            setActionError(error instanceof Error ? error.message : '筆記儲存失敗，內容仍保留在表單中，請稍後重試。')
         } finally {
             setLoading(false)
         }
@@ -636,9 +661,11 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
     const handleEdit = async (note: Note) => {
         setActionError('')
         try {
-            const body = await loadBodyForNote(note)
+            const latest = await fetchKmsNoteSummary<Note>(note.id!)
+            if (!latest) throw new Error('筆記已不存在')
+            const body = await fetchKmsNoteBody<NoteBody>(note.id!)
             const assets = body.assets || []
-            setForm({ ...note, ...body, links: note.links || [], assets })
+            setForm({ ...latest, ...body, links: latest.links || [], assets })
             setOriginalAssets(assets)
             setSessionUploadedAssets([])
             setOriginalFileStoragePath(note.fileStoragePath || '')
@@ -653,30 +680,12 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
     }
 
     const handleDelete = async (id: string) => {
-        if (!confirm('確定要刪除？筆記將移至垃圾桶，30 天後永久刪除。')) return
         const visibleNotes = remoteResults ?? notes
         const note = visibleNotes.find(n => n.id === id); if (!note) return
+        if (!await confirmAction(`確定刪除「${note.title || '未命名筆記'}」？筆記將移至垃圾桶，30 天後永久刪除。`)) return
         setActionError('')
         try {
-        const linkedUpdates: Record<string, string[]> = {}
-        for (const linkedId of (note.links || [])) {
-            const linkedNote = visibleNotes.find(n => n.id === linkedId)
-            if (linkedNote) {
-                linkedUpdates[linkedId] = (linkedNote.links || []).filter(l => l !== id)
-            }
-        }
-        if (Object.keys(linkedUpdates).length > 448) {
-            alert('這則筆記的關聯數超過單次安全刪除上限（448），請先減少連結後再刪除。')
-            return
-        }
-        // 反向連結、寫入垃圾桶與刪除原筆記全部放在同一批次。
-        const batch = writeBatch(kmsDB)
-        Object.entries(linkedUpdates).forEach(([linkedId, links]) => {
-            batch.update(userDoc(kmsDB, 'notes', linkedId), { links, updatedAt: new Date().toISOString() })
-        })
-        batch.set(userDoc(kmsDB, 'trash', id), { ...note, deletedAt: new Date().toISOString() })
-        batch.delete(userDoc(kmsDB, 'notes', id))
-        await batch.commit()
+        const { linkedUpdates } = await mutateLinkedKmsNote({ id, mode: 'delete' })
         invalidateKmsNotes()
         invalidateKmsTrash()
         onNotesChanged()
@@ -695,7 +704,7 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
 
     const handleLegacyMigration = async () => {
         if (!legacyNotes.length || uploadsActive) return
-        if (!confirm(`將目前載入的 ${legacyNotes.length} 則舊筆記拆分摘要／正文，並把舊原圖轉為縮圖。過程中請保持頁面開啟，是否繼續？`)) return
+        if (!await confirmAction(`將目前載入的 ${legacyNotes.length} 則舊筆記拆分摘要／正文，並把舊原圖轉為縮圖。過程中請保持頁面開啟，是否繼續？`)) return
 
         setActionError('')
         setUploadActive('migration', true)
@@ -775,76 +784,29 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
     // ✅ 1-2：CSV 解析改用 lib/csv 共用模組（支援引號包裹欄位）
 
     const handleImportNotes = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
-        setImporting(true)
-        setImportMsg('')
+        const input = e.target, file = input.files?.[0]
+        if (!file || noteImportLock.current) return
+        noteImportLock.current = true
+        setImporting(true); setImportMsg('')
         try {
+            const session = captureUserSession()
             const text = await file.text()
-            let rows: any[] = []
-
-            if (file.name.endsWith('.json')) {
-                const parsed = JSON.parse(text)
-                rows = Array.isArray(parsed) ? parsed : parsed.notes ?? []
-            } else if (file.name.endsWith('.csv')) {
-                // ✅ 修正：使用 quoted CSV parser 取代 line.split(',')
-                const lines = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').split('\n').filter(l => l.trim())
-                const headers = parseCSVLine(lines[0]).map(h => h.trim())
-                rows = lines.slice(1).map(line => {
-                    const cols = parseCSVLine(line)
-                    const row: Record<string, string> = {}
-                    headers.forEach((h, i) => { row[h] = (cols[i] || '').trim() })
-                    return row
-                })
-            }
-
-            if (!rows.length) { setImportMsg('❌ 檔案內容為空或格式不符'); setImporting(false); e.target.value = ''; return }
-
-            let success = 0, skipped = 0
-            const now = new Date().toISOString()
-
-            for (const row of rows) {
-                const title = String(row.title || row['標題'] || '').trim()
-                if (!title) { skipped++; continue }
-
-                const content = String(row.content || row['內容'] || '').trim()
-                const type = (['note', 'url', 'image', 'file'] as const).includes(row.type) ? row.type : 'note'
-                const url = String(row.url || row['網址'] || '').trim() || undefined
-                // hashtags: 陣列 or 分號/逗號分隔字串
-                let hashtags: string[] = []
-                if (Array.isArray(row.hashtags)) hashtags = row.hashtags.map(String)
-                else if (row.hashtags) hashtags = String(row.hashtags).split(/[;,、]/).map((t: string) => t.trim()).filter(Boolean)
-                else if (row['標籤']) hashtags = String(row['標籤']).split(/[;,、]/).map((t: string) => t.trim()).filter(Boolean)
-
-                try {
-                    const importedRef = doc(userCol(kmsDB, 'notes'))
-                    const importBatch = writeBatch(kmsDB)
-                    importBatch.set(importedRef, {
-                        title, type, url,
-                        hashtags,
-                        searchTerms: buildKmsSearchTerms(title, hashtags),
-                        tagPaths: buildKmsTagPaths(hashtags),
-                        isUntagged: hashtags.length === 0,
-                        links: [],
-                        createdAt: row.createdAt || now,
-                        updatedAt: now,
-                    })
-                    importBatch.set(userDoc(kmsDB, 'noteBodies', importedRef.id), { content, assets: [] })
-                    await importBatch.commit()
-                    success++
-                } catch { skipped++ }
-            }
-
-            setImportMsg(`✅ 匯入完成：成功 ${success} 筆，略過 ${skipped} 筆`)
-            // 重讀一次（批次匯入資料量大，local state 更新複雜度高，直接重讀即可）
+            session.assertActive()
+            const result = await importKmsNotes(text, file.name, session)
+            const counts = `成功 ${result.success} 筆，重複略過 ${result.duplicated} 筆，空標題略過 ${result.skipped} 筆，失敗 ${result.failed} 筆`
+            setImportMsg(`${result.error ? '❌ 匯入已中止' : '✅ 匯入完成'}：${counts}${result.error ? '；' + result.error : ''}`)
             invalidateKmsNotes()
+            if (result.error) return
+            session.assertActive()
             onNotesChanged()
-            load()
-        } catch (err) {
-            setImportMsg('❌ 解析失敗，請確認格式為 JSON 陣列或 CSV（title,content,type,url,hashtags）')
+            await load()
+        } catch (error) {
+            setImportMsg(`❌ 匯入已中止：${error instanceof Error ? error.message : '讀取失敗，請確認檔案後重試。'}`)
+        } finally {
+            noteImportLock.current = false
+            setImporting(false)
+            input.value = ''
         }
-        setImporting(false)
-        e.target.value = ''
     }
 
     const handleSort = (key: typeof sortBy) => {
@@ -859,10 +821,10 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
         })
     }
 
-    const filtered = (remoteResults ?? notes)
+    const filtered = (remoteResults !== null && remoteQuery === search ? remoteResults : notes)
         .filter(n => {
             const q = search.toLowerCase()
-            const matchSearch = !search ||
+            const matchSearch = (remoteResults !== null && remoteQuery === search) || !search ||
                 n.title.toLowerCase().includes(q) ||
                 n.hashtags?.some(t => t.toLowerCase().includes(q)) ||
                 (n.url?.toLowerCase().includes(q) ?? false)
@@ -945,7 +907,7 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
         .template-menu-item:hover { background: color-mix(in srgb, var(--c-accent) 10%, transparent); }
         .tag-entry-card:hover { border-color: var(--c-accent) !important; }
         .tag-entry-card:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
-        @media (max-width: 767px) {
+        @media (max-width: 767px), (max-width: 950px) and (pointer: coarse) and (orientation: landscape) {
             .kms-search-toolbar { top: 0; margin-inline: -4px; padding-inline: 4px; }
             .kms-search-box { flex-basis: 100%; }
             .kms-results-count { order: 3; margin-left: auto; }
@@ -982,10 +944,10 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
         }
       `}</style>
 
-            <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1400px', margin: '0 auto' }}>
+            <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1400px', margin: '0 auto' }}>
 
                 {/* 標題列 */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
                     <div>
                         {/* 返回鍵：只在選了標籤時出現，點擊清空 selectedTag 回到標籤入口 */}
                         {selectedTag && (
@@ -1147,12 +1109,13 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
                             </div>
                         </div>
 
+                        {aiNotice && <p role="status" style={{ color:'var(--c-warning)', fontSize:'12px', margin:'0 0 8px', lineHeight:1.5 }}>{aiNotice}</p>}
                         {/* 類型 */}
                         <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
                             {Object.entries(TYPE_LABELS).map(([key, label]) => {
                                 const Icon = TYPE_ICONS[key]
                                 return (
-                                    <button key={key} onClick={() => setForm(f => ({ ...f, type: key as any }))}
+                                    <button key={key} onClick={() => setForm(f => ({ ...f, type: key as Note['type'] }))}
                                         style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px', borderRadius: '8px', border: '1px solid', borderColor: form.type === key ? TYPE_COLORS[key] : 'var(--c-border)', backgroundColor: form.type === key ? `${TYPE_COLORS[key]}18` : 'transparent', color: form.type === key ? TYPE_COLORS[key] : 'var(--c-muted)', fontSize: '13px', cursor: 'pointer' }}>
                                         <Icon size={14} />{label}
                                     </button>
@@ -1214,7 +1177,7 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
                             <div style={{ gridColumn: 'span 2' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                     <label style={{ ...lbl, margin: 0 }}>Hashtag 標籤</label>
-                                    <button onClick={handleAutoTag} disabled={aiLoading} style={{ ...btn('#a78bfa'), fontSize: '12px', padding: '4px 12px' }}>
+                                    <button onClick={handleAutoTag} disabled={aiLoading || aiLinkLoading} title="依標題與前 1,000 字提供建議，保留現有標籤" style={{ ...btn('#a78bfa'), fontSize: '12px', padding: '4px 12px' }}>
                                         <Sparkles size={13} />{aiLoading ? 'AI 分析中...' : 'AI 自動產生'}
                                     </button>
                                 </div>
@@ -1305,7 +1268,7 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
                                         {(form.links?.length || 0) > 0 && <span style={{ marginLeft: '6px', fontSize: '11px', backgroundColor: 'color-mix(in srgb, var(--c-accent) 12%, transparent)', color: 'var(--c-accent)', borderRadius: '10px', padding: '1px 6px' }}>{form.links?.length}</span>}
                                     </label>
                                     <div style={{ display: 'flex', gap: '6px' }}>
-                                        <button onClick={handleAILinks} disabled={aiLinkLoading} style={{ ...btn('var(--c-positive)'), fontSize: '12px', padding: '4px 12px' }}>
+                                        <button onClick={handleAILinks} disabled={aiLinkLoading || aiLoading} title="僅比較目前載入的候選筆記標題與部分摘要；跨知識庫研究請使用 AI 助理" style={{ ...btn('var(--c-positive)'), fontSize: '12px', padding: '4px 12px' }}>
                                             <Sparkles size={13} />{aiLinkLoading ? 'AI 分析中...' : 'AI 建議連結'}
                                         </button>
                                         <button onClick={() => setShowLinkPicker(v => !v)} style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', fontSize: '12px', padding: '4px 12px' }}>
@@ -1372,7 +1335,7 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
                     <div className="kms-search-box">
                         <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--c-muted)' }} />
                         <input style={{ ...inp, paddingLeft: '36px', paddingRight: search ? '42px' : '12px', backgroundColor: 'var(--c-sidebar)' }}
-                            placeholder="搜尋標題、內容、標籤..." value={search} onChange={e => setSearch(e.target.value)} />
+                            placeholder="搜尋標題、標籤、網址、正文..." value={search} onChange={e => setSearch(e.target.value)} />
                         {search && (
                             <button type="button" className="kms-search-clear" onClick={() => setSearch('')} aria-label="清除搜尋" title="清除搜尋">
                                 <X size={15} />
@@ -1401,6 +1364,10 @@ export default function KMSHome({ selectedTag, setSelectedTag, onNotesChanged }:
                     第一層（沒選標籤、沒搜尋）：顯示標籤入口卡片
                     其餘情況：沿用原本的筆記卡片列表
                 */}
+                {search.trim() && <div role="status" style={{ padding: 12, color: 'var(--c-muted)' }}>
+                    {actionError.startsWith('搜尋失敗') ? <button disabled={searchLoading} onClick={() => { invalidateKmsFullText(); setSearchRefresh(value => value + 1) }}>重試</button>
+                        : <p>{searchLoading ? '正在搜尋全文…' : searchProgress ? `已搜尋全部 ${searchProgress.scanned} 筆筆記` : '正在準備全文搜尋。'}</p>}
+                </div>}
                 {pageLoading && !globalTagStats ? (
                     <div style={{ textAlign: 'center', padding: '64px', color: 'var(--c-muted)' }}>載入摘要中…</div>
                 ) : !selectedTag && !search ? (

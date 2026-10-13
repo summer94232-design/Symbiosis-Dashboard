@@ -12,24 +12,40 @@
  *
  * 自動快照的保守規則（寧缺勿錯，不污染趨勢資料）：
  * 1. settings/autoSnapshot.enabled 為 false 時不動作（預設開啟）。
- * 2. 今日已有快照（手動或自動）→ 不覆蓋、不動作。
- * 3. lastPrices._updatedAt 必須是「今天」更新的，避免用昨日收盤價寫出誤導快照。
- * 4. 任何持股缺現價 → 跳過（手動儲存允許以成本替代並顯示警告，自動模式不允許）。
- * 5. 空帳戶（無市值、無現金、無借款）→ 跳過。
+ * 2. 背景已有今日快照時不重複寫入；明確更新現價可覆寫當日紀錄。
+ * 3. 每檔持股必須成功取得當日有效報價，不要求最終收盤訊號。
+ * 4. 任何持股缺現價 → 跳過；「儲存今日快照」亦採相同規則。
+ * 5. 空帳戶（無市值、無現金、無借款）→ 跳過；僅現金帳戶可記錄當日數值。
+ * 6. 保留原有來源品質資料，不把一般趨勢快照冒充已確認收盤。
  *
  * 計算口徑與 AssetTrend 手動「儲存今日快照」完全一致：
- * calcMarketValue 由本模組匯出、AssetTrend 改為引用，兩邊共用同一份程式碼；
+ * buildPortfolioSnapshot 與 buildTodaySnapshot 統一日期、現金及報價驗證；
  * cash 採方案 A（含現金股利）、totalAssets 已扣融資借款、dividendAdjusted: true。
  */
 
-import { getDoc, setDoc } from 'firebase/firestore'
+import { getDoc, getDocFromServer, runTransaction } from 'firebase/firestore'
 import { investDB } from './firebase'
-import { userDoc, userDocNested } from './userDB'
-import { calcPositions, calcAvailableCash, aggregateMarginDebt, type TradeRecord, type DividendRecord } from './calc'
+import { captureUserSession } from './userDB'
+import type { TradeRecord, DividendRecord } from './calc'
+import { buildPortfolioSnapshot, type CashflowRecord } from './portfolioSnapshot'
 import { fetchTrades, fetchDividends, fetchCashflow, invalidateAssetSnapshots } from './investData'
 import { toLocalDateString } from './date'
 import { canRunAutoSnapshot, type AutoSnapshotTrigger } from './snapshotPolicy'
 import { validateSnapshotForWrite } from './investmentValidation'
+import { describeSnapshotPriceIssues } from './pricePolicy'
+
+/** One daily record; foreground refreshes replace it, background captures preserve it. */
+export async function saveValuationSnapshot(snapshot: SnapshotData & { auto?: boolean }, session = captureUserSession(), overwrite = true): Promise<boolean> {
+    session.assertActive()
+    return runTransaction(investDB, async transaction => {
+        const ref = session.doc(investDB, 'assetSnapshots', snapshot.date)
+        const existing = await transaction.get(ref)
+        session.assertActive()
+        if (existing.exists() && !overwrite) return false
+        transaction.set(ref, snapshot)
+        return true
+    })
+}
 
 // ── 共用市值計算（原 AssetTrend 內部函式抽出）──────────────────────────────
 
@@ -74,67 +90,45 @@ export interface SnapshotData {
     dividendAdjusted: true
     /** 由自動快照寫入時為 true（手動儲存無此欄位） */
     auto?: boolean
+    cashflowBasis?: 'after-close-v1'
+    cashflowNetAtCapture?: number
+    valuationQuality?: 'closing' | 'intraday' | 'manual-unverified'
+    valuationAt?: string
 }
 
 /**
  * 讀取資料並計算「今日快照」內容（不寫入）。
  * 與 AssetTrend.saveToday 的計算完全同口徑。
  */
-export async function buildTodaySnapshot(): Promise<{ snapshot: SnapshotData; missing: string[] }> {
-    const [trades, dividends, cashRecords] = await Promise.all([
-        fetchTrades<TradeRecord>('asc'),
-        fetchDividends<DividendRecord>('asc'),
-        fetchCashflow<{ type: string; amount: number }>('asc'),
-    ])
-    const { holdings: positions } = calcPositions(trades, dividends)
-
-    const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
-    const savedPrices = (priceDoc.exists() ? priceDoc.data() : {}) as Record<string, number>
-
-    const { marketValue, missing } = calcMarketValue(positions, savedPrices)
-    // ✅ 方案 A：可用現金含現金股利（全系統口徑）
-    const cash = calcAvailableCash(cashRecords, trades, dividends)
-    // ✅ 扣除融資借款，呈現真實淨值
-    const marginDebt = aggregateMarginDebt(trades)
+export async function buildTodaySnapshot(): Promise<{ snapshot: SnapshotData; missing: string[]; stale: string[]; staleReason: string }> {
+    const session = captureUserSession()
+    const priceRef = session.doc(investDB, 'settings', 'lastPrices')
     const today = toLocalDateString()
-
+    const [trades, dividends, cashflow, priceDoc] = await Promise.all([
+        fetchTrades<TradeRecord>('asc'), fetchDividends<DividendRecord>('asc'),
+        fetchCashflow<CashflowRecord>('asc'), getDocFromServer(priceRef),
+    ])
+    session.assertActive()
+    const savedPrices = priceDoc.exists() ? priceDoc.data() : {}
+    const portfolio = buildPortfolioSnapshot({ trades, dividends, cashflow, savedPrices, asOf: today })
+    const closing = portfolio.holdings.length > 0
+        && !portfolio.missingPriceCodes.length && !portfolio.stalePriceCodes.length
+        && portfolio.holdings.every(h => portfolio.savedPriceData._quotes?.[h.code]?.priceType === 'trade'
+            && portfolio.savedPriceData._quotes?.[h.code]?.isFinalClose === true)
+    if (portfolio.cashflow.some(row => !['in', 'out'].includes(row.type) || !Number.isFinite(row.amount) || row.amount < 0)) throw new Error('出入金資料無效，無法保存快照基準')
     return {
-        snapshot: {
-            date: today,
-            totalAssets: Math.round(marketValue + cash - marginDebt),
-            marketValue: Math.round(marketValue),
-            cash: Math.round(cash),
-            marginDebt: Math.round(marginDebt),
-            dividendAdjusted: true,
-        },
-        missing,
+        snapshot: { date: today, totalAssets: Math.round(portfolio.netAssets),
+            valuationAt: new Date().toISOString(), valuationQuality: closing ? 'closing' : 'intraday',
+            marketValue: Math.round(portfolio.marketValue), cash: Math.round(portfolio.cash),
+            marginDebt: Math.round(portfolio.marginDebt), dividendAdjusted: true,
+            cashflowBasis: 'after-close-v1',
+            cashflowNetAtCapture: portfolio.cashflow.reduce((sum, row) => sum + (row.type === 'in' ? row.amount : -row.amount), 0) },
+        missing: portfolio.missingPriceCodes, stale: portfolio.stalePriceCodes,
+        staleReason: portfolio.stalePriceCodes.length ? describeSnapshotPriceIssues(portfolio.stalePriceCodes, savedPrices, today) : '',
     }
 }
 
 // ── 自動每日快照 ──────────────────────────────────────────────────────────
-
-/**
- * 判斷 lastPrices._updatedAt 是否為「今天」。
- * PriceContext 以 toLocaleString('zh-TW') 寫入（如「2026/6/11 下午2:30:05」），
- * 不能用字串前綴比對（6/1 會誤配 6/11），需以正則取出年月日逐項比對；
- * 同時相容 ISO 等可被 Date.parse 解析的格式。
- */
-function isPriceUpdatedToday(updatedAt: unknown): boolean {
-    if (typeof updatedAt !== 'string' || updatedAt === '') return false
-    const now = new Date()
-    const m = updatedAt.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/)
-    if (m) {
-        return parseInt(m[1], 10) === now.getFullYear()
-            && parseInt(m[2], 10) === now.getMonth() + 1
-            && parseInt(m[3], 10) === now.getDate()
-    }
-    const t = Date.parse(updatedAt)
-    if (Number.isNaN(t)) return false
-    const d = new Date(t)
-    return d.getFullYear() === now.getFullYear()
-        && d.getMonth() === now.getMonth()
-        && d.getDate() === now.getDate()
-}
 
 export type AutoSnapshotStatus =
     | 'written'          // 已寫入今日快照
@@ -166,29 +160,25 @@ export function formatAutoSnapshotFeedback(result: AutoSnapshotResult): {
         case 'throttled':
             return { type: 'info', message: '今日快照剛更新過，本次不重複寫入。' }
         case 'disabled':
-            return { type: 'info', message: '自動快照目前為關閉，現價已更新但未儲存快照。' }
+            return { type: 'info', message: '自動快照目前為關閉，未儲存快照。' }
         case 'missing-prices':
             return {
                 type: 'info',
-                message: `現價已更新，但 ${result.missing?.join('、') || '部分持股'} 缺少現價，快照未儲存。`,
+                message: `${result.missing?.join('、') || '部分持股'} 缺少有效現價，快照未儲存。`,
             }
         case 'empty':
             return { type: 'info', message: '帳戶目前沒有可記錄的資產，快照未儲存。' }
         case 'outside-window':
             return { type: 'info', message: '目前不在背景快照時段，快照未儲存。' }
         case 'stale-prices':
-            return { type: 'error', message: '現價日期不是今天，快照未儲存。' }
+            return { type: 'info', message: `快照未儲存：${result.reason || '部分持股尚未取得今日有效成交價'}。` }
         case 'error':
             return { type: 'error', message: `快照更新失敗：${result.reason}` }
     }
 }
 
-/** 同一個分頁 session 中，今日快照已確認存在（寫入成功或 DB 已有）就不再查 DB（非覆寫模式用） */
-let coveredDate = ''
-/** 上次自動寫入完成的時間戳（覆寫模式的節流基準） */
-let lastAutoWriteTs = 0
-/** 防重入：一次寫入進行中時，後到的觸發直接略過（例如 PriceContext 與頁面幾乎同時觸發） */
-let autoSnapInFlight = false
+// State is isolated by account and date; existence is rechecked to allow deleted snapshots to be rebuilt.
+const autoSnapshotStates = new Map<string, { lastWriteTs: number; inFlight: boolean }>()
 /** 覆寫模式的最小寫入間隔：避免短時間內連續更新現價造成重複讀算寫 */
 const AUTO_WRITE_MIN_INTERVAL_MS = 60_000
 
@@ -221,45 +211,44 @@ export async function maybeAutoSnapshotToday(options?: {
         return { status, date: today, reason, ...(missing?.length ? { missing } : {}) }
     }
     try {
+        const session = captureUserSession()
         // 0. 運作時段檢查（零讀取）
         if (!canRunAutoSnapshot(trigger)) {
             return skip('outside-window', `現在 ${new Date().getHours()} 點，背景快照僅 08:00–22:00 運作`)
         }
 
-        // 1. 防重入 + 節流（零讀取）
-        if (autoSnapInFlight) return skip('throttled', '另一次寫入正在進行')
+        const stateKey = JSON.stringify([session.uid, today])
+        let state = autoSnapshotStates.get(stateKey)
+        if (!state) {
+            state = { lastWriteTs: 0, inFlight: false }
+            autoSnapshotStates.set(stateKey, state)
+        }
+        // Lock before the first await so simultaneous existence checks cannot both write.
+        if (state.inFlight) return skip('throttled', '另一次寫入正在進行')
         if (overwrite) {
-            const since = Date.now() - lastAutoWriteTs
+            const since = Date.now() - state.lastWriteTs
             if (since < AUTO_WRITE_MIN_INTERVAL_MS) {
                 return skip('throttled', `距上次寫入僅 ${Math.round(since / 1000)} 秒（節流 60 秒）`)
             }
-        } else {
-            // 非覆寫模式：今日已有快照（手動或先前自動）→ 不覆蓋
-            if (coveredDate === today) return skip('already-covered', '本 session 已確認今日有快照')
-            const existing = await getDoc(userDoc(investDB, 'assetSnapshots', today))
-            if (existing.exists()) {
-                coveredDate = today
-                return skip('already-covered', 'DB 已有今日快照（補寫模式不覆蓋；現價更新會走覆寫模式刷新）')
-            }
         }
-
-        autoSnapInFlight = true
+        state.inFlight = true
         try {
+            if (!overwrite) {
+                const existing = await getDoc(session.doc(investDB, 'assetSnapshots', today))
+                session.assertActive()
+                if (existing.exists()) return skip('already-covered', 'DB 已有今日快照')
+            }
             // 2. 設定開關（預設開啟；僅 enabled === false 視為關閉）
-            const cfgDoc = await getDoc(userDocNested(investDB, 'settings', 'autoSnapshot'))
+            const cfgDoc = await getDoc(session.doc(investDB, 'settings', 'autoSnapshot'))
             if (cfgDoc.exists() && cfgDoc.data().enabled === false) {
                 return skip('disabled', '自動快照已在資產趨勢頁關閉（settings/autoSnapshot.enabled = false）')
             }
 
-            // 3. 現價必須是今天更新的（覆寫模式由 updatePrices 觸發，必然剛更新完）
-            const priceDoc = await getDoc(userDocNested(investDB, 'settings', 'lastPrices'))
-            const updatedAt = priceDoc.exists() ? (priceDoc.data() as Record<string, unknown>)._updatedAt : undefined
-            if (!isPriceUpdatedToday(updatedAt)) {
-                return skip('stale-prices', `lastPrices._updatedAt 不是今天（目前值：${String(updatedAt)}）`)
-            }
-
-            // 4. 計算（資料走 investData 共用快取，幾乎零額外讀取）
-            const { snapshot, missing } = await buildTodaySnapshot()
+            // Compute and validate against one server price document; never an unrelated table timestamp.
+            session.assertActive()
+            const { snapshot, missing, stale, staleReason } = await buildTodaySnapshot()
+            session.assertActive()
+            if (snapshot.date !== today) return skip('error', '日期已跨日，請重新更新現價')
             if (missing.length > 0) {
                 return skip(
                     'missing-prices',
@@ -267,6 +256,7 @@ export async function maybeAutoSnapshotToday(options?: {
                     missing,
                 )
             }
+            if (stale.length > 0) return skip('stale-prices', staleReason, stale)
             if (snapshot.marketValue === 0 && snapshot.cash === 0 && snapshot.marginDebt === 0) {
                 return skip('empty', '空帳戶（無市值、無現金、無借款）')
             }
@@ -274,14 +264,16 @@ export async function maybeAutoSnapshotToday(options?: {
             // 5. 寫入（doc id = 日期；覆寫模式會以最新值更新今日快照，口徑與手動完全一致）
             const validation = validateSnapshotForWrite(snapshot)
             if (!validation.valid) throw new Error(`快照資料驗證失敗：${validation.errors.join('；')}`)
-            await setDoc(userDoc(investDB, 'assetSnapshots', today), { ...snapshot, auto: true })
+            session.assertActive()
+            const written = await saveValuationSnapshot({ ...snapshot, auto: true }, session, overwrite)
+            if (!written) return skip('already-covered', 'DB 已有今日快照')
             invalidateAssetSnapshots()
-            coveredDate = today
-            lastAutoWriteTs = Date.now()
+            session.assertActive()
+            state.lastWriteTs = Date.now()
             console.info(`[autoSnapshot] ${mode}已${overwrite ? '更新' : '寫入'}今日快照（${today}）`, snapshot)
             return { status: 'written', date: today, reason: overwrite ? '今日快照已更新' : '今日快照已寫入' }
         } finally {
-            autoSnapInFlight = false
+            state.inFlight = false
         }
     } catch (err) {
         console.error('[autoSnapshot] failed:', err)

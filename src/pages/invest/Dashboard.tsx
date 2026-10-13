@@ -1,13 +1,14 @@
+import LoadingState from '../../components/LoadingState'
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { getDoc, updateDoc } from 'firebase/firestore'
+import { getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userDoc, userDocNested } from '../../lib/userDB'
-import { calcGrossAmount, calcReturnRate, calcPositionAdjustment, simulateMarginBuy } from '../../lib/calc'
+import { captureUserSession, userDocNested } from '../../lib/userDB'
+import { calcGrossAmount, calcHoldingValuation, calcPositionAdjustment, simulateMarginBuy } from '../../lib/calc'
 // ✅ 1-2：共用 UI 樣式與損益顏色
 import { card } from '../../ui/styles'
 import { pnlColor } from '../../ui/format'
 import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown, ChevronDown, ChevronUp, Calculator, AlertTriangle, X } from 'lucide-react'
-import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell, type PieLabelRenderProps } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { usePrices } from '../../PriceContext'
 import { loadPortfolioSnapshot } from '../../lib/portfolioSnapshot'
@@ -15,10 +16,13 @@ import { useInvestSync } from '../../InvestSyncContext'
 import { formatAutoSnapshotFeedback, maybeAutoSnapshotToday, type AutoSnapshotResult } from '../../lib/snapshot'
 import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
+import DividendFeedStatus from '../../components/DividendFeedStatus'
 import ActionNotice, { type ActionNoticeState } from '../../components/ActionNotice'
-import { fetchCalendarEvents, fetchTasks, invalidateTasks } from '../../lib/plannerData'
+import { fetchCalendarEvents, fetchTasks } from '../../lib/plannerData'
+import { eventOverlapsRange, type EventTiming } from '../../lib/calendarTiming'
 import { syncYahooInvestorMeetings } from '../../lib/investorMeetings'
 import { DEFAULT_MARGIN_RULES, loadMarginRules } from '../../lib/marginSettings'
+
 
 const COLORS = ['var(--c-accent)', 'var(--c-positive)', 'var(--c-warning)', 'var(--c-danger)', 'var(--c-purple)', '#34d399', '#fb923c', '#60a5fa', '#f472b6', '#facc15', '#38bdf8', '#4ade80']
 const CASH_COLOR = 'var(--c-muted)'
@@ -43,7 +47,7 @@ interface PieEntry {
     fill: string
 }
 
-interface CalendarEvent {
+interface CalendarEvent extends EventTiming {
     id: string
     date: string
     title: string
@@ -87,7 +91,7 @@ interface SoldAlert {
 }
 
 // 族群圓餅圖 active label
-function renderCustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) {
+function renderCustomLabel({ cx = 0, cy = 0, midAngle = 0, innerRadius = 0, outerRadius = 0, percent = 0 }: PieLabelRenderProps) {
     if (percent < 0.05) return null
     const RADIAN = Math.PI / 180
     const radius = innerRadius + (outerRadius - innerRadius) * 0.5
@@ -101,9 +105,14 @@ function renderCustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent
 }
 
 // 個股圓餅圖 — 自訂 Tooltip
-function AssetTooltip({ active, payload, totalAssets }: any) {
+interface PortfolioTooltipProps {
+    active?: boolean
+    payload?: readonly { name?: string | number; value?: number; payload?: { fill?: string } }[]
+    totalAssets: number
+}
+function AssetTooltip({ active, payload, totalAssets }: PortfolioTooltipProps) {
     if (!active || !payload?.length) return null
-    const { name, value, payload: { fill } } = payload[0]
+    const { name, value = 0, payload: { fill } = {} } = payload[0]
     const pct = totalAssets > 0 ? ((value / totalAssets) * 100).toFixed(1) : '0.0'
     return (
         <div style={{ backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '10px', padding: '10px 14px', minWidth: '160px', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>
@@ -124,9 +133,9 @@ function AssetTooltip({ active, payload, totalAssets }: any) {
 }
 
 // 族群圓餅圖 — 自訂 Tooltip
-function GroupTooltip({ active, payload, totalAssets }: any) {
+function GroupTooltip({ active, payload, totalAssets }: PortfolioTooltipProps) {
     if (!active || !payload?.length) return null
-    const { name, value, payload: { fill } } = payload[0]
+    const { name, value = 0, payload: { fill } = {} } = payload[0]
     const pct = totalAssets > 0 ? ((value / totalAssets) * 100).toFixed(1) : '0.0'
     return (
         <div style={{ backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '10px', padding: '10px 14px', minWidth: '160px', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>
@@ -149,19 +158,24 @@ function GroupTooltip({ active, payload, totalAssets }: any) {
 export default function Dashboard() {
     const navigate = useNavigate()
     // ✅ 修正：改用 PriceContext，updatePrices 會同步更新全域，Holdings/Watchlist 等頁面一併反映
-    const { prices: ctxPrices, lastUpdated: ctxLastUpdated, priceLoading, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
+    const { prices: ctxPrices, priceErrors, lastUpdated: ctxLastUpdated, priceLoading, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
     const { version: syncVersion } = useInvestSync()
 
-    const [holdings, setHoldings] = useState<HoldingItem[]>([])
+    const [storedHoldings, setHoldings] = useState<HoldingItem[]>([])
+    const holdings = useMemo(() => {
+        const rows = storedHoldings.map(h => Object.hasOwn(ctxPrices, h.code) ? { ...h, ...calcHoldingValuation(h, ctxPrices[h.code]) } : h)
+        const total = rows.reduce((sum, h) => sum + h.marketValue, 0)
+        return rows.map(h => ({ ...h, ratio: total > 0 ? h.marketValue / total * 100 : 0 }))
+    }, [storedHoldings, ctxPrices])
     const [totalCash, setTotalCash] = useState(0)
     const [realizedPnL, setRealizedPnL] = useState(0)
     const [loading, setLoading] = useState(true)
+    const [hasLoaded, setHasLoaded] = useState(false)
     const [marginRules, setMarginRules] = useState(DEFAULT_MARGIN_RULES)
     const [syncingInvestorMeetings, setSyncingInvestorMeetings] = useState(false)
     // ✅ 3-1：行程/任務側卡獨立載入狀態，不擋核心指標渲染
     const [sideLoading, setSideLoading] = useState(true)
-    const [lastUpdated, setLastUpdated] = useState('')
-    const [hasPrice, setHasPrice] = useState(false)
+    const hasPrice = holdings.some(h => h.currentPrice !== null)
     const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
     const [sortMode, setSortMode] = useState<'marketValue' | 'group' | 'returnRate' | 'code' | 'unrealizedPnL'>('group')
     const [reloadCooldown, setReloadCooldown] = useState(0) // 秒數倒數
@@ -169,6 +183,7 @@ export default function Dashboard() {
     const [showReloadConfirm, setShowReloadConfirm] = useState(false)
     const [expandedHoldingCode, setExpandedHoldingCode] = useState<string | null>(null)
     const [notice, setNotice] = useState<ActionNoticeState | null>(null)
+    const priceRefreshGeneration = useRef(0)
     const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const [valuationNoticeVisible, setValuationNoticeVisible] = useState(false)
 
@@ -184,11 +199,19 @@ export default function Dashboard() {
         marginCost: number    // 融資買入時股票總市值（用於計算原始成本）
     }
     const [marginPositions, setMarginPositions] = useState<MarginPosition[]>([])
-    const [soldAlerts, setSoldAlerts] = useState<SoldAlert[]>([])
     // 賣出追蹤通知設定（與賣出追蹤頁共用 settings/soldAlert）
     const [soldAlertCfg, setSoldAlertCfg] = useState({ watchDays: DEFAULT_SOLD_WATCH_DAYS, riseThreshold: DEFAULT_SOLD_RISE_THRESHOLD })
     // sell trades 快取，供 updatePrices 掃描通知用（不重複讀 Firebase）
     const [sellTradesCache, setSellTradesCache] = useState<Array<{ date: string; code: string; name: string; price: number; shares: number }>>([])
+    const soldAlerts: SoldAlert[] = useMemo(() => sellTradesCache.flatMap(trade => {
+        const currentPrice = ctxPrices[trade.code]
+        if (currentPrice == null || trade.price <= 0) return []
+        const changePct = (currentPrice - trade.price) / trade.price * 100
+        return changePct >= soldAlertCfg.riseThreshold ? [{
+            code: trade.code, name: trade.name, date: trade.date, soldPrice: trade.price, shares: trade.shares,
+            currentPrice, changePct, opportunityCost: Math.round((currentPrice - trade.price) * trade.shares),
+        }] : []
+    }).sort((a, b) => b.changePct - a.changePct), [sellTradesCache, ctxPrices, soldAlertCfg.riseThreshold])
 
     // 融資加碼試算 state
     const [simOpen, setSimOpen] = useState(false)
@@ -245,7 +268,7 @@ export default function Dashboard() {
             setSellTradesCache(sellCache)
 
             setRealizedPnL(snapshot.realizedPnL)
-            loadCachedPrices(snapshot.prices, snapshot.priceUpdatedAt)
+            loadCachedPrices(snapshot.savedPriceData, snapshot.priceUpdatedAt)
 
             const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
             setStockGroups(groups)
@@ -264,10 +287,7 @@ export default function Dashboard() {
             //   若傳 true 會再扣一次 calcMarginRepaid（借款本金），導致融資賣出後現金被低估。
             // ✅ 方案 A：可用現金含現金股利（與 calcAvailableCash 的全系統口徑一致）
             setTotalCash(snapshot.cash)
-            setHasPrice(snapshot.hasMarketPrice)
-            // ✅ 修正：優先用 PriceContext 的最後更新時間，再 fallback Firebase savedAt
-            if (ctxLastUpdated) setLastUpdated(ctxLastUpdated)
-            else if (snapshot.priceUpdatedAt) setLastUpdated(snapshot.priceUpdatedAt)
+            setHasLoaded(true)
 
             // ── 計算融資部位（集中於 calc.ts，與資產趨勢頁口徑一致）──
             const activeMargin: MarginPosition[] = snapshot.marginPositions.map(m => ({
@@ -298,7 +318,7 @@ export default function Dashboard() {
             ])
             // 行事曆事件
             const calEvents: CalendarEvent[] = eventRows
-                .filter(e => e.date >= todayStr_ && e.date <= future14Str)
+                .filter(e => eventOverlapsRange(e, todayStr_, future14Str))
                 .sort((a, b) => a.date.localeCompare(b.date))
             setUpcomingEvents(calEvents)
             // 待辦任務
@@ -308,105 +328,63 @@ export default function Dashboard() {
         finally { setSideLoading(false) }
     }
 
-    const toggleTask = async (id: string, done: boolean) => {
-        try {
-            await updateDoc(userDoc(investDB, 'tasks', id), { done: !done })
-            invalidateTasks()
-            setTasks(prev => prev.filter(t => t.id !== id))
-        } catch (err) { console.error(err) }
-    }
 
     // ✅ 修正：委託 PriceContext 更新，結果自動同步到 Holdings、Watchlist 等所有頁面
     const updatePrices = async () => {
-        if (syncingInvestorMeetings) return
-        setSyncingInvestorMeetings(true)
-        const meetingSync = syncYahooInvestorMeetings()
-        // 持倉代號 + 近期賣出代號（賣出追蹤通知需要）一併查詢，不額外呼叫 Firebase
-        const holdingCodes = holdings.map(h => h.code)
-        const sellCodes = sellTradesCache.map(t => t.code)
-        const symbols = [...new Set([...holdingCodes, ...sellCodes])]
+        if (priceLoading) return
+        const generation = ++priceRefreshGeneration.current
+        const session = captureUserSession()
+        const meetingSync = !syncingInvestorMeetings ? syncYahooInvestorMeetings().then(
+            result => ({ result }), () => ({ result: null }),
+        ) : null
+        if (meetingSync) setSyncingInvestorMeetings(true)
+        let symbols = [...new Set([...holdings.map(h => h.code), ...sellTradesCache.map(t => t.code)])]
         let snapshotResult: AutoSnapshotResult | null = null
-        let quotes: Record<string, number | null> = {}
-        if (symbols.length > 0) {
-            quotes = await ctxUpdatePrices(symbols, {
-                onSnapshot: result => { snapshotResult = result },
+        let priceFeedback: ActionNoticeState | null = null
+        let meetingFeedback: ActionNoticeState | null = null
+        const publishFeedback = () => {
+            try { session.assertActive() } catch { return }
+            if (!priceFeedback || priceRefreshGeneration.current !== generation) return
+            const snapshotFeedback = snapshotResult ? formatAutoSnapshotFeedback(snapshotResult) : null
+            showNotice({
+                type: priceFeedback.type === 'error' || snapshotFeedback?.type === 'error' ? 'error'
+                    : priceFeedback.type === 'info' || snapshotFeedback?.type === 'info' || meetingFeedback?.type === 'info' ? 'info' : 'success',
+                message: [priceFeedback.message, snapshotFeedback?.message, meetingFeedback?.message].filter(Boolean).join(' '),
             })
         }
+        const quotes = await ctxUpdatePrices(symbols, {
+            onSnapshot: result => { snapshotResult = result; publishFeedback() },
+        })
+        try { session.assertActive() } catch { return }
+        symbols = Object.keys(quotes)
         const updatedCount = symbols.filter(code => typeof quotes[code] === 'number' && (quotes[code] as number) > 0).length
-        let priceFeedback: ActionNoticeState
-        if (symbols.length === 0) {
-            priceFeedback = { type: 'info', message: '目前沒有需要更新現價的股票。' }
-        } else if (updatedCount === 0) {
-            priceFeedback = { type: 'error', message: '這次未取得有效現價，請稍後再試。' }
-        } else if (updatedCount < symbols.length) {
-            priceFeedback = { type: 'info', message: `已更新 ${updatedCount} 檔，另有 ${symbols.length - updatedCount} 檔暫時無報價。` }
-        } else {
-            priceFeedback = { type: 'success', message: `已更新 ${updatedCount} 檔股票現價。` }
-        }
-        const snapshotFeedback = snapshotResult ? formatAutoSnapshotFeedback(snapshotResult) : null
-
-        // 用 context 回傳的即時 quotes 同步更新本頁 holdings（不等 state 重渲染）
+        priceFeedback = symbols.length === 0 || updatedCount === 0
+            ? { type: 'error', message: '這次未取得有效現價，請查看報價提示後再試。' }
+            : updatedCount < symbols.length
+                ? { type: 'info', message: `已更新 ${updatedCount} 檔，另有 ${symbols.length - updatedCount} 檔暫時無報價。` }
+                : { type: 'success', message: `已更新 ${updatedCount} 檔股票現價。` }
+        publishFeedback()
+        session.assertActive()
         let totalMarketValue = 0
-        let priceAvailable = false
         const updated: HoldingItem[] = holdings.map(h => {
-            const rawPrice = quotes[h.code]
-            const currentPrice = (typeof rawPrice === 'number' && rawPrice > 0) ? rawPrice : null
-            if (currentPrice !== null) priceAvailable = true
-            const marketValue = currentPrice !== null ? calcGrossAmount(currentPrice, h.shares) : h.totalCost
-            const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
-            // ✅ 融資用自備款為分母，現股用全額成本
-            const returnRate = calcReturnRate(unrealizedPnL, h.totalCost, h.marginAmount)
-            totalMarketValue += marketValue
-            return { ...h, currentPrice, marketValue, unrealizedPnL, returnRate }
+            const valuation = calcHoldingValuation(h, quotes[h.code])
+            totalMarketValue += valuation.marketValue
+            return { ...h, ...valuation }
         })
         updated.forEach(h => { h.ratio = totalMarketValue > 0 ? (h.marketValue / totalMarketValue) * 100 : 0 })
         updated.sort((a, b) => b.marketValue - a.marketValue)
         setHoldings(updated)
-        setHasPrice(priceAvailable)
-        setLastUpdated(new Date().toLocaleString('zh-TW'))
-
-        // ── 掃描賣出追蹤通知（零額外 Firebase 讀取，直接用本次 quotes）──
-        const alerts: SoldAlert[] = sellTradesCache
-            .filter(t => {
-                const p = quotes[t.code]
-                if (typeof p !== 'number' || p <= 0) return false
-                const pct = ((p - t.price) / t.price) * 100
-                return pct >= soldAlertCfg.riseThreshold
-            })
-            .map(t => {
-                const currentPrice = quotes[t.code] as number
-                const changePct = ((currentPrice - t.price) / t.price) * 100
-                return {
-                    code: t.code, name: t.name, date: t.date,
-                    soldPrice: t.price, shares: t.shares,
-                    currentPrice, changePct,
-                    opportunityCost: Math.round((currentPrice - t.price) * t.shares),
-                }
-            })
-            .sort((a, b) => b.changePct - a.changePct)
-        setSoldAlerts(alerts)
-
-        let meetingFeedback: ActionNoticeState
-        try {
-            const result = await meetingSync
-            meetingFeedback = result.fetched === 0
-                ? { type: 'info', message: '法說會目前沒有可更新資料。' }
-                : result.changedGroups > 0
-                    ? { type: 'success', message: `法說會已同步，更新 ${result.changedGroups} 組資料。` }
-                    : { type: 'success', message: '法說會已同步，沒有新異動。' }
-        } catch (err) {
-            console.error('[Dashboard] investor meeting sync error:', err)
-            meetingFeedback = { type: 'info', message: '現價已處理，但法說會暫時無法同步。' }
-        } finally {
+        // Quote completion does not wait for the independent meeting refresh.
+        if (meetingSync) void meetingSync.then(({ result }) => {
+            session.assertActive()
             setSyncingInvestorMeetings(false)
-        }
-        showNotice({
-            type: priceFeedback.type === 'error'
-                ? 'error'
-                : snapshotFeedback?.type === 'info' || priceFeedback.type === 'info' || meetingFeedback.type === 'info' ? 'info' : 'success',
-            message: `${priceFeedback.message}${snapshotFeedback ? ` ${snapshotFeedback.message}` : ''} ${meetingFeedback.message}`,
-        })
-
+            meetingFeedback = !result
+                ? { type: 'info', message: '法說會暫時無法同步。' }
+                : result.fetched === 0
+                    ? { type: 'info', message: '法說會目前沒有可更新資料。' }
+                    : { type: 'success', message: result.changedGroups > 0 ? `法說會已同步，更新 ${result.changedGroups} 組資料。` : '法說會已同步，沒有新異動。' }
+            publishFeedback()
+        }).catch(() => {})
     }
 
     // ✅ 優化：直接呼叫，移除不必要的 setTimeout 延遲
@@ -665,12 +643,12 @@ export default function Dashboard() {
         .pie-legend::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 2px; }
       `}</style>
 
-            <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
+            <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1600px', margin: '0 auto' }}>
                 <div className="page-header">
                     <div className="page-heading">
                         <h1 className="page-title">儀表板</h1>
                         <p className="page-subtitle">
-                            {lastUpdated ? `現價更新：${lastUpdated}` : '尚未更新現價，點「更新現價」取得最新報價'}
+                            {ctxLastUpdated ? `現價更新：${ctxLastUpdated}` : '尚未更新現價，點「更新現價」取得最新報價'}
                         </p>
                     </div>
                     <div className="page-actions">
@@ -690,7 +668,7 @@ export default function Dashboard() {
                                     <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '12px' }}>將重新從資料庫讀取所有資料</div>
                                     <div style={{ display: 'flex', gap: '8px' }}>
                                         <button onClick={confirmReload}
-                                            style={{ flex: 1, backgroundColor: 'var(--c-accent)', border: 'none', borderRadius: '6px', padding: '6px 0', color: '#fff', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}>
+                                            style={{ flex: 1, backgroundColor: 'var(--c-button-accent)', border: 'none', borderRadius: '6px', padding: '6px 0', color: 'var(--c-on-accent)', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}>
                                             確認
                                         </button>
                                         <button onClick={() => setShowReloadConfirm(false)}
@@ -704,20 +682,22 @@ export default function Dashboard() {
                         <button
                             className="ui-button ui-button-primary"
                             onClick={() => void updatePrices()}
-                            disabled={priceLoading || loading || syncingInvestorMeetings}
-                            title="更新股票現價、今日資產快照與法說會資料"
+                            disabled={priceLoading || loading}
+                            title="更新現價、除權息、快照與法說會"
                         >
-                            <RefreshCw size={15} className={priceLoading || syncingInvestorMeetings ? 'is-spinning' : undefined} />
-                            {priceLoading || syncingInvestorMeetings ? '同步中...' : '更新現價'}
+                            <RefreshCw size={15} className={priceLoading ? 'is-spinning' : undefined} />
+                            {priceLoading ? '現價更新中...' : '更新現價'}
                         </button>
                     </div>
                 </div>
 
+                <DividendFeedStatus />
                 {holdings.length > 0 && valuationNoticeVisible && (
                     <div role={holdingsWithoutPrice.length ? 'alert' : 'status'} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px', padding: '8px 10px 8px 12px', borderRadius: '9px', border: `1px solid ${holdingsWithoutPrice.length ? 'color-mix(in srgb, var(--c-warning) 35%, transparent)' : 'color-mix(in srgb, var(--c-positive) 30%, transparent)'}`, background: holdingsWithoutPrice.length ? 'color-mix(in srgb, var(--c-warning) 7%, transparent)' : 'color-mix(in srgb, var(--c-positive) 6%, transparent)', color: holdingsWithoutPrice.length ? 'var(--c-warning)' : 'var(--c-positive)', fontSize: '12px' }}>
                         {holdingsWithoutPrice.length ? <AlertTriangle size={14} /> : <CheckSquare size={14} />}
                         <strong>估值完整度 {holdingsWithPrice.length}/{holdings.length}（{valuationCompleteness}%）</strong>
                         {holdingsWithoutPrice.length > 0 && <span style={{ color: 'var(--c-muted)', flex: 1 }}>缺價：{holdingsWithoutPrice.map(h => h.code).join('、')}；暫以成本估算市值</span>}
+                        {holdingsWithoutPrice.some(h => priceErrors[h.code]) && <span style={{ width: '100%', fontSize: '11px' }}>{holdingsWithoutPrice.filter(h => priceErrors[h.code]).map(h => `${h.code}：${priceErrors[h.code]}`).join('；')}</span>}
                         <button type="button" aria-label="關閉估值完整度提示" onClick={() => setValuationNoticeVisible(false)} style={{ marginLeft: 'auto', border: 0, background: 'transparent', color: 'currentColor', cursor: 'pointer', display: 'grid', placeItems: 'center', padding: '2px', opacity: 0.75 }}><X size={14} /></button>
                     </div>
                 )}
@@ -774,22 +754,25 @@ export default function Dashboard() {
                     </div>
                 )}
 
-                {loading ? (
-                    <div style={{ textAlign: 'center', padding: '80px', color: 'var(--c-muted)' }}>載入中...</div>
+                {loading && hasLoaded && <p className="ui-refresh-status" role="status">資料更新中…</p>}
+                {loading && !hasLoaded ? (
+                    <LoadingState />
                 ) : (
                     <>
                         <div className="dash-stats">
                             {[
                                 { label: '總資產', value: `$${netAssets.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: DollarSign },
-                                { label: '股票總市值', value: `$${totalMarketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: BarChart2 },
-                                { label: '可用現金', value: `$${totalCash.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: cashShortfall > 0 ? 'var(--c-danger)' : 'var(--c-warning)', icon: DollarSign, cashWarning: cashShortfall > 0 },
+                                { label: '股票總市值（含出借）', value: `$${totalMarketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: BarChart2 },
+                                { label: '帳面現金', value: `$${totalCash.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: cashShortfall > 0 ? 'var(--c-danger)' : 'var(--c-warning)', icon: DollarSign, cashWarning: cashShortfall > 0 },
                             ].map(({ label, value, color, icon: Icon, cashWarning }) => (
                                 <div key={label} className="dashboard-kpi-card" style={{ ...card, borderColor: cashWarning ? 'color-mix(in srgb, var(--c-danger) 55%, var(--c-border))' : card.borderColor, background: cashWarning ? 'linear-gradient(135deg, var(--c-sidebar) 0%, color-mix(in srgb, var(--c-danger) 8%, transparent) 100%)' : card.backgroundColor }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                         <div>
-                                            <div style={{ fontSize: '13px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}</div>
+                                            <div style={{ fontSize: '13px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}
+                                                {label === '帳面現金' && <InfoHint text="成交日帳面現金，含未交割款；不等於銀行可提領餘額。交割款以元大查詢為準。" />}
+                                            </div>
                                             <div style={{ fontSize: 'clamp(16px, 2vw, 22px)', fontWeight: 700, color }}>{value}</div>
-                                            {cashWarning && <div role="alert" style={{ marginTop: '5px', color: 'var(--c-danger)', fontSize: '11px', fontWeight: 700 }}>可能違約交割 · 資金缺口 ${cashShortfall.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</div>}
+                                            {cashWarning && <div role="alert" style={{ marginTop: '5px', color: 'var(--c-danger)', fontSize: '11px', fontWeight: 700 }}>帳面資金缺口 ${cashShortfall.toLocaleString('zh-TW', { maximumFractionDigits: 0 })} · 請核對交割款</div>}
                                         </div>
                                         <Icon size={18} color={color} style={{ opacity: 0.5 }} />
                                     </div>
@@ -816,8 +799,8 @@ export default function Dashboard() {
                                 <div key={label} className="dashboard-kpi-card" style={card}>
                                     <div style={{ fontSize: '13px', color: 'var(--c-muted)', marginBottom: '8px', display: 'flex', alignItems: 'center' }}>
                                         {label}
-                                        {label === unrealizedLabel && <InfoHint text="（現價 − 平均成本）× 股數。平均成本為移動平均、含手續費並經配股攤薄。下方表格的個股報酬率對融資部位改以自備款為分母。" />}
-                                        {label === '已實現損益' && <InfoHint text="賣出價 − 賣出當時的移動平均成本（含配股攤薄），與歷史損益頁口徑一致；年度回顧的 XIRR 為另一種口徑，數字不同屬正常。" />}
+                                        {label === unrealizedLabel && <InfoHint text="市值扣含費成本及預估賣出費稅，不含股息；含出借股票。預估手續費未折扣；券商指定批次優先，其餘先進先出。融資未扣利息。" />}
+                                        {label === '已實現損益' && <InfoHint text="賣出淨收入扣批次成本，與歷史損益一致；不同於 XIRR。" />}
                                     </div>
                                     <div style={{ fontSize: 'clamp(16px, 2vw, 20px)', fontWeight: 700, color }}>{value}</div>
                                 </div>
@@ -856,9 +839,7 @@ export default function Dashboard() {
                                                 </span>
                                             )}
                                         </div>
-                                        <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginTop: '2px' }}>
-                                            股票市值 ÷ 自有資金{!hasPrice ? '（以成本估算）' : ''}
-                                        </div>
+                                        
                                     </div>
                                 </div>
 
@@ -921,7 +902,7 @@ export default function Dashboard() {
                                     </div>
                                     <div>
                                         <div style={{ fontSize: '14px', color: 'var(--c-text)', fontWeight: 700 }}>倉位水位試算</div>
-                                        <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginTop: '3px' }}>輸入目標水位，快速換算應買賣金額與股數</div>
+                                        
                                     </div>
                                 </div>
 
@@ -1014,13 +995,11 @@ export default function Dashboard() {
                                 {(adjustmentExceedsCash || adjustmentExceedsHolding) && (
                                     <div style={{ marginTop: '10px', fontSize: '11px', lineHeight: 1.5, color: 'var(--c-warning)' }}>
                                         {adjustmentExceedsCash
-                                            ? `⚠ 可用現金約 $${Math.max(totalCash, 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}，不足以完成全部買進。`
+                                            ? `⚠ 帳面現金約 $${Math.max(totalCash, 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}，不足以完成全部買進。`
                                             : `⚠ ${adjustmentCode} 目前持有 ${selectedAdjustmentHolding?.shares.toLocaleString()} 股，不足以單靠這檔完成賣出。`}
                                     </div>
                                 )}
-                                <div style={{ marginTop: 'auto', paddingTop: '12px', fontSize: '10px', lineHeight: 1.5, color: 'var(--c-dim)' }}>
-                                    未計入手續費、證交稅與成交滑價；融資帳戶以自有資金口徑計算。
-                                </div>
+                                
                             </div>
 
                             {/* ── 融資維持率卡片（有融資部位才顯示）── */}
@@ -1278,6 +1257,7 @@ export default function Dashboard() {
                                                     innerRadius={45} outerRadius={75}
                                                     paddingAngle={2}
                                                     dataKey="value"
+                                                   
                                                     labelLine={false}
                                                     label={renderCustomLabel}
                                                 >
@@ -1415,7 +1395,7 @@ export default function Dashboard() {
                                                             ? <span style={{ color: 'var(--c-muted)', fontSize: '12px' }}>點「更新現價」</span>
                                                             : <span
                                                                 style={{ backgroundColor: h.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(h.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}
-                                                                title={h.marginAmount > 0 ? `融資損益率（以自備款 $${(h.totalCost - h.marginAmount).toLocaleString()} 為基準）` : '現股損益率'}
+                                                                title={h.marginAmount > 0 ? '融資報酬率（自備款口徑）' : '現股報酬率'}
                                                             >
                                                                 {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
                                                             </span>

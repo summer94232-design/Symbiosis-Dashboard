@@ -1,11 +1,12 @@
+import LoadingState from '../../components/LoadingState'
 import { useState, useEffect, useRef } from 'react'
 import { getDoc, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userDocNested } from '../../lib/userDB'
+import { captureUserSession, userDocNested } from '../../lib/userDB'
 import { loadPortfolioSnapshot } from '../../lib/portfolioSnapshot'
 import InfoHint from '../../components/InfoHint'
 import ActionNotice, { type ActionNoticeState } from '../../components/ActionNotice'
-import { calcGrossAmount, calcReturnRate } from '../../lib/calc'
+import { calcHoldingValuation } from '../../lib/calc'
 // ✅ 1-2：共用 UI 樣式與損益顏色
 import { card } from '../../ui/styles'
 import { pnlColor } from '../../ui/format'
@@ -38,8 +39,8 @@ function GroupCell({
     const suggestions = Array.from(new Set([...allGroups, value].filter(Boolean)))
 
     useEffect(() => {
-        if (editing) { setValue(group); setTimeout(() => inputRef.current?.focus(), 50) }
-    }, [editing, group])
+        if (editing) inputRef.current?.focus()
+    }, [editing])
 
     const handleSave = () => { onSave(code, value.trim()); setEditing(false) }
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -49,15 +50,15 @@ function GroupCell({
 
     if (!editing) {
         return (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }} onClick={() => setEditing(true)} title="點擊編輯族群">
+            <button type="button" aria-label={`${code} 設定族群`} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', border: 0, background: 'transparent', padding: 0 }} onClick={() => { setValue(group); setEditing(true) }} title="點擊編輯族群">
                 {group ? (
                     <span style={{ fontSize: '12px', color: 'var(--c-purple)', backgroundColor: 'rgba(167,139,250,0.12)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
                         {group}
                     </span>
                 ) : (
-                    <span style={{ fontSize: '12px', color: 'var(--c-dim)' }}>+ 設定族群</span>
+                    <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>+ 設定族群</span>
                 )}
-            </div>
+            </button>
         )
     }
 
@@ -92,12 +93,15 @@ export default function Holdings() {
     const { prices, lastUpdated, priceLoading, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
     const { version: syncVersion } = useInvestSync()
 
-    const [holdings, setHoldings] = useState<DisplayHolding[]>([])
+    const [storedHoldings, setHoldings] = useState<DisplayHolding[]>([])
+    const holdings = storedHoldings.map(h => Object.hasOwn(prices, h.code) ? { ...h, ...calcHoldingValuation(h, prices[h.code]) } : h)
     const [loading, setLoading] = useState(true)
+    const [hasLoaded, setHasLoaded] = useState(false)
     const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
     const [groupSaving, setGroupSaving] = useState(false)
     const [expandedCode, setExpandedCode] = useState<string | null>(null)
     const [notice, setNotice] = useState<ActionNoticeState | null>(null)
+    const priceRefreshGeneration = useRef(0)
     const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const showNotice = (next: ActionNoticeState) => {
@@ -111,7 +115,7 @@ export default function Holdings() {
         try {
             // ✅ 1-1：改走共用快取層（lib/investData）
             const snapshot = await loadPortfolioSnapshot(prices)
-            loadCachedPrices(snapshot.prices, snapshot.priceUpdatedAt)
+            loadCachedPrices(snapshot.savedPriceData, snapshot.priceUpdatedAt)
 
             const groupDoc = await getDoc(userDocNested(investDB, 'settings', 'stockGroups'))
             const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
@@ -126,6 +130,7 @@ export default function Holdings() {
             }))
 
             setHoldings(list)
+            setHasLoaded(true)
             if (showFeedback) showNotice({ type: 'success', message: '持倉資料已重新載入。' })
         } catch (err) {
             console.error(err)
@@ -136,40 +141,35 @@ export default function Holdings() {
 
     // ★ 更新現價：委託 Context，用回傳的 quotes 同步更新本頁 holdings
     const handleUpdatePrices = async () => {
-        const symbols = holdings.map(h => h.code)
-        if (symbols.length === 0) {
-            showNotice({ type: 'info', message: '目前沒有需要更新現價的持倉。' })
-            return
-        }
+        const generation = ++priceRefreshGeneration.current
+        const session = captureUserSession()
+        let symbols = holdings.map(h => h.code)
         let snapshotResult: AutoSnapshotResult | null = null
-        const quotes = await ctxUpdatePrices(symbols, {
-            onSnapshot: result => { snapshotResult = result },
-        })
-        const updatedCount = symbols.filter(code => typeof quotes[code] === 'number' && (quotes[code] as number) > 0).length
-        let priceFeedback: ActionNoticeState
-        if (updatedCount === 0) {
-            priceFeedback = { type: 'error', message: '這次未取得有效現價，請稍後再試。' }
-        } else if (updatedCount < symbols.length) {
-            priceFeedback = { type: 'info', message: `已更新 ${updatedCount} 檔，另有 ${symbols.length - updatedCount} 檔暫時無報價。` }
-        } else {
-            priceFeedback = { type: 'success', message: `已更新 ${updatedCount} 檔持倉現價。` }
+        let priceFeedback: ActionNoticeState | null = null
+        const publishFeedback = () => {
+            try { session.assertActive() } catch { return }
+            if (!priceFeedback || priceRefreshGeneration.current !== generation) return
+            const snapshotFeedback = snapshotResult ? formatAutoSnapshotFeedback(snapshotResult) : null
+            showNotice({
+                type: priceFeedback.type === 'error' || snapshotFeedback?.type === 'error' ? 'error'
+                    : priceFeedback.type === 'info' || snapshotFeedback?.type === 'info' ? 'info' : 'success',
+                message: [priceFeedback.message, snapshotFeedback?.message].filter(Boolean).join(' '),
+            })
         }
-        const snapshotFeedback = snapshotResult ? formatAutoSnapshotFeedback(snapshotResult) : null
-        showNotice({
-            type: snapshotFeedback?.type === 'error' || priceFeedback.type === 'error'
-                ? 'error'
-                : snapshotFeedback?.type === 'info' || priceFeedback.type === 'info' ? 'info' : 'success',
-            message: `${priceFeedback.message}${snapshotFeedback ? ` ${snapshotFeedback.message}` : ''}`,
+        const quotes = await ctxUpdatePrices(symbols, {
+            onSnapshot: result => { snapshotResult = result; publishFeedback() },
         })
-
-        setHoldings(prev => prev.map(h => {
-            const currentPrice = quotes[h.code] ?? null
-            const marketValue = currentPrice !== null ? calcGrossAmount(currentPrice, h.shares) : h.totalCost
-            const unrealizedPnL = currentPrice !== null ? marketValue - h.totalCost : 0
-            // ✅ 融資用自備款為分母，現股用全額成本
-            const returnRate = calcReturnRate(unrealizedPnL, h.totalCost, h.marginAmount)
-            return { ...h, currentPrice, marketValue, unrealizedPnL, returnRate }
-        }).sort((a, b) => b.marketValue - a.marketValue))
+        try { session.assertActive() } catch { return }
+        symbols = Object.keys(quotes)
+        const updatedCount = symbols.filter(code => typeof quotes[code] === 'number' && (quotes[code] as number) > 0).length
+        priceFeedback = symbols.length === 0 || updatedCount === 0
+            ? { type: 'error', message: '這次未取得有效現價，請查看報價提示後再試。' }
+            : updatedCount < symbols.length
+                ? { type: 'info', message: `已更新 ${updatedCount} 檔，另有 ${symbols.length - updatedCount} 檔暫時無報價。` }
+                : { type: 'success', message: `已更新 ${updatedCount} 檔股票現價。` }
+        publishFeedback()
+        setHoldings(prev => prev.map(h => ({ ...h, ...calcHoldingValuation(h, quotes[h.code]) }))
+            .sort((a, b) => b.marketValue - a.marketValue))
     }
 
     const handleSaveGroup = async (code: string, group: string) => {
@@ -223,7 +223,7 @@ export default function Holdings() {
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
 
-            <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1600px', margin: '0 auto' }}>
+            <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1600px', margin: '0 auto' }}>
                 <div className="page-header">
                     <div className="page-heading">
                         <h1 className="page-title">股票持倉</h1>
@@ -254,7 +254,7 @@ export default function Holdings() {
 
                 <div className="holdings-stats">
                     {[
-                        { label: '持倉總市值', value: totalMarketValue, color: 'var(--c-accent)', fmt: (v: number) => `$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
+                        { label: '持倉總市值（含出借）', value: totalMarketValue, color: 'var(--c-accent)', fmt: (v: number) => `$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
                         { label: '持倉總成本', value: totalCost, color: 'var(--c-muted)', fmt: (v: number) => `$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` },
                         { label: '未實現損益', value: totalPnL, color: pnlColor(totalPnL), fmt: (v: number) => hasPrice ? `${v >= 0 ? '+' : ''}$${v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` : '—' },
                         { label: '整體報酬率', value: totalReturn, color: pnlColor(totalReturn), fmt: (v: number) => hasPrice ? `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` : '—' },
@@ -262,7 +262,8 @@ export default function Holdings() {
                         <div key={label} style={card}>
                             <div style={{ fontSize: '13px', color: 'var(--c-muted)', marginBottom: '8px', display: 'flex', alignItems: 'center' }}>
                                 {label}
-                                {label === '整體報酬率' && <InfoHint text="未實現損益 ÷ 持倉總成本（含融資借款的全額成本）。下方表格的個股報酬率對融資部位改以自備款為分母，兩者口徑不同。" />}
+                                {label === '未實現損益' && <InfoHint text="市值扣含費成本及預估賣出費稅，不含股息；含出借股票。預估手續費未折扣；券商指定批次優先，其餘先進先出。融資未扣利息。" />}
+                                {label === '整體報酬率' && <InfoHint text="整體：未實現損益 ÷ 全額成本；融資個股：以自備款計算。" />}
                             </div>
                             <div style={{ fontSize: 'clamp(16px, 2vw, 22px)', fontWeight: 700, color, display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 {fmt(value)}
@@ -273,8 +274,9 @@ export default function Holdings() {
                 </div>
 
                 <div style={card}>
-                    {loading ? (
-                        <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>載入中...</div>
+                    {loading && hasLoaded && <p className="ui-refresh-status" role="status">資料更新中…</p>}
+                {loading && !hasLoaded ? (
+                        <LoadingState />
                     ) : holdings.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>
                             <p style={{ fontSize: '15px' }}>目前沒有持倉</p>

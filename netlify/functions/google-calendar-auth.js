@@ -1,90 +1,57 @@
-// netlify/functions/google-calendar-auth.js
-// ──────────────────────────────────────────────────────────────
-// Google OAuth2 授權碼交換
-//
-// 流程：
-//   1. 前端把使用者導去 Google 的授權頁（access_type=offline, prompt=consent）
-//   2. Google 導回這支 function，網址帶著 ?code=xxx
-//   3. 這支 function 用 GOOGLE_CLIENT_SECRET（只存在 Netlify 環境變數，前端拿不到）
-//      向 Google 換取 access_token + refresh_token
-//   4. 換完後，把 token 放在 URL fragment（#...）導回 /calendar 頁面
-//      → fragment 不會被送到伺服器、也不會出現在 Netlify 的存取紀錄裡
-//   5. 前端（CalendarSettings.tsx）讀取 fragment，用目前登入的 investAuth
-//      把 refresh_token 寫進該使用者自己的 Firestore 路徑
-//
-// 這支 function 全程不連 Firestore、不需要 firebase-admin，
-// 唯一職責就是「用 Client Secret 跟 Google 換 token」這件無法在前端做的事。
-// ──────────────────────────────────────────────────────────────
+import { createHash } from 'node:crypto'
+import { getFirestore } from 'firebase-admin/firestore'
+import { invokeEventHandler } from '../lib/http-function.js'
+import { authorizeApiIdentity, getProtectedApp, apiError, apiHeaders } from '../lib/api-access.js'
+import { createOAuthState, readOAuthState, oauthCookie } from '../lib/google-oauth-state.js'
+import { sameSecret } from '../lib/google-calendar-security.js'
 
 const SITE_ORIGIN = 'https://symbiosis-jiawei.netlify.app'
 const REDIRECT_URI = `${SITE_ORIGIN}/.netlify/functions/google-calendar-auth`
-// ⚠️ 這裡一定要對到 App.tsx 裡實際掛載 <CalendarSettings /> 的路由，
-// 因為只有那個頁面會讀取下面的 URL fragment、把 token 存進 Firestore。
-const FRONTEND_RETURN_PATH = '/calendar/settings'
-
-export const handler = async (event) => {
-    const code = event.queryStringParameters?.code
-    const oauthError = event.queryStringParameters?.error
-
-    if (oauthError) {
-        return redirectWithError(`使用者拒絕授權或發生錯誤：${oauthError}`)
+const RETURN_URL = `${SITE_ORIGIN}/calendar/settings`
+const pendingRef = (db, uid) => db.doc('googleOAuthPending/' + createHash('sha256').update(uid).digest('hex'))
+const digest = state => createHash('sha256').update(state).digest('hex')
+function redirect(params) {
+    return { statusCode: 302, headers: { Location: `${RETURN_URL}#${new URLSearchParams(params)}`, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'Set-Cookie': oauthCookie('', 0) }, body: '' }
+}
+export const handleEvent = async event => {
+    const clientId = process.env.GOOGLE_CLIENT_ID?.trim(), clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim()
+    const connect = event.queryStringParameters?.action === 'connect'
+    if (!clientId || !clientSecret) return connect ? apiError(503, 'Google 行事曆授權設定尚未完成') : redirect({ gcal_error: 'Google 行事曆授權設定尚未完成' })
+    if (connect) {
+        const identity = await authorizeApiIdentity(event, 'calendarGoogle', 1, 'POST')
+        if (identity.statusCode) return identity
+        try {
+            if ((event.body || '').length > 1024) return apiError(400, '授權請求格式錯誤')
+            const { clientState } = JSON.parse(event.body || '{}')
+            if (!/^[a-f0-9]{64}$/.test(clientState || '')) return apiError(400, '授權請求格式錯誤')
+            const state = createOAuthState(identity.uid, identity.authTime, clientState)
+            await pendingRef(identity.db, identity.uid).set({ stateHash: digest(state), expiresAt: Date.now() + 600000 })
+            const params = new URLSearchParams({ client_id: clientId, redirect_uri: REDIRECT_URI, response_type: 'code', scope: 'https://www.googleapis.com/auth/calendar', access_type: 'offline', prompt: 'consent', state })
+            return { statusCode: 200, headers: { ...apiHeaders, 'Set-Cookie': oauthCookie(state) }, body: JSON.stringify({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` }) }
+        } catch { return apiError(503, '無法開始 Google 授權，請重新登入後再試') }
     }
-    if (!code) {
-        return redirectWithError('缺少授權碼（code）')
-    }
-
+    if (event.httpMethod !== 'GET') return apiError(405, '僅支援 GET', { Allow: 'GET' })
+    let state
     try {
-        const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-                code,
-                client_id: process.env.GOOGLE_CLIENT_ID,
-                client_secret: process.env.GOOGLE_CLIENT_SECRET,
-                redirect_uri: REDIRECT_URI,
-                grant_type: 'authorization_code',
-            }),
+        state = readOAuthState(event.queryStringParameters?.state, event.headers?.cookie || event.headers?.Cookie)
+        const db = getFirestore(getProtectedApp()), ref = pendingRef(db, state.uid)
+        await db.runTransaction(async tx => {
+            const saved = (await tx.get(ref)).data()
+            if (!sameSecret(saved?.stateHash, digest(event.queryStringParameters.state)) || saved.expiresAt <= Date.now()) throw new Error('Invalid pending request')
+            // Existing service-account role permits create/update, not delete.
+            // Keep one bounded record per user and invalidate it atomically.
+            tx.set(ref, { stateHash: 'consumed', expiresAt: 0 })
         })
-
-        const tokenData = await tokenRes.json()
-
-        if (!tokenRes.ok) {
-            console.error('[google-calendar-auth] 換 token 失敗：', tokenData)
-            return redirectWithError(tokenData.error_description || tokenData.error || '換取 token 失敗')
-        }
-
-        const { access_token, refresh_token, expires_in } = tokenData
-
-        if (!refresh_token) {
-            // 常見原因：這個 Google 帳號先前已經授權過，這次沒有真的跳出同意畫面，
-            // Google 只有在「新授權 / prompt=consent」時才會回傳 refresh_token。
-            return redirectWithError(
-                '未取得 refresh_token，請到 Google 帳號的「第三方應用程式存取權」頁面移除本應用的授權後，再重新連結一次'
-            )
-        }
-
-        const params = new URLSearchParams({
-            gcal_access_token: access_token,
-            gcal_refresh_token: refresh_token,
-            gcal_expires_in: String(expires_in ?? ''),
-        })
-
-        return {
-            statusCode: 302,
-            headers: { Location: `${SITE_ORIGIN}${FRONTEND_RETURN_PATH}#${params.toString()}` },
-            body: '',
-        }
-    } catch (err) {
-        console.error('[google-calendar-auth] 例外：', err.message)
-        return redirectWithError('伺服器錯誤，請稍後再試')
-    }
+    } catch { return redirect({ gcal_error: 'Google 授權驗證失敗或已逾時，請從目前帳號重新連結' }) }
+    const resultState = { gcal_state: state.clientState, gcal_uid: state.uid, gcal_auth_time: String(state.authTime) }
+    if (event.queryStringParameters?.error) return redirect({ ...resultState, gcal_error: 'Google 授權未完成，請重新連結' })
+    const code = event.queryStringParameters?.code
+    if (typeof code !== 'string' || !code || code.length > 8192) return redirect({ ...resultState, gcal_error: '缺少有效授權碼，請重新連結' })
+    try {
+        const response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ code, client_id: clientId, client_secret: clientSecret, redirect_uri: REDIRECT_URI, grant_type: 'authorization_code' }), signal: AbortSignal.timeout(10000) })
+        const token = await response.json()
+        if (!response.ok || typeof token.refresh_token !== 'string' || !token.refresh_token || token.refresh_token.length > 8192) return redirect({ ...resultState, gcal_error: '未取得有效 Google 授權，請重新連結' })
+        return redirect({ ...resultState, gcal_refresh_token: token.refresh_token })
+    } catch { return redirect({ ...resultState, gcal_error: 'Google 授權服務暫時無法使用，請稍後重試' }) }
 }
-
-function redirectWithError(message) {
-    const params = new URLSearchParams({ gcal_error: message })
-    return {
-        statusCode: 302,
-        headers: { Location: `${SITE_ORIGIN}${FRONTEND_RETURN_PATH}#${params.toString()}` },
-        body: '',
-    }
-}
+export default async function (request) { return invokeEventHandler(request, handleEvent) }

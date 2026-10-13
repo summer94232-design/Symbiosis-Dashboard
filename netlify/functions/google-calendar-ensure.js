@@ -1,3 +1,5 @@
+import { authorizeGoogleRequest } from '../lib/google-calendar-security.js'
+import { invokeEventHandler } from '../lib/http-function.js'
 // netlify/functions/google-calendar-ensure.js
 // 確保「Symbiosis 財經行事曆」這個專屬 Google 行事曆存在。
 // 已有 calendarId 就先驗證是否還存在（可能被使用者手動刪掉），
@@ -9,11 +11,11 @@
 const CALENDAR_NAME = 'Symbiosis 財經行事曆'
 const CALENDAR_DESCRIPTION = '由 Symbiosis 個人系統自動同步的財經行事曆'
 
-export const handler = async (event) => {
+export const handleEvent = async (event) => {
     const headers = {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        'Cache-Control': 'private, no-store',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
     }
     if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' }
@@ -23,10 +25,15 @@ export const handler = async (event) => {
 
     let payload
     try {
+        if ((event.body || '').length > 200000) throw new Error('Request too large')
         payload = JSON.parse(event.body || '{}')
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Invalid request')
     } catch {
         return { statusCode: 400, headers, body: JSON.stringify({ error: '請求格式錯誤（非合法 JSON）' }) }
     }
+
+    const denied = await authorizeGoogleRequest(event, payload, { ensure: true })
+    if (denied) return denied
 
     const { refreshToken, calendarId } = payload
     if (!refreshToken) {
@@ -139,4 +146,8 @@ async function refreshAccessToken(refreshToken) {
         throw new Error(`Google 憑證已失效，請重新連結帳號（${tokenData.error || 'unknown'}）`)
     }
     return tokenData.access_token
+}
+
+export default async function (request) {
+    return invokeEventHandler(request, handleEvent)
 }

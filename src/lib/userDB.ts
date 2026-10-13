@@ -10,7 +10,7 @@
  */
 
 import { collection, doc } from 'firebase/firestore'
-import { investAuth } from './auth'
+import { investAuth, kmsAuth } from './auth'
 import type { Firestore } from 'firebase/firestore'
 
 /** 取得目前登入用戶的 uid，未登入時拋出錯誤 */
@@ -20,6 +20,29 @@ export function getUID(): string {
     const uid = investAuth.currentUser?.uid
     if (!uid) throw new Error('用戶未登入')
     return uid
+}
+
+/** Capture both Auth session objects so an in-flight operation cannot follow an account switch. */
+export function captureUserSession() {
+    const uid = getUID()
+    const investUser = investAuth.currentUser
+    const kmsUser = kmsAuth.currentUser
+    const assertActive = () => {
+        if (investAuth.currentUser !== investUser || kmsAuth.currentUser !== kmsUser) {
+            throw new Error('登入帳號已變更，操作已中止；已完成的批次仍保留，請確認帳號後重試。')
+        }
+    }
+    return {
+        uid, assertActive,
+        col(db: Firestore, name: string) {
+            assertActive()
+            return collection(db, 'users', uid, name)
+        },
+        doc(db: Firestore, name: string, id: string) {
+            assertActive()
+            return doc(db, 'users', uid, name, id)
+        },
+    }
 }
 
 /**

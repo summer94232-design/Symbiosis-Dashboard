@@ -20,6 +20,8 @@ export interface BrokerTradeRow {
     rawText: string
     sourceFile?: string
     settlementDate?: string
+    brokerDayTrade?: boolean
+    grossAmount?: number
 }
 
 export type ReconciliationStatus = 'matched' | 'mismatch' | 'missing-system' | 'missing-broker' | 'coverage-unknown'
@@ -192,25 +194,28 @@ function parseYuantaMonthlyStatement(rawText: string): BrokerTradeRow[] | null {
     const section = yuantaMonthlyTradeSection(rawText)
     if (!section) return null
 
-    const rowStart = /(?=\d{4}\/\d{2}\/\d{2}\s+\d{4}\/\d{2}\/\d{2}\s+(?:集中|櫃檯|融資|融券|借券|興櫃)\s+TWD\s+[買賣]\s+)/g
+    const rowStart = /(?=\d{4}\/\d{2}\/\d{2}\s+\d{4}\/\d{2}\/\d{2}\s+(?:集中|櫃檯|融資|融券|借券|興櫃)\s+TWD\s+[買賣]沖?\s+)/g
     const blocks = section.split(rowStart).map(block => block.trim()).filter(block => /^\d{4}\//.test(block))
     return blocks.map((block, index): BrokerTradeRow | null => {
-        const head = block.match(/^(\d{4}\/\d{2}\/\d{2})\s+(\d{4}\/\d{2}\/\d{2})\s+(集中|櫃檯|融資|融券|借券|興櫃)\s+TWD\s+([買賣])\s+(\d{4,6}[A-Z]?)\s+(.+?)\s+([\d,]+)\s+([\d,]+\.\d+)\s+([\d,]+)(?:\s+|$)(.*)$/)
+        const head = block.match(/^(\d{4}\/\d{2}\/\d{2})\s+(\d{4}\/\d{2}\/\d{2})\s+(集中|櫃檯|融資|融券|借券|興櫃)\s+TWD\s+([買賣]沖?)\s+(\d{4,6}[A-Z]?)\s+(.+?)\s+([\d,]+)\s+([\d,]+\.\d+)\s+([\d,]+)(?:\s+|$)(.*)$/)
         if (!head) return null
-        const type: 'buy' | 'sell' = head[4] === '賣' ? 'sell' : 'buy'
+        const type: 'buy' | 'sell' = head[4].startsWith('賣') ? 'sell' : 'buy'
         const shares = parseNumber(head[7])
         const price = parseNumber(head[8])
         if (!shares || !price) return null
 
-        const tail = head[10].match(/\([\d,]+\)|[\d,]+/g) ?? []
+        // Stop at page furniture; otherwise a zero-tax sale at a page end can
+        // mistake the page number for its net amount or financing interest.
+        const tailText = head[10].replace(/\s+\d+\/\d+(?:\s|$)[\s\S]*$/, '').split('---')[0]
+        const tail = tailText.match(/^(?:\s*(?:\([\d,]+\)|[\d,]+)(?=\s|$))+/)?.[0].match(/\([\d,]+\)|[\d,]+/g) ?? []
         const fee = parseNumber(tail[0])
         const hasSellTax = type === 'sell' && tail.length >= 3
-        const tax = hasSellTax ? parseNumber(tail[1]) : undefined
+        const tax = hasSellTax ? parseNumber(tail[1]) : type === 'sell' ? 0 : undefined
         const totalToken = tail[hasSellTax ? 2 : 1]
         const total = parseSignedYuantaTotal(totalToken, type)
         const isMargin = head[3] === '融資'
         const marginRepay = isMargin && type === 'sell' && total !== undefined
-            ? Math.max(Math.round(price * shares - (fee ?? 0) - (tax ?? 0) - Math.abs(total)), 0)
+            ? Math.max((parseNumber(head[9]) ?? 0) - (fee ?? 0) - (tax ?? 0) - total, 0)
             : undefined
         const statedPrincipal = isMargin && type === 'sell' && tail.length >= 5 ? parseNumber(tail[tail.length - 2]) : undefined
         const statedInterest = isMargin && type === 'sell' && tail.length >= 5 ? parseNumber(tail[tail.length - 1]) : undefined
@@ -221,10 +226,12 @@ function parseYuantaMonthlyStatement(rawText: string): BrokerTradeRow[] | null {
             date: head[1].replaceAll('/', '-'),
             settlementDate: head[2].replaceAll('/', '-'),
             type,
+            brokerDayTrade: head[4].endsWith('沖'),
             code: head[5].toUpperCase(),
             name: head[6].trim(),
             price,
             shares: Math.round(shares),
+            grossAmount: parseNumber(head[9]),
             fee,
             tax,
             total,
@@ -318,10 +325,27 @@ export function parseBrokerStatementText(rawText: string): BrokerTradeRow[] {
 export function countBrokerTradeCandidates(rawText: string): number {
     const monthlySection = yuantaMonthlyTradeSection(rawText)
     if (monthlySection) {
-        return monthlySection.match(/\d{4}\/\d{2}\/\d{2}\s+\d{4}\/\d{2}\/\d{2}\s+(?:集中|櫃檯|融資|融券|借券|興櫃)\s+TWD\s+[買賣]\s+/g)?.length ?? 0
+        return monthlySection.match(/\d{4}\/\d{2}\/\d{2}\s+\d{4}\/\d{2}\/\d{2}\s+(?:集中|櫃檯|融資|融券|借券|興櫃)\s+TWD\s+[買賣]沖?\s+/g)?.length ?? 0
     }
     const normalized = normalizeWidth(rawText)
     return normalized.match(/\b\d{4}[/)]/g)?.length ?? 0
+}
+
+/** Independent printed controls catch missed rows even if the row counter shares a parser bug. */
+export function verifyBrokerStatementTotals(rawText: string, rows: BrokerTradeRow[]): string[] {
+    const text = normalizeWidth(rawText).replace(/\s+/g, ' ')
+    const summary = text.match(/上市\/櫃\(TWD\)合計\s+成交金額[:：]\s*([\d,]+)\s+手續費[:：]\s*([\d,]+)\s+代繳交易稅[:：]\s*([\d,]+).*?客戶淨收\(付\)[:：]\s*(\([\d,]+\)|[\d,]+)/)
+    if (!summary) return ['未辨識到券商成交合計，尚無法驗證交易明細完整性。']
+    const expected = summary.slice(1).map(value => Number(value.replace(/[(),]/g, '')) * (value.includes('(') ? -1 : 1))
+    const actual = [
+        rows.reduce((sum, row) => sum + (row.grossAmount ?? 0), 0),
+        rows.reduce((sum, row) => sum + (row.fee ?? 0), 0),
+        rows.reduce((sum, row) => sum + (row.tax ?? 0), 0),
+        rows.reduce((sum, row) => sum + (row.total ?? 0), 0),
+    ]
+    return ['成交金額', '手續費', '交易稅', '淨收付'].flatMap((label, index) =>
+        Math.abs(expected[index] - actual[index]) > 0.000001
+            ? [`${label}合計不符：券商 ${expected[index].toLocaleString()}／已解析 ${actual[index].toLocaleString()}。`] : [])
 }
 
 export function normalizeSecurityName(value: string): string {
@@ -420,11 +444,16 @@ function aggregate(rows: Array<BrokerTradeRow | TradeRecord>): Map<string, Aggre
     }]))
 }
 
+const moneyText = (value: number) => value.toLocaleString('zh-TW', { maximumFractionDigits: 2 })
+
 export function reconcileBrokerTrades(
     brokerRows: BrokerTradeRow[],
     systemRows: TradeRecord[],
     mode: ReconciliationMode,
 ): ReconciliationResult[] {
+    const moneyTolerance = mode === 'monthly' ? 0.000001 : 1
+    const totalTolerance = mode === 'monthly' ? 0.000001 : 2
+    const priceTolerance = mode === 'monthly' ? 0.000001 : 0.05
     const broker = aggregate(brokerRows)
     const system = aggregate(systemRows)
     const keys = new Set([...broker.keys(), ...system.keys()])
@@ -449,9 +478,9 @@ export function reconcileBrokerTrades(
         let marginCorrection: ReconciliationResult['marginCorrection']
         if (brokerRow && systemRow) {
             if (brokerRow.shares !== systemRow.shares) differences.push(`股數：券商 ${brokerRow.shares.toLocaleString()} / 系統 ${systemRow.shares.toLocaleString()}`)
-            if (Math.abs(brokerRow.price - systemRow.price) > 0.05) differences.push(`均價：券商 ${brokerRow.price.toFixed(2)} / 系統 ${systemRow.price.toFixed(2)}`)
-            if (brokerRow.fee !== undefined && systemRow.fee !== undefined && Math.abs(brokerRow.fee - systemRow.fee) > 1) differences.push(`手續費：券商 ${brokerRow.fee} / 系統 ${systemRow.fee}`)
-            if (brokerRow.tax !== undefined && systemRow.tax !== undefined && Math.abs(brokerRow.tax - systemRow.tax) > 1) differences.push(`交易稅：券商 ${brokerRow.tax} / 系統 ${systemRow.tax}`)
+            if (Math.abs(brokerRow.price - systemRow.price) > priceTolerance) differences.push(`均價：券商 ${brokerRow.price.toFixed(4)} / 系統 ${systemRow.price.toFixed(4)}`)
+            if (brokerRow.fee !== undefined && systemRow.fee !== undefined && Math.abs(brokerRow.fee - systemRow.fee) > moneyTolerance) differences.push(`手續費：券商 ${brokerRow.fee} / 系統 ${systemRow.fee}`)
+            if (brokerRow.tax !== undefined && systemRow.tax !== undefined && Math.abs(brokerRow.tax - systemRow.tax) > moneyTolerance) differences.push(`交易稅：券商 ${brokerRow.tax} / 系統 ${systemRow.tax}`)
             if (brokerRow.isMargin && brokerRow.type === 'sell'
                 && brokerRow.marginRepay !== undefined && systemRow.marginRepay !== undefined) {
                 const brokerInterest = brokerRow.marginInterest ?? (systemRow.marginPrincipal !== undefined
@@ -460,8 +489,8 @@ export function reconcileBrokerTrades(
                 const systemInterest = systemRow.marginInterest ?? (systemRow.marginPrincipal !== undefined
                     ? systemRow.marginRepay - systemRow.marginPrincipal
                     : undefined)
-                if (Math.abs(brokerRow.marginRepay - systemRow.marginRepay) > 1
-                    || (brokerInterest !== undefined && systemInterest !== undefined && Math.abs(brokerInterest - systemInterest) > 1)) {
+                if (Math.abs(brokerRow.marginRepay - systemRow.marginRepay) > moneyTolerance
+                    || (brokerInterest !== undefined && systemInterest !== undefined && Math.abs(brokerInterest - systemInterest) > moneyTolerance)) {
                     differences.push(brokerInterest !== undefined && systemInterest !== undefined
                         ? `融資利息：券商 ${Math.round(brokerInterest).toLocaleString()} / 系統 ${Math.round(systemInterest).toLocaleString()}`
                         : `融資償還：券商 ${brokerRow.marginRepay.toLocaleString()} / 系統 ${systemRow.marginRepay.toLocaleString()}`)
@@ -472,8 +501,11 @@ export function reconcileBrokerTrades(
                         systemInterest,
                     }
                 }
-            } else if (brokerRow.total !== undefined && systemRow.total !== undefined && Math.abs(Math.abs(brokerRow.total) - Math.abs(systemRow.total)) > 2) {
-                differences.push(`淨收付：券商 ${brokerRow.total} / 系統 ${systemRow.total}`)
+            }
+            if (brokerRow.total !== undefined && systemRow.total !== undefined && Math.abs(mode === 'monthly'
+                ? (brokerRow.type === 'buy' ? -brokerRow.total : brokerRow.total) - systemRow.total
+                : Math.abs(brokerRow.total) - Math.abs(systemRow.total)) > totalTolerance) {
+                differences.push(`淨收付：券商 ${moneyText(brokerRow.total)} / 系統 ${moneyText(systemRow.total)}`)
             }
         }
         return {

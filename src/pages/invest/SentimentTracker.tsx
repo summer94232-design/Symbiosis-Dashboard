@@ -1,3 +1,5 @@
+import LoadingState from '../../components/LoadingState'
+import { buttonFill } from '../../ui/styles'
 import { useState, useEffect, useCallback } from 'react'
 import { addDoc, getDocs, deleteDoc, updateDoc, orderBy, query } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
@@ -33,7 +35,7 @@ const card: React.CSSProperties = {
     backgroundColor: '#1a1d27',
     border: '1px solid #2e3349',
     borderRadius: '12px',
-    padding: '20px',
+    padding: 'var(--ui-card-padding, 20px)',
 }
 
 const inp: React.CSSProperties = {
@@ -56,14 +58,14 @@ const lbl: React.CSSProperties = {
 }
 
 const btn = (color: string, extra?: React.CSSProperties): React.CSSProperties => ({
-    backgroundColor: color,
+    backgroundColor: buttonFill(color),
     border: 'none',
     borderRadius: '8px',
     padding: '8px 16px',
-    color: '#fff',
+    color: /border|transparent|sidebar|card/.test(color) ? 'var(--c-text)' : /^var\(--c-(accent|positive|danger|warning|purple)\)$/.test(color) ? 'var(--c-on-accent)' : '#fff',
     fontSize: '14px',
     cursor: 'pointer',
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
     gap: '6px',
     ...extra,
@@ -124,13 +126,12 @@ function calcGroupStats(records: SentimentRecord[]) {
 
 export default function SentimentTracker() {
     const { version: syncVersion } = useInvestSync()
-    const [records, setRecords] = useState<SentimentRecord[]>([])
+    const [storedRecords, setRecords] = useState<SentimentRecord[]>([])
     const [loading, setLoading] = useState(true)
-    const [priceLoading, setPriceLoading] = useState(false)
+    const [hasLoaded, setHasLoaded] = useState(false)
     const [showForm, setShowForm] = useState(false)
     const [saving, setSaving] = useState(false)
     const [stockDict, setStockDict] = useState<Record<string, string>>({})
-    const [lastUpdated, setLastUpdated] = useState('')
     const [deletingId, setDeletingId] = useState<string | null>(null)
     const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
     const [editingId, setEditingId] = useState<string | null>(null)
@@ -138,7 +139,8 @@ export default function SentimentTracker() {
     const [savingEditId, setSavingEditId] = useState<string | null>(null)
 
     // ✅ 1-3：統一現價來源 — 改用全域 PriceContext，報價會寫回 settings/lastPrices 並與其他頁同步
-    const { updatePrices } = usePrices()
+    const { prices, priceLoading, lastUpdated, updatePrices, ensurePrices } = usePrices()
+    const records = storedRecords.map(record => ({ ...record, currentPrice: prices[record.code] ?? undefined }))
 
     const [form, setForm] = useState({
         code: '',
@@ -160,6 +162,7 @@ export default function SentimentTracker() {
         setStockDict(dict)
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as SentimentRecord))
         setRecords(data)
+            setHasLoaded(true)
         setLoading(false)
     }, [])
 
@@ -190,20 +193,7 @@ export default function SentimentTracker() {
     // ── 更新現價 ────────────────────────────────────────────────────────────
 
     const handleRefreshPrices = async () => {
-        if (records.length === 0) return
-        setPriceLoading(true)
-        try {
-            const codes = [...new Set(records.map(r => r.code))]
-            // ✅ 1-3：改用 PriceContext.updatePrices（會寫回 lastPrices、跨頁同步、不重複扣 Fugle 額度）
-            const priceMap = await updatePrices(codes)
-            setRecords(prev => prev.map(r => ({
-                ...r,
-                currentPrice: priceMap[r.code] ?? r.currentPrice,
-            })))
-            setLastUpdated(new Date().toLocaleString('zh-TW'))
-        } finally {
-            setPriceLoading(false)
-        }
+        await updatePrices([...new Set(records.map(r => r.code))])
     }
 
     // ── 新增記錄 ────────────────────────────────────────────────────────────
@@ -214,7 +204,7 @@ export default function SentimentTracker() {
         try {
             // ✅ 1-3：改用 PriceContext.updatePrices 取得記錄當下價格
             const upperCode = form.code.toUpperCase()
-            const quotes = await updatePrices([upperCode])
+            const quotes = await ensurePrices([upperCode])
             const recordPrice = quotes[upperCode] ?? 0
             const now = new Date()
             const newRecord: Omit<SentimentRecord, 'id'> = {
@@ -299,18 +289,18 @@ export default function SentimentTracker() {
     // ── Render ──────────────────────────────────────────────────────────────
 
     return (
-        <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '960px', margin: '0 auto' }}>
+        <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '960px', margin: '0 auto' }}>
             <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
             {/* ── 標題列 ── */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
                     <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>觀點追蹤</h1>
-                    <p style={{ fontSize: '13px', color: '#8892a4', margin: '4px 0 0' }}>記錄每次對股票的看多/看空，追蹤波段判斷勝率</p>
+                    
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                     {lastUpdated && <span style={{ fontSize: '11px', color: '#8892a4' }}>更新：{lastUpdated}</span>}
-                    <button onClick={handleRefreshPrices} disabled={priceLoading || records.length === 0}
+                    <button onClick={handleRefreshPrices} disabled={priceLoading}
                         style={btn('#2e3349', { opacity: priceLoading ? 0.6 : 1 })}>
                         <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
                         更新現價
@@ -442,8 +432,9 @@ export default function SentimentTracker() {
             )}
 
             {/* ── 群組列表 ── */}
-            {loading ? (
-                <div style={{ textAlign: 'center', padding: '48px', color: '#8892a4' }}>載入中...</div>
+            {loading && hasLoaded && <p className="ui-refresh-status" role="status">資料更新中…</p>}
+                {loading && !hasLoaded ? (
+                <LoadingState />
             ) : groups.length === 0 ? (
                 <div style={{ ...card, textAlign: 'center', padding: '48px' }}>
                     <Target size={32} color="#2e3349" style={{ marginBottom: '12px' }} />
@@ -638,7 +629,7 @@ export default function SentimentTracker() {
                                                                     </button>
                                                                     {/* 刪除按鈕 */}
                                                                     <button
-                                                                        onClick={e => { e.stopPropagation(); record.id && handleDelete(record.id) }}
+                                                                        onClick={e => { e.stopPropagation(); if (record.id) void handleDelete(record.id) }}
                                                                         disabled={deletingId === record.id}
                                                                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8892a4', padding: '4px', display: 'flex', opacity: deletingId === record.id ? 0.4 : 1 }}
                                                                         onMouseEnter={e => (e.currentTarget.style.color = '#ff5757')}

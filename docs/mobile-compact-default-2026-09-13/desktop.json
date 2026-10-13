@@ -1,0 +1,716 @@
+[
+  {
+    "route": "/invest",
+    "vw": 1280,
+    "vh": 900,
+    "main": {
+      "tag": "MAIN",
+      "cls": "app-main",
+      "text": "儀表板\n\n尚未更新現價，點「更新現價」取得最新報價\n\n重新載入\n更新現價\n估值完整度 1/1（100%）\n資金與風險\n資產分布\n目",
+      "x": 224,
+      "y": 0,
+      "w": 1056,
+      "h": 900,
+      "sw": 1056,
+      "cw": 1056,
+      "overflowX": "auto"
+    },
+    "body": "Symbiosis 管理系統\n使用者：手機檢查\n投資\n知識\n行事曆\n儀表板\n買賣紀錄\n股票持倉\n資產趨勢\n產業地圖\n選股追蹤\n工具管理\n帳戶管理\n手機檢查\n登出\nv26.9.13.5\n儀表板\n\n尚未更新現價，點「更新現價」取得最新報價\n\n重新載入\n更新現價\n估值完整度 1/1（100%）\n資金與風險\n資產分布\n目前持倉\n行程任務\n總資產\n$2,053,110\n股票總市值（含出借）\n$945,000\n可用現金\n$1,108,110\n股票總成本\n$901,283\n未實現損益\ni\n+$39,536\n已",
+    "overflow": [],
+    "scrolls": [],
+    "small": [
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "關閉估值完整度提示",
+        "x": 1219,
+        "y": 116,
+        "w": 18,
+        "h": 18,
+        "sw": 18,
+        "cw": 18,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "資金與風險",
+        "x": 265,
+        "y": 164,
+        "w": 86,
+        "h": 34,
+        "sw": 84,
+        "cw": 84,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "資產分布",
+        "x": 359,
+        "y": 164,
+        "w": 74,
+        "h": 34,
+        "sw": 72,
+        "cw": 72,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "目前持倉",
+        "x": 441,
+        "y": 164,
+        "w": 74,
+        "h": 34,
+        "sw": 72,
+        "cw": 72,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "行程任務",
+        "x": 523,
+        "y": 164,
+        "w": 74,
+        "h": 34,
+        "sw": 72,
+        "cw": 72,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "INPUT",
+        "cls": "",
+        "text": "目標倉位百分比",
+        "x": 781,
+        "y": 589,
+        "w": 127,
+        "h": 40,
+        "sw": 125,
+        "cw": 125,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "SELECT",
+        "cls": "",
+        "text": "只計算金額\n2330 台積電",
+        "x": 918,
+        "y": 589,
+        "w": 172,
+        "h": 39,
+        "sw": 170,
+        "cw": 170,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "INPUT",
+        "cls": "",
+        "text": "參考股價",
+        "x": 1100,
+        "y": 589,
+        "w": 127,
+        "h": 40,
+        "sw": 125,
+        "cw": 125,
+        "overflowX": "clip"
+      }
+    ],
+    "errors": [],
+    "tokens": {
+      "card": "",
+      "page": ""
+    }
+  },
+  {
+    "route": "/invest/cashflow",
+    "vw": 1280,
+    "vh": 900,
+    "main": {
+      "tag": "MAIN",
+      "cls": "app-main",
+      "text": "出入金\n\n共 1 筆紀錄\n\n績效預設按「收盤後入金」計算，請填實際轉帳日期，補交割款也不要倒填買股日。出金暫沿用日終假設；盤中出入",
+      "x": 224,
+      "y": 0,
+      "w": 1056,
+      "h": 900,
+      "sw": 1056,
+      "cw": 1056,
+      "overflowX": "auto"
+    },
+    "body": "Symbiosis 管理系統\n使用者：手機檢查\n投資\n知識\n行事曆\n儀表板\n買賣紀錄\n股票持倉\n資產趨勢\n產業地圖\n選股追蹤\n工具管理\n帳戶管理\n對帳核對\n歷史損益\n出入金\n除權息\n年度復盤\n設定與備份\n手機檢查\n登出\nv26.9.13.5\n出入金\n\n共 1 筆紀錄\n\n績效預設按「收盤後入金」計算，請填實際轉帳日期，補交割款也不要倒填買股日。出金暫沿用日終假設；盤中出入金請使用進階估值核對。\n\n總入金\n2,000,000\n總出金\n0\n淨值\n2,000,000\n➕ 新增紀錄\n日期\n類型\n入金\n出金",
+    "overflow": [],
+    "scrolls": [],
+    "small": [
+      {
+        "tag": "INPUT",
+        "cls": "",
+        "text": "",
+        "x": 277,
+        "y": 333,
+        "w": 229,
+        "h": 39,
+        "sw": 227,
+        "cw": 227,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "SELECT",
+        "cls": "",
+        "text": "入金\n出金",
+        "x": 518,
+        "y": 333,
+        "w": 229,
+        "h": 39,
+        "sw": 227,
+        "cw": 227,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "INPUT",
+        "cls": "",
+        "text": "0",
+        "x": 758,
+        "y": 333,
+        "w": 229,
+        "h": 39,
+        "sw": 227,
+        "cw": 227,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "INPUT",
+        "cls": "",
+        "text": "選填",
+        "x": 999,
+        "y": 333,
+        "w": 229,
+        "h": 39,
+        "sw": 227,
+        "cw": 227,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "確認新增",
+        "x": 1119,
+        "y": 388,
+        "w": 108,
+        "h": 37,
+        "sw": 108,
+        "cw": 108,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "編輯紀錄",
+        "x": 1092,
+        "y": 542,
+        "w": 15,
+        "h": 15,
+        "sw": 15,
+        "cw": 15,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "刪除紀錄",
+        "x": 1115,
+        "y": 542,
+        "w": 15,
+        "h": 15,
+        "sw": 15,
+        "cw": 15,
+        "overflowX": "visible"
+      }
+    ],
+    "errors": [],
+    "tokens": {
+      "card": "",
+      "page": ""
+    }
+  },
+  {
+    "route": "/invest/holdings",
+    "vw": 1280,
+    "vh": 900,
+    "main": {
+      "tag": "MAIN",
+      "cls": "app-main",
+      "text": "股票持倉\n\n尚未更新現價，請點「更新現價」\n\n重新載入\n更新現價\n估值完整度 1/1（100%）\n持倉總市值（含出借）\n$945,",
+      "x": 224,
+      "y": 0,
+      "w": 1056,
+      "h": 900,
+      "sw": 1056,
+      "cw": 1056,
+      "overflowX": "auto"
+    },
+    "body": "Symbiosis 管理系統\n使用者：手機檢查\n投資\n知識\n行事曆\n儀表板\n買賣紀錄\n股票持倉\n資產趨勢\n產業地圖\n選股追蹤\n工具管理\n帳戶管理\n手機檢查\n登出\nv26.9.13.5\n股票持倉\n\n尚未更新現價，請點「更新現價」\n\n重新載入\n更新現價\n估值完整度 1/1（100%）\n持倉總市值（含出借）\n$945,000\n持倉總成本\n$901,283\n未實現損益\ni\n+$39,536\n整體報酬率\ni\n+4.39%\n代號\t名稱\t股數\t均價（含手續費）\t現價\t成本\t市值\t未實現損益\t報酬率\t族群\n23",
+    "overflow": [],
+    "scrolls": [],
+    "small": [],
+    "errors": [],
+    "tokens": {
+      "card": "",
+      "page": ""
+    }
+  },
+  {
+    "route": "/invest/portfolio-planner",
+    "vw": 1280,
+    "vh": 900,
+    "main": {
+      "tag": "MAIN",
+      "cls": "app-main",
+      "text": "組合水位試算\n\n設定整體股票水位與個股目標占比，快速估算再平衡交易與風險。\n\n回到目前配置\n更新現價\n自有資金\n$2,053,11",
+      "x": 224,
+      "y": 0,
+      "w": 1056,
+      "h": 900,
+      "sw": 1056,
+      "cw": 1056,
+      "overflowX": "auto"
+    },
+    "body": "Symbiosis 管理系統\n使用者：手機檢查\n投資\n知識\n行事曆\n儀表板\n買賣紀錄\n股票持倉\n資產趨勢\n產業地圖\n選股追蹤\n工具管理\n組合水位試算\n融資管理\n觀點追蹤\n每日重點\n賣出追蹤\n帳戶管理\n手機檢查\n登出\nv26.9.13.5\n組合水位試算\n\n設定整體股票水位與個股目標占比，快速估算再平衡交易與風險。\n\n回到目前配置\n更新現價\n自有資金\n$2,053,110\n持股市值＋現金－融資負債\n目前股票水位\n46.0%\n$945,000\n試算後股票水位\n46.0%\n$944,431\n預估剩餘現金",
+    "overflow": [],
+    "scrolls": [
+      {
+        "tag": "DIV",
+        "cls": "planner-table-wrap",
+        "text": "股票\t目前股數\t參考價\t目前市值\t目標占比\t目標市值\t建議動作\t估算股數\t\n2330\n台積電\n\t900\t\t$945,000\t\n%\n",
+        "x": 277,
+        "y": 716,
+        "w": 950,
+        "h": 106,
+        "sw": 980,
+        "cw": 950,
+        "overflowX": "auto"
+      }
+    ],
+    "small": [
+      {
+        "tag": "SELECT",
+        "cls": "",
+        "text": "完整再平衡\n只用現金加碼\n只降低部位",
+        "x": 277,
+        "y": 470,
+        "w": 190,
+        "h": 39,
+        "sw": 188,
+        "cw": 188,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "SELECT",
+        "cls": "",
+        "text": "整股／零股皆可\n只用整張（1,000 股）",
+        "x": 479,
+        "y": 470,
+        "w": 190,
+        "h": 39,
+        "sw": 188,
+        "cw": 188,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "INPUT",
+        "cls": "",
+        "text": "",
+        "x": 681,
+        "y": 470,
+        "w": 190,
+        "h": 39,
+        "sw": 188,
+        "cw": 188,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "INPUT",
+        "cls": "",
+        "text": "",
+        "x": 277,
+        "y": 527,
+        "w": 13,
+        "h": 13,
+        "sw": 13,
+        "cw": 13,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "INPUT",
+        "cls": "",
+        "text": "例如 2330",
+        "x": 929,
+        "y": 357,
+        "w": 298,
+        "h": 39,
+        "sw": 296,
+        "cw": 296,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "INPUT",
+        "cls": "",
+        "text": "股票名稱",
+        "x": 929,
+        "y": 430,
+        "w": 143,
+        "h": 39,
+        "sw": 141,
+        "cw": 141,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "INPUT",
+        "cls": "",
+        "text": "價格",
+        "x": 1084,
+        "y": 430,
+        "w": 143,
+        "h": 39,
+        "sw": 141,
+        "cw": 141,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "INPUT",
+        "cls": "",
+        "text": "方案名稱（選填）",
+        "x": 929,
+        "y": 559,
+        "w": 187,
+        "h": 39,
+        "sw": 185,
+        "cw": 185,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "INPUT",
+        "cls": "planner-mini-input",
+        "text": "2330 參考價",
+        "x": 454,
+        "y": 770,
+        "w": 96,
+        "h": 38,
+        "sw": 94,
+        "cw": 94,
+        "overflowX": "clip"
+      },
+      {
+        "tag": "INPUT",
+        "cls": "planner-mini-input",
+        "text": "2330 目標占比",
+        "x": 711,
+        "y": 770,
+        "w": 96,
+        "h": 38,
+        "sw": 94,
+        "cw": 94,
+        "overflowX": "clip"
+      }
+    ],
+    "errors": [],
+    "tokens": {
+      "card": "",
+      "page": ""
+    }
+  },
+  {
+    "route": "/kms/tags",
+    "vw": 1280,
+    "vh": 900,
+    "main": {
+      "tag": "MAIN",
+      "cls": "app-main",
+      "text": "標籤管理\n\n共 4 個標籤・6 則筆記・可拖曳或點擊 ↑↓ 自訂排序\n\n標籤名稱\n筆記數\n操作\n生活\n3\n重新命名\n投資\n3\n重新",
+      "x": 224,
+      "y": 0,
+      "w": 1056,
+      "h": 900,
+      "sw": 1056,
+      "cw": 1056,
+      "overflowX": "auto"
+    },
+    "body": "Symbiosis 管理系統\n使用者：手機檢查\n投資\n知識\n行事曆\n知識庫\n標籤管理\n匯出筆記\n知識圖譜\n垃圾桶\n手機檢查\n登出\nv26.9.13.5\n標籤管理\n\n共 4 個標籤・6 則筆記・可拖曳或點擊 ↑↓ 自訂排序\n\n標籤名稱\n筆記數\n操作\n生活\n3\n重新命名\n投資\n3\n重新命名",
+    "overflow": [],
+    "scrolls": [],
+    "small": [
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "展開或收合 生活",
+        "x": 403,
+        "y": 189,
+        "w": 15,
+        "h": 15,
+        "sw": 15,
+        "cw": 15,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "展開或收合 生活",
+        "x": 462,
+        "y": 190,
+        "w": 13,
+        "h": 13,
+        "sw": 13,
+        "cw": 13,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "",
+        "x": 1007,
+        "y": 188,
+        "w": 18,
+        "h": 18,
+        "sw": 18,
+        "cw": 18,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "",
+        "x": 1029,
+        "y": 188,
+        "w": 18,
+        "h": 18,
+        "sw": 18,
+        "cw": 18,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "kms-tag-rename",
+        "text": "重新命名",
+        "x": 1051,
+        "y": 183,
+        "w": 86,
+        "h": 28,
+        "sw": 84,
+        "cw": 84,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "展開或收合 投資",
+        "x": 403,
+        "y": 239,
+        "w": 15,
+        "h": 15,
+        "sw": 15,
+        "cw": 15,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "展開或收合 投資",
+        "x": 462,
+        "y": 240,
+        "w": 13,
+        "h": 13,
+        "sw": 13,
+        "cw": 13,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "",
+        "x": 1007,
+        "y": 238,
+        "w": 18,
+        "h": 18,
+        "sw": 18,
+        "cw": 18,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "",
+        "x": 1029,
+        "y": 238,
+        "w": 18,
+        "h": 18,
+        "sw": 18,
+        "cw": 18,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "kms-tag-rename",
+        "text": "重新命名",
+        "x": 1051,
+        "y": 233,
+        "w": 86,
+        "h": 28,
+        "sw": 84,
+        "cw": 84,
+        "overflowX": "visible"
+      }
+    ],
+    "errors": [],
+    "tokens": {
+      "card": "",
+      "page": ""
+    }
+  },
+  {
+    "route": "/calendar/tasks",
+    "vw": 1280,
+    "vh": 900,
+    "main": {
+      "tag": "MAIN",
+      "cls": "app-main",
+      "text": "任務管理\n\n2 個待辦\n\n新增專案\n新增任務\n專案\n全部任務\n2\n手機測試專案\n1\n新增專案\n待辦 (2)\n手機測試任務\n2026",
+      "x": 224,
+      "y": 0,
+      "w": 1056,
+      "h": 900,
+      "sw": 1056,
+      "cw": 1056,
+      "overflowX": "auto"
+    },
+    "body": "Symbiosis 管理系統\n使用者：手機檢查\n投資\n知識\n行事曆\n月曆\n任務管理\n法說會關注清單\n手機檢查\n登出\nv26.9.13.5\n任務管理\n\n2 個待辦\n\n新增專案\n新增任務\n專案\n全部任務\n2\n手機測試專案\n1\n新增專案\n待辦 (2)\n手機測試任務\n2026-09-13\n高\n第二個手機任務\n中\n新增任務\n已完成 (0)",
+    "overflow": [],
+    "scrolls": [],
+    "small": [
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "新增專案",
+        "x": 1026,
+        "y": 42,
+        "w": 106,
+        "h": 38,
+        "sw": 104,
+        "cw": 104,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "新增任務",
+        "x": 1140,
+        "y": 42,
+        "w": 108,
+        "h": 38,
+        "sw": 108,
+        "cw": 108,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "project-delete",
+        "text": "",
+        "x": 431,
+        "y": 202,
+        "w": 16,
+        "h": 16,
+        "sw": 16,
+        "cw": 16,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "新增專案",
+        "x": 277,
+        "y": 231,
+        "w": 178,
+        "h": 32,
+        "sw": 176,
+        "cw": 176,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "拖曳排序：手機測試任務",
+        "x": 526,
+        "y": 180,
+        "w": 18,
+        "h": 18,
+        "sw": 18,
+        "cw": 18,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "完成任務：手機測試任務",
+        "x": 552,
+        "y": 180,
+        "w": 18,
+        "h": 18,
+        "sw": 18,
+        "cw": 18,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "編輯任務：手機測試任務",
+        "x": 1176,
+        "y": 178,
+        "w": 17,
+        "h": 17,
+        "sw": 17,
+        "cw": 17,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "刪除任務：手機測試任務",
+        "x": 1197,
+        "y": 178,
+        "w": 17,
+        "h": 17,
+        "sw": 17,
+        "cw": 17,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "拖曳排序：第二個手機任務",
+        "x": 526,
+        "y": 250,
+        "w": 18,
+        "h": 18,
+        "sw": 18,
+        "cw": 18,
+        "overflowX": "visible"
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "text": "完成任務：第二個手機任務",
+        "x": 552,
+        "y": 250,
+        "w": 18,
+        "h": 18,
+        "sw": 18,
+        "cw": 18,
+        "overflowX": "visible"
+      }
+    ],
+    "errors": [],
+    "tokens": {
+      "card": "",
+      "page": ""
+    }
+  }
+]

@@ -9,16 +9,21 @@
  * - updatePrices 除了更新全域 state，也直接回傳本次取得的 quotes
  *   讓各頁面 wrapper 可以同步拿到最新值，避免非同步 state 讀到舊值
  * - loadCachedPrices 供頁面 load() 初始化時呼叫，不打 Fugle API
- * - Firebase 寫入仍保持 merge:true，各頁面互不覆蓋
+ * - Firebase transaction 逐檔合併並防止舊請求覆蓋新報價
  */
 
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
-import { onSnapshot, setDoc, type Unsubscribe } from 'firebase/firestore'
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
+import { onSnapshot, runTransaction, type Unsubscribe } from 'firebase/firestore'
 import { investDB } from './lib/firebase'
-import { userDocNested } from './lib/userDB'
-import { getMultipleQuotes } from './lib/fugle'
+import { captureUserSession, userDocNested } from './lib/userDB'
+import { getSharedQuoteObservations } from './lib/sharedQuotes'
+import { isFubonSnapshotEnabled } from './lib/fubonSnapshot'
+import { loadGlobalQuoteCodes, loadHoldingQuoteCodes } from './lib/quoteUniverse'
+import { createPriceRefreshCoordinator, type QuoteRefreshResult } from './lib/priceRefresh'
 import { maybeAutoSnapshotToday, type AutoSnapshotResult } from './lib/snapshot'
+import { mergeQuoteObservations, type SavedPrices, type QuoteObservations, type QuoteObservation } from './lib/pricePolicy'
 import { investAuth } from './lib/auth'
+import { updateDividendAnnouncements } from './lib/dividendAnnouncements'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -35,8 +40,13 @@ interface PriceContextValue {
     lastUpdated: string
     /** 是否正在拉取報價 */
     priceLoading: boolean
+    priceErrors: Record<string, string>
+    quotes: QuoteObservations
+    getCachedQuote: (code: string) => QuoteObservation | undefined
+    ensurePrices: (codes: string[]) => Promise<PriceMap>
+    refreshError: string
     /**
-     * 更新指定代號的現價。
+     * 全系統更新，codes 只補入尚未儲存的畫面代號，不限制更新範圍。
      * - 呼叫 Fugle API
      * - merge 寫入 Firebase settings/lastPrices
      * - 更新全域 prices state
@@ -56,43 +66,43 @@ const PriceContext = createContext<PriceContextValue | null>(null)
 
 // ── Provider ───────────────────────────────────────────────────
 
-/**
- * 把 lastPrices._updatedAt 的時間字串轉成 timestamp 供比較。
- * ⚠️ 不能直接用字串字典序比較：toLocaleString('zh-TW') 產生「2026/2/1」，
- *    與「2026/10/1」做字典序比較時 2026/2 會被判定大於 2026/10。
- * 支援兩種格式：zh-TW（2026/2/1 下午3:04:05）與 ISO/其他可被 Date.parse 解析的字串。
- * 解析失敗回傳 0（視為最舊）。
- */
-function parseUpdatedAt(s: string): number {
-    if (!s) return 0
-    const m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})(?:\s*(上午|下午)\s*(\d{1,2}):(\d{2})(?::(\d{2}))?)?/)
-    if (m) {
-        let h = m[5] !== undefined ? parseInt(m[5], 10) : 0
-        if (m[4] === '下午' && h < 12) h += 12
-        if (m[4] === '上午' && h === 12) h = 0
-        return new Date(
-            parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10),
-            h, m[6] !== undefined ? parseInt(m[6], 10) : 0, m[7] !== undefined ? parseInt(m[7], 10) : 0
-        ).getTime()
-    }
-    const t = Date.parse(s)
-    return Number.isNaN(t) ? 0 : t
-}
-
 export function PriceProvider({ children }: { children: ReactNode }) {
     const [prices, setPrices] = useState<PriceMap>({})
     const [lastUpdated, setLastUpdated] = useState('')
     const [priceLoading, setPriceLoading] = useState(false)
+    const [priceErrors, setPriceErrors] = useState<Record<string, string>>({})
+    const [quotes, setQuotes] = useState<QuoteObservations>({})
+    const [refreshError, setRefreshError] = useState('')
+    const sharedRefresh = useRef<{ user: typeof investAuth.currentUser; run: ReturnType<typeof createPriceRefreshCoordinator<Promise<AutoSnapshotResult | undefined>>> } | null>(null)
+    const cacheRef = useRef<SavedPrices>({})
+    const requestClock = useRef(0)
 
     const loadCachedPrices = useCallback((savedPrices: Record<string, unknown>, savedAt: string) => {
+        const incoming = savedPrices as SavedPrices
+        const previous = cacheRef.current
+        const merged = mergeQuoteObservations(previous, incoming._quotes || {})
+        for (const [code, value] of Object.entries(incoming)) {
+            if (!code.startsWith('_') && !merged._quotes?.[code] && typeof value === 'number' && value > 0) merged[code] = value
+        }
+        cacheRef.current = merged
         const parsed: PriceMap = {}
-        Object.entries(savedPrices).forEach(([k, v]) => {
-            if (k !== '_updatedAt' && typeof v === 'number' && v > 0) {
-                parsed[k] = v
-            }
-        })
-        setPrices(prev => ({ ...prev, ...parsed }))
-        if (savedAt) setLastUpdated(prev => (parseUpdatedAt(savedAt) > parseUpdatedAt(prev) ? savedAt : prev))
+        for (const [code, value] of Object.entries(merged)) {
+            if (code.startsWith('_') || typeof value !== 'number') continue
+            parsed[code] = merged._quotes?.[code]?.status === 'failed' || merged._quotes?.[code]?.status === 'stale' ? null : value
+        }
+        for (const [code, quote] of Object.entries(merged._quotes || {})) {
+            if (quote.status !== 'success') parsed[code] = null
+        }
+        setPrices(parsed)
+        setQuotes(merged._quotes || {})
+        setPriceErrors(Object.fromEntries(Object.entries(merged._quotes || {})
+            .filter(([, quote]) => quote.status !== 'success')
+            .map(([code, quote]) => [code, quote.error || (quote.status === 'stale' ? '來源報價較舊，請重新更新' : '暫無有效報價')])))
+        const updatedAt = merged._updatedAt || savedAt
+        // This is a fetch timestamp, not a claim that all markets have today's closing price.
+        const stamp = new Date(updatedAt)
+        setLastUpdated(Number.isFinite(stamp.getTime()) ? stamp.toLocaleString('zh-TW') : updatedAt)
+
     }, [])
 
     // 跨分頁／跨裝置同步 settings/lastPrices；切換帳號時清除上一位使用者的報價。
@@ -100,11 +110,17 @@ export function PriceProvider({ children }: { children: ReactNode }) {
         let priceUnsub: Unsubscribe | null = null
         const authUnsub = investAuth.onAuthStateChanged(user => {
             priceUnsub?.()
+            cacheRef.current = {}
+            sharedRefresh.current = null
+            setPriceLoading(false)
             setPrices({})
+            setPriceErrors({})
+            setQuotes({})
+            setRefreshError('')
             setLastUpdated('')
             if (!user) return
             priceUnsub = onSnapshot(userDocNested(investDB, 'settings', 'lastPrices'), snapshot => {
-                if (!snapshot.exists()) return
+                if (investAuth.currentUser !== user || !snapshot.exists()) return
                 const data = snapshot.data()
                 loadCachedPrices(data, typeof data._updatedAt === 'string' ? data._updatedAt : '')
             }, error => console.error('[PriceContext] price sync error:', error))
@@ -115,51 +131,114 @@ export function PriceProvider({ children }: { children: ReactNode }) {
         }
     }, [loadCachedPrices])
 
-    const updatePrices = useCallback(async (codes: string[], options?: PriceUpdateOptions): Promise<PriceMap> => {
-        if (codes.length === 0) return {}
-        setPriceLoading(true)
-
-        const result: PriceMap = {}
+    const fetchAndStorePrices = useCallback(async (codes: string[], mode: 'global' | 'direct' = 'global'): Promise<QuoteRefreshResult<Promise<AutoSnapshotResult | undefined>>> => {
+        if (codes.length === 0) return { prices: {} }
+        const session = captureUserSession()
+        const priceRef = session.doc(investDB, 'settings', 'lastPrices')
+        requestClock.current = Math.max(Date.now(), requestClock.current + 1)
+        const requestedAt = new Date(requestClock.current).toISOString()
         try {
-            const quotes = await getMultipleQuotes(codes)
-            const now = new Date().toLocaleString('zh-TW')
-
-            // 寫入 Firebase（merge 避免蓋掉其他頁面快取的股票）
-            const priceData: Record<string, number | string> = { _updatedAt: now }
-            codes.forEach(c => {
-                const raw = quotes[c]
-                const val = (typeof raw === 'number' && raw > 0) ? raw : null
-                result[c] = val
-                if (val !== null) priceData[c] = val
-            })
-            await setDoc(userDocNested(investDB, 'settings', 'lastPrices'), priceData, { merge: true })
-
-            // 更新全域 state → 所有訂閱頁面重渲染
-            setPrices(prev => ({ ...prev, ...result }))
-            setLastUpdated(now)
-
-            // 使用者明確更新現價時全天都可刷新今日快照；等待結果，讓呼叫頁面能顯示原因。
-            const hasValidQuote = Object.values(result).some(value => typeof value === 'number' && value > 0)
-            if (hasValidQuote) {
-                const snapshotResult = await maybeAutoSnapshotToday({
-                    overwrite: true,
-                    trigger: 'price-update',
-                })
-                options?.onSnapshot?.(snapshotResult)
+            let preciseCodes: string[] = []
+            if (mode === 'global' && isFubonSnapshotEnabled()) {
+                try {
+                    preciseCodes = await loadHoldingQuoteCodes()
+                    session.assertActive()
+                } catch { /* Market reference prices remain usable; verified auto snapshot stays blocked. */ }
             }
+            const orderedCodes = [...new Set(codes)].sort((a, b) => Number(cacheRef.current._quotes?.[b]?.status === 'failed') - Number(cacheRef.current._quotes?.[a]?.status === 'failed'))
+            const quotes = await getSharedQuoteObservations(orderedCodes, requestedAt, mode, preciseCodes)
+            session.assertActive()
+            const saved = await runTransaction(investDB, async transaction => {
+                const snapshot = await transaction.get(priceRef)
+                session.assertActive()
+                const merged = mergeQuoteObservations(snapshot.exists() ? snapshot.data() as SavedPrices : {}, quotes)
+                transaction.set(priceRef, merged)
+                return merged
+            })
+            session.assertActive()
+            loadCachedPrices(saved, saved._updatedAt || '')
+            // Read the committed values, not a late response that the transaction rejected.
+            const result: PriceMap = Object.fromEntries(codes.map(code => {
+                const quote = cacheRef.current._quotes?.[code]
+                return [code, quote?.status === 'success' ? quote.price : null]
+            }))
+            // Start under the captured account, but never hold quotes behind optional work.
+            const detail = mode === 'global' ? maybeAutoSnapshotToday({ overwrite: true, trigger: 'price-update' })
+                .then(snapshotResult => { session.assertActive(); return snapshotResult })
+                .catch(error => { console.error('[PriceContext] auto snapshot error:', error); return undefined }) : undefined
+            return { prices: result, detail }
         } catch (err) {
             console.error('[PriceContext] updatePrices error:', err)
+            throw err
         }
+    }, [loadCachedPrices])
 
-        setPriceLoading(false)
-        return result   // ← 直接回傳本次結果，供頁面 wrapper 同步套用
-    }, [])
+    const updatePrices = useCallback(async (codes: string[], options?: PriceUpdateOptions): Promise<PriceMap> => {
+        const session = captureUserSession()
+        const user = investAuth.currentUser
+        if (!sharedRefresh.current || sharedRefresh.current.user !== user) {
+            sharedRefresh.current = { user, run: createPriceRefreshCoordinator(async () => {
+                const codes = await loadGlobalQuoteCodes()
+                session.assertActive()
+                return codes
+            }, async codes => {
+                session.assertActive()
+                return fetchAndStorePrices(codes)
+            }) }
+        }
+        setPriceLoading(true)
+        setRefreshError('')
+        try {
+            const result = await sharedRefresh.current.run(codes)
+            session.assertActive()
+            // User-triggered global refresh also checks public dividends; quotes never wait for it.
+            // This task has daily client/server cooldowns and cannot write cash or inventory.
+            void updateDividendAnnouncements(session).catch(() => {})
+            if (result.detail) void result.detail.then(detail => {
+                session.assertActive()
+                if (detail) options?.onSnapshot?.(detail)
+            }).catch(() => {})
+            return Object.fromEntries(Object.keys(result.prices).map(code => {
+                const quote = cacheRef.current._quotes?.[code]
+                return [code, quote?.status === 'success' ? quote.price : null]
+            }))
+        } catch (error) {
+            if (investAuth.currentUser === user) setRefreshError(error instanceof Error ? error.message : '全系統報價更新失敗')
+            return {}
+        } finally {
+            if (investAuth.currentUser === user) setPriceLoading(false)
+        }
+    }, [fetchAndStorePrices])
+
+    // New records/templates reuse shared prices; only missing codes need an API read.
+    const ensurePrices = useCallback(async (codes: string[]): Promise<PriceMap> => {
+        const session = captureUserSession()
+        const missing = codes.filter(code => cacheRef.current._quotes?.[code]?.status !== 'success')
+        if (missing.length) {
+            if (isFubonSnapshotEnabled()) {
+                try { await fetchAndStorePrices(missing, 'direct') }
+                catch (error) { console.error('[PriceContext] direct quote error:', error) }
+            } else await updatePrices(missing)
+        }
+        session.assertActive()
+        return Object.fromEntries(codes.map(code => [code, cacheRef.current._quotes?.[code]?.status === 'success'
+            ? cacheRef.current._quotes[code].price : null]))
+    }, [fetchAndStorePrices, updatePrices])
+    const getCachedQuote = useCallback((code: string) => cacheRef.current._quotes?.[code], [])
 
     return (
-        <PriceContext.Provider value={{ prices, lastUpdated, priceLoading, updatePrices, loadCachedPrices }}>
+        <PriceContext.Provider value={{ prices, quotes, getCachedQuote, lastUpdated, priceLoading, priceErrors, refreshError, updatePrices, ensurePrices, loadCachedPrices }}>
             {children}
         </PriceContext.Provider>
     )
+}
+
+export function PriceRefreshStatus() {
+    const { priceLoading, refreshError } = usePrices()
+    if (!priceLoading && !refreshError) return null
+    return <div role={refreshError ? 'alert' : 'status'} style={{ padding: '4px 16px', fontSize: '12px', color: refreshError ? 'var(--c-danger)' : 'var(--c-muted)' }}>
+        {refreshError || '報價更新中'}
+    </div>
 }
 
 // ── Hook ───────────────────────────────────────────────────────

@@ -2,12 +2,15 @@
 
 本路線圖依「先避免帳號／資料／金錢計算出錯，再降低成本，最後擴充體驗」排序。P0 完成前不建議擴大使用者或保存更敏感資料。
 
-## 2026-09-01 現況基線
+## 2026-09-30 現況基線
 
 - [已完成] 現股當沖第一版：依同帳戶、同日、同股票與成交類別自動沖抵，支援部分當沖、先賣後買、人工指定、排除、成本分攤、備份／CSV 往返與資料健康提醒。
 - [已完成] 買賣紀錄第一版 UI 收斂：表單改為兩列桌面版配置，例外處理降低視覺權重，正常當沖卡片不常駐，交易列顯示當沖標籤並採日期、代號、新增時間排序。
-- [已完成] `npm test` 擴充為 122 項並通過；production build 通過。
-- [待完成] 完整 ESLint 基線為 73 errors、10 warnings；目前只有法說會同步 workflow，尚未建立完整 CI 發布門檻。
+- [已完成本機] 財務、匯入還原、帳號隔離、KMS、行事曆及報價等測試持續擴充；筆數以執行輸出為準。TypeScript／production build 與零警告 lint 通過，舊版 73 errors／10 warnings 基線已修正。
+- [已建立程式] `data-safety-checks.yml` 包含 tests、build、emulator 與 lint；遠端 CI 成功紀錄及正式規則狀態仍需另外確認。本次本機 emulator 驗證未完成。
+- [已完成本機] CSV 帳號綁定、還原全份帳務預檢、合併帳本檢查及雲端差異預覽；確認還原前重查相關集合，資料變動即要求重做預覽。
+- [已完成本機] 全域／頁面錯誤復原與未維護年度提示；FOMC 完整資料仍只有 2025／2026，交割休假完整資料仍只有 2026。
+- [目前範圍] 使用元大單一券商；沿用現有平台。新增付費平台、伺服器排程及 token vault 的工作暫緩，待成本條件允許再評估。
 - [待確認正式環境] 投資 Firestore 規則，以及 KMS UID 遷移、規則與排程函式的實際部署狀態。
 
 ## P0：立即處理
@@ -77,18 +80,17 @@
 
 ### 7. 讓 CI 成為可發布門檻
 
-- 修完目前 73 個 lint errors 與 10 warnings（2026-09-01 基線）。
-- [部分完成] 已有 `test`、`build`、`lint` 與 `test:kms-rules`；仍需獨立 `typecheck`、統一 `check` 及投資規則測試指令。
-- CI 順序：install locked dependencies → typecheck → lint → unit tests → rules tests → build。
-- 對 Google sync、backup restore、CSV import 做 fixture integration tests。
-- 加入錯誤邊界、toast 與 retry；目前多處只 `console.error` 或吞掉錯誤，使用者不知道資料是否成功。
-- [部分完成] 已建立共用操作提示，先套用儀表板、股票持倉及買賣紀錄的重新載入、更新現價、交易寫入／刪除與族群儲存；其餘頁面、錯誤邊界與 retry 待後續補齊。
+- [已完成] 零警告 lint；build 內含 TypeScript 檢查，另有 `test:emulators` 與 `test:kms-rules`。
+- [已建立程式] CI 安裝鎖定依賴後執行 tests、build、emulator、lint；待確認遠端執行與發布門檻設定。
+- [已完成回歸情境] Google 同步、備份還原、CSV 匯入、帳號切換及差異預覽；規則層另需 emulator 驗證。
+- [已完成] 全域及頁面 React 錯誤邊界提供重新載入與返回儀表板，切換路由可復原頁面。
+- [部分完成] 儀表板、持倉、交易與多項同步操作已有成功／失敗提示；繼續依實際故障回饋補齊個別操作的重試。
 
 ### 8. 交易與同步的冪等性
 
 - CSV 匯入使用來源交易 ID／hash，但允許同日同價同量的真實多筆交易，以 broker order id 區分。
 - Google sync 保存 sync cursor／etag，明確定義衝突策略；部分成功可重跑且不重複。
-- 大型任務刪除、標籤更名、備份還原採分批 job，保存進度與失敗清單。
+- [部分完成] 大型操作採分批寫入；JSON 還原有進度與確認前差異重查，仍沒有跨批次回滾或持久化續跑紀錄。
 - [已完成正確性修復] filtered view 會合併回完整序列並產生唯一 order；資料量進一步增長時可再改 fractional rank，降低每次拖曳的寫入筆數。
 
 ## P2：功能與使用體驗
@@ -134,7 +136,7 @@
 
 ### 12. 文件與營運
 
-- [已完成第一版] 已用專案 README 取代 Vite 範本，整理環境變數、驗證、部署、規則與文件入口；更完整的備份還原與故障排查仍由系統手冊補充。
+- [已完成] README 與系統手冊更新至 2026-09-30，補齊備份還原步驟、差異／金額口徑、同步、故障處理及驗證限制。
 - [部分完成] 已建立 changelog 與 KMS 遷移工具；schema version、通用 migration runner 與 rollback 說明仍待補齊。
 - 加入監控：Netlify function error rate、Firestore read/write、API quota、同步失敗、快照缺漏、前端錯誤。
 

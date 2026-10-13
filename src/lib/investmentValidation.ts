@@ -7,8 +7,8 @@ export interface InvestmentValidationResult {
 }
 
 type CashflowInput = { date: string; type: string; amount: number }
-type DividendInput = { date: string; code: string; name?: string; cashDividend: number; stockDividend: number }
-type SnapshotInput = { date: string; totalAssets: number; marketValue: number; cash: number; marginDebt?: number }
+type DividendInput = { sourceAnnouncementId?: string; status?: string; cashPaymentDate?: string; stockDistributionDate?: string; stockDividendMarginShares?: number; date: string; code: string; name?: string; cashDividend: number; stockDividend: number }
+type SnapshotInput = { date: string; totalAssets: number; marketValue: number; cash: number; marginDebt?: number; valuationQuality?: string }
 
 function result(errors: string[], warnings: string[] = []): InvestmentValidationResult {
     return { valid: errors.length === 0, errors, warnings }
@@ -60,6 +60,15 @@ export function validateTradeForWrite(trade: TradeRecord): InvestmentValidationR
         }
     }
 
+    if (trade.inventoryMatches !== undefined) {
+        const links = trade.inventoryMatches
+        if (trade.type !== 'sell' || trade.isMargin || !Array.isArray(links) || !links.length) errors.push('券商庫存沖抵必須是現股賣出紀錄的非空批次清單')
+        else if (links.some(link => !link || typeof link.buyId !== 'string' || !link.buyId.trim()
+            || !Number.isInteger(link.shares) || link.shares <= 0)) errors.push('券商庫存沖抵需有買入紀錄 ID 與正整數股數')
+        else if (new Set(links.map(link => link.buyId)).size !== links.length) errors.push('券商庫存沖抵不可重複指定同一買進批次')
+        else if (links.reduce((sum, link) => sum + link.shares, 0) > trade.shares) errors.push('券商庫存沖抵股數不可超過賣出股數')
+    }
+
     if (trade.isMargin) {
         if (!isFiniteNumber(trade.marginRatio) || (trade.marginRatio ?? 0) <= 0 || (trade.marginRatio ?? 0) > 1) {
             errors.push('融資成數必須大於 0 且不超過 1')
@@ -97,16 +106,29 @@ export function validateCashflowForWrite(row: CashflowInput): InvestmentValidati
 
 export function validateDividendForWrite(row: DividendInput): InvestmentValidationResult {
     const errors: string[] = []
+    if (row.sourceAnnouncementId !== undefined && (typeof row.sourceAnnouncementId !== 'string'
+        || !['TWSE', 'TPEX'].some(market => row.sourceAnnouncementId === `${market}-${normalizeTaiwanStockCode(row.code)}-${row.date}`))) errors.push('來源公告與股票／除權息日期不一致')
+    if (row.status !== undefined && !['announced', 'confirmed'].includes(row.status)) errors.push('股利狀態不正確')
+    for (const [label, date] of [['現金入帳', row.cashPaymentDate], ['股票配發', row.stockDistributionDate]]) {
+        if (date && (!isRealIsoDate(date) || date < row.date)) errors.push(label + '日期必須有效且不得早於除權息日期')
+    }
+    if (row.status === 'confirmed') {
+        if (row.cashDividend > 0 && !row.cashPaymentDate) errors.push('已確認現金股利請填入帳日期')
+        if (row.stockDividend > 0 && !row.stockDistributionDate) errors.push('已確認股票股利請填配發日期')
+    }
     if (!isRealIsoDate(row.date)) errors.push('日期不是有效的西元日期')
     if (!/^\d{4,6}[A-Z]?$/.test(normalizeTaiwanStockCode(row.code))) errors.push('股票代號格式不正確')
     if (!row.name?.trim()) errors.push('股票名稱不可空白')
     if (!isFiniteNumber(row.cashDividend) || row.cashDividend < 0) errors.push('現金股利不可為負數')
     if (!isFiniteNumber(row.stockDividend) || row.stockDividend < 0) errors.push('股票股利不可為負數')
+    if (row.stockDividendMarginShares !== undefined && (!Number.isInteger(row.stockDividendMarginShares)
+        || row.stockDividendMarginShares < 0 || row.stockDividendMarginShares > row.stockDividend)) errors.push('配股中的融資股數須為 0 至股票股利股數的整數')
     if ((row.cashDividend || 0) === 0 && (row.stockDividend || 0) === 0) errors.push('現金股利與股票股利至少一項必須大於 0')
     return result(errors)
 }
 
 export function validateSnapshotForWrite(row: SnapshotInput): InvestmentValidationResult {
+    if (row.valuationQuality !== undefined && !['closing', 'intraday', 'manual-unverified'].includes(row.valuationQuality)) return result(['快照估值狀態不正確'])
     const errors: string[] = []
     const debt = row.marginDebt ?? 0
     if (!isRealIsoDate(row.date)) errors.push('日期不是有效的西元日期')

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import DisclosureNote from '../../components/DisclosureNote'
 import { getDoc } from 'firebase/firestore'
 import { AlertTriangle, Calculator, Plus, RefreshCw, RotateCcw, Save, Scale, ShieldAlert, Trash2, WandSparkles } from 'lucide-react'
 import { calcPortfolioRebalance, calcPortfolioRisk } from '../../lib/calc'
@@ -7,7 +8,7 @@ import { usePrices } from '../../PriceContext'
 import { card, inp, lbl } from '../../ui/styles'
 import { useInvestSync } from '../../InvestSyncContext'
 import { investDB } from '../../lib/firebase'
-import { userDocNested } from '../../lib/userDB'
+import { captureUserSession, userDocNested } from '../../lib/userDB'
 
 interface PlannerRow {
     id: string
@@ -39,7 +40,7 @@ interface SavedScenario {
     rows: Array<Pick<PlannerRow, 'code' | 'name' | 'price' | 'targetWeight'>>
 }
 
-const SCENARIO_STORAGE_KEY = 'invest:portfolio-planner:scenarios:v1'
+const LEGACY_SCENARIO_STORAGE_KEY = 'invest:portfolio-planner:scenarios:v1'
 const money = (value: number) => `$${Math.round(value).toLocaleString('zh-TW')}`
 const percent = (value: number) => `${value.toFixed(1)}%`
 
@@ -48,6 +49,7 @@ export default function PortfolioPlanner() {
     const { version: syncVersion } = useInvestSync()
     const [rows, setRows] = useState<PlannerRow[]>([])
     const [loading, setLoading] = useState(true)
+    const [hasLoaded, setHasLoaded] = useState(false)
     const [error, setError] = useState('')
     const [targetPosition, setTargetPosition] = useState('')
     const [cash, setCash] = useState(0)
@@ -69,6 +71,9 @@ export default function PortfolioPlanner() {
     const [marginDebt, setMarginDebt] = useState(0)
     const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
     const [scenarioName, setScenarioName] = useState('')
+    const [scenarioSession] = useState(() => captureUserSession())
+    const scenarioStorageKey = `invest:portfolio-planner:scenarios:v2:${encodeURIComponent(scenarioSession.uid)}`
+    const [hasLegacyScenarios, setHasLegacyScenarios] = useState(false)
     const [savedScenarios, setSavedScenarios] = useState<SavedScenario[]>([])
 
     const load = async (preservePlan = false) => {
@@ -79,7 +84,7 @@ export default function PortfolioPlanner() {
                 loadPortfolioSnapshot(prices),
                 getDoc(userDocNested(investDB, 'settings', 'stockGroups')),
             ])
-            loadCachedPrices(snapshot.prices, snapshot.priceUpdatedAt)
+            loadCachedPrices(snapshot.savedPriceData, snapshot.priceUpdatedAt)
             const nextRows = snapshot.holdings.map(holding => ({
                 id: holding.code,
                 code: holding.code,
@@ -102,6 +107,7 @@ export default function PortfolioPlanner() {
                 return [...refreshed, ...nextByCode.values()]
             })
             setCash(snapshot.cash)
+            setHasLoaded(true)
             setMarketValue(snapshot.marketValue)
             setEquity(snapshot.equityCapital)
             setMarginDebt(snapshot.marginDebt)
@@ -117,7 +123,9 @@ export default function PortfolioPlanner() {
 
     useEffect(() => {
         try {
-            const saved = JSON.parse(localStorage.getItem(SCENARIO_STORAGE_KEY) ?? '[]')
+            scenarioSession.assertActive()
+            setHasLegacyScenarios(localStorage.getItem(LEGACY_SCENARIO_STORAGE_KEY) !== null)
+            const saved = JSON.parse(localStorage.getItem(scenarioStorageKey) ?? '[]')
             if (Array.isArray(saved)) setSavedScenarios(saved)
         } catch { /* 忽略損壞的本機草稿 */ }
         void load(syncVersion > 0)
@@ -182,8 +190,15 @@ export default function PortfolioPlanner() {
     }
 
     const persistScenarios = (next: SavedScenario[]) => {
-        setSavedScenarios(next)
-        localStorage.setItem(SCENARIO_STORAGE_KEY, JSON.stringify(next))
+        try {
+            scenarioSession.assertActive()
+            localStorage.setItem(scenarioStorageKey, JSON.stringify(next))
+            setSavedScenarios(next)
+            return true
+        } catch {
+            setError('方案未儲存：請確認登入帳號與瀏覽器儲存空間後重試。')
+            return false
+        }
     }
 
     const saveScenario = () => {
@@ -198,8 +213,7 @@ export default function PortfolioPlanner() {
             risk: { maxWeight, maxGroupWeight, minCashPct, maxMarginPct, minEtfWeightPct, stressDropPct, maxStressLoss },
             rows: rows.map(({ code, name: stockName, price, targetWeight }) => ({ code, name: stockName, price, targetWeight })),
         }
-        persistScenarios([...savedScenarios, scenario])
-        setScenarioName('')
+        if (persistScenarios([...savedScenarios, scenario])) setScenarioName('')
     }
 
     const applyScenario = (scenario: SavedScenario) => {
@@ -272,7 +286,7 @@ export default function PortfolioPlanner() {
 
     const remainingCash = result ? cash - result.netCashRequired : cash
     const weightOff = result ? Math.abs(result.allocatedWeightPct - 100) > 0.05 : false
-    const sellsTooManyShares = result?.rows.some(row => row.action === 'sell' && row.estimatedShares !== null && row.estimatedShares > row.currentShares) ?? false
+    const sellsTooManyShares = result?.rows.some(row => row.limitedByHoldings) ?? false
     const maxWeightNum = Number(maxWeight)
     const risk = useMemo(() => calcPortfolioRisk(
         result?.rows.map(row => ({
@@ -296,7 +310,7 @@ export default function PortfolioPlanner() {
     return (
         <div className="portfolio-planner-page">
             <style>{`
-                .portfolio-planner-page { padding: clamp(16px, 3vw, 32px); max-width: 1600px; margin: 0 auto; }
+                .portfolio-planner-page { padding: var(--ui-page-padding, clamp(16px, 3vw, 32px)); max-width: 1600px; margin: 0 auto; }
                 .planner-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
                 .planner-kpi { min-height: 112px; display: flex; flex-direction: column; justify-content: space-between; }
                 .planner-kpi-label { color: var(--c-muted); font-size: 13px; }
@@ -349,15 +363,16 @@ export default function PortfolioPlanner() {
             <div className="page-header">
                 <div className="page-heading">
                     <h1 className="page-title">組合水位試算</h1>
-                    <p className="page-subtitle">設定整體股票水位與個股目標占比，快速估算再平衡交易與風險。</p>
+                    
                 </div>
                 <div className="page-actions">
                     <button className="ui-button ui-button-secondary" onClick={resetToCurrent}><RotateCcw size={15} />回到目前配置</button>
-                    <button className="ui-button ui-button-primary" onClick={() => void refreshPrices()} disabled={priceLoading || rows.length === 0}><RefreshCw size={15} className={priceLoading ? 'is-spinning' : undefined} />{priceLoading ? '更新中...' : '更新現價'}</button>
+                    <button className="ui-button ui-button-primary" onClick={() => void refreshPrices()} disabled={priceLoading}><RefreshCw size={15} className={priceLoading ? 'is-spinning' : undefined} />{priceLoading ? '更新中...' : '更新現價'}</button>
                 </div>
             </div>
 
-            {loading ? (
+            {loading && hasLoaded && <p className="ui-refresh-status" role="status">資料更新中…</p>}
+                {loading && !hasLoaded ? (
                 <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--c-muted)' }}>正在整理目前投資組合...</div>
             ) : error ? (
                 <div style={{ ...card, marginTop: '18px', color: 'var(--c-danger)' }}>{error}</div>
@@ -383,7 +398,7 @@ export default function PortfolioPlanner() {
                             <div className="planner-section-head">
                                 <div>
                                     <div className="planner-section-title"><Calculator size={18} color="var(--c-accent)" />水位與交易條件</div>
-                                    <p className="planner-section-copy">先決定股票部位，再選擇這次允許的調整方式。</p>
+                                    
                                 </div>
                             </div>
                             <div className="planner-position-grid">
@@ -409,7 +424,7 @@ export default function PortfolioPlanner() {
                             <div className="planner-section-head">
                                 <div>
                                     <div className="planner-section-title"><Plus size={18} color="var(--c-positive)" />加入規劃標的</div>
-                                    <p className="planner-section-copy">可加入目前沒有持有、但想納入配置的股票。</p>
+                                    
                                 </div>
                             </div>
                             <div className="planner-add-grid">
@@ -437,7 +452,7 @@ export default function PortfolioPlanner() {
                             <div style={{ color: 'var(--c-muted)', fontSize: '12px', lineHeight: 1.7 }}>
                                 {weightOff && <div>個股目標占比目前合計 {result?.allocatedWeightPct.toFixed(1)}%，應為 100%。</div>}
                                 {remainingCash < 0 && <div>依目前現金試算仍短缺 {money(Math.abs(remainingCash))}，需降低倉位或安排額外資金／融資。</div>}
-                                {sellsTooManyShares && <div>部分賣出股數超過目前持股，請降低該檔目標或檢查參考價。</div>}
+                                {sellsTooManyShares && <div>賣出股數已限制為可用持股；整張模式不處理剩餘零股，需清倉請改用整股模式。</div>}
                                 {rows.some(row => row.priceFallback) && <div>有股票尚無現價，暫以平均成本估算；更新現價後結果會更準確。</div>}
                             </div>
                         </div>
@@ -447,7 +462,7 @@ export default function PortfolioPlanner() {
                         <div className="planner-section-head">
                             <div>
                                 <div className="planner-section-title"><Scale size={18} color="var(--c-purple)" />個股配置與建議交易</div>
-                                <p className="planner-section-copy">目標占比是每檔股票占「股票部位」的比例，合計應為 100%。</p>
+                                <p className="planner-section-copy">以股票部位為基準，合計 100%。</p>
                             </div>
                             <div className="page-actions"><button className="ui-button ui-button-secondary" onClick={setEqualWeights}><Scale size={14} />平均配置</button><button className="ui-button ui-button-secondary" onClick={normalizeWeights}><WandSparkles size={14} />正規化為 100%</button></div>
                         </div>
@@ -460,7 +475,7 @@ export default function PortfolioPlanner() {
                                     <tbody>
                                         {result?.rows.map(calculated => {
                                             const row = rows.find(item => item.code === calculated.code)!
-                                            const exceeds = calculated.action === 'sell' && calculated.estimatedShares !== null && calculated.estimatedShares > row.currentShares
+                                            const exceeds = calculated.limitedByHoldings
                                             const actionColor = calculated.action === 'buy' ? 'var(--c-positive)' : calculated.action === 'sell' ? 'var(--c-danger)' : 'var(--c-muted)'
                                             return (
                                                 <tr key={row.id}>
@@ -471,7 +486,7 @@ export default function PortfolioPlanner() {
                                                     <td><div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}><input className="planner-mini-input" type="number" min="0" step="0.1" value={row.targetWeight} onChange={event => updateRow(row.id, { targetWeight: event.target.value })} aria-label={`${row.code} 目標占比`} /><span style={{ color: 'var(--c-muted)' }}>%</span></div></td>
                                                     <td>{money(calculated.targetMarketValue)}</td>
                                                     <td><strong style={{ color: actionColor }}>{calculated.limitedByMode ? '模式略過' : calculated.action === 'buy' ? '買進' : calculated.action === 'sell' ? '賣出' : '不調整'} {calculated.action !== 'hold' && money(calculated.estimatedTradeValue)}</strong>{(calculated.estimatedFee + calculated.estimatedTax) > 0 && <div style={{ fontSize: '10px', color: 'var(--c-muted)', marginTop: '3px' }}>費稅約 {money(calculated.estimatedFee + calculated.estimatedTax)}</div>}</td>
-                                                    <td style={{ color: exceeds ? 'var(--c-danger)' : 'var(--c-text)' }}>{calculated.estimatedShares === null ? '請補價格' : calculated.action === 'hold' ? '—' : `${calculated.estimatedShares.toLocaleString()} 股`}{exceeds && <div style={{ fontSize: '10px' }}>超過持股</div>}</td>
+                                                    <td style={{ color: exceeds ? 'var(--c-danger)' : 'var(--c-text)' }}>{calculated.estimatedShares === null ? '請補價格' : calculated.action === 'hold' ? '—' : `${calculated.estimatedShares.toLocaleString()} 股`}{exceeds && <div style={{ fontSize: '10px' }}>已限制可賣股數</div>}</td>
                                                     <td><button className="ui-button ui-button-secondary" style={{ minHeight: '32px', padding: '6px' }} onClick={() => row.currentShares > 0 ? updateRow(row.id, { targetWeight: '0' }) : setRows(current => current.filter(item => item.id !== row.id))} aria-label={row.currentShares > 0 ? `將 ${row.code} 設為清倉` : `移除 ${row.code}`} title={row.currentShares > 0 ? '設為清倉（目標 0%）' : '移除'}><Trash2 size={14} /></button></td>
                                                 </tr>
                                             )
@@ -495,7 +510,7 @@ export default function PortfolioPlanner() {
                         <div className="planner-section-head">
                             <div>
                                 <div className="planner-section-title"><ShieldAlert size={18} color="var(--c-warning)" />組合風險檢查</div>
-                                <p className="planner-section-copy">設定集中度、現金與槓桿限制，檢查調整後的承受能力。</p>
+                                <p className="planner-section-copy">設定集中度、現金與槓桿限制。</p>
                             </div>
                         </div>
                         <div className="planner-risk-grid">
@@ -524,7 +539,8 @@ export default function PortfolioPlanner() {
                         )}
                     </div>
 
-                    <p className="planner-disclaimer">試算以目前資料與參考價估算，可選擇整股或整張交易；費稅採系統共用費率，尚未計入滑價與實際成交限制，執行前請再核對券商資料。儲存方案只保留在目前裝置。</p>
+                    {hasLegacyScenarios && <p role="status" className="planner-disclaimer">此裝置有舊版共用方案，因無法確認所屬帳號，已保留原資料但不自動載入；請在目前帳號重新建立方案。</p>}
+                    <DisclosureNote summary="未含滑價；方案僅存此帳號／裝置。">採參考價與系統費稅估算，交易前請核對券商；方案不含於 JSON 備份。</DisclosureNote>
                 </>
             )}
         </div>

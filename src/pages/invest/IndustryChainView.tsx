@@ -1,9 +1,13 @@
-import { useState, useEffect, useMemo } from 'react'
+import { buttonFill } from '../../ui/styles'
+import { confirmAction } from '../../ui/dialogs'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import DisclosureNote from '../../components/DisclosureNote'
 import { getDocs, setDoc, deleteDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { captureUserSession } from '../../lib/userDB'
 import { Trash2, X, Search, ArrowUpRight, ArrowDownLeft, Link2, Network, List } from 'lucide-react'
 import { useInvestSync } from '../../InvestSyncContext'
+import { useSafeMutation } from '../../lib/useSafeMutation'
 
 // ── 型別 ──────────────────────────────────────────────────────────
 type Market = 'TW' | 'US' | 'JP'
@@ -33,15 +37,15 @@ export interface ChainLink {
 
 // ── 樣式（沿用 IndustryMap 既有風格） ─────────────────────────────
 const card: React.CSSProperties = {
-    backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px',
+    backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: 'var(--ui-card-padding, 20px)',
 }
 const inp: React.CSSProperties = {
     backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px',
     padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box',
 }
 const btn = (color: string): React.CSSProperties => ({
-    backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px',
-    color: '#fff', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
+    backgroundColor: buttonFill(color), border: 'none', borderRadius: '8px', padding: '8px 16px',
+    color: /border|transparent|sidebar|card/.test(color) ? 'var(--c-text)' : /^var\(--c-(accent|positive|danger|warning|purple)\)$/.test(color) ? 'var(--c-on-accent)' : '#fff', fontSize: '13px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px',
 })
 
 // 文字截斷
@@ -69,16 +73,31 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
     const [addTarget, setAddTarget] = useState('')
     const [addLabel, setAddLabel] = useState('')
     const [addType, setAddType] = useState('')
-    const [saving, setSaving] = useState(false)
+    const mutation = useSafeMutation()
+    const saving = mutation.busy
     const [addedCount, setAddedCount] = useState(0)
 
-    const load = async () => {
-        setLoading(true)
-        const snap = await getDocs(userCol(investDB, 'industryRelations'))
-        setLinks(snap.docs.map(d => ({ id: d.id, ...d.data() } as ChainLink)))
-        setLoading(false)
-    }
-    useEffect(() => { void load() }, [syncVersion])
+    const [loadError, setLoadError] = useState('')
+    const loadRevision = useRef(0)
+    const load = useCallback(async () => {
+        const request = ++loadRevision.current
+        try {
+            const session = captureUserSession()
+
+            const snap = await getDocs(session.col(investDB, 'industryRelations'))
+            if (request !== loadRevision.current) return
+            session.assertActive()
+            setLinks(snap.docs.map(d => ({ id: d.id, ...d.data() } as ChainLink)))
+            setLoadError('')
+        } catch (error) {
+            if (request === loadRevision.current) setLoadError(error instanceof Error ? error.message : '資料載入失敗，請重新整理後重試。')
+        } finally {
+            if (request === loadRevision.current) setLoading(false)
+        }
+    }, [])
+
+    const cancelLoad = useCallback(() => { loadRevision.current++ }, [])
+    useEffect(() => { void load(); return cancelLoad }, [load, cancelLoad, syncVersion])
 
     const nameOf = useMemo(() => {
         const m = new Map<string, string>()
@@ -200,25 +219,29 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
         const from = addDir === 'up' ? addTarget : focusCode
         const to = addDir === 'up' ? focusCode : addTarget
         const relId = `${from}__${to}`.replace(/\//g, '_')
-        setSaving(true)
-        await setDoc(userDoc(investDB, 'industryRelations', relId), {
+        await mutation.run(async session => {
+        await setDoc(session.doc(investDB, 'industryRelations', relId), {
             from,
             to,
             ...(addLabel.trim() ? { label: addLabel.trim() } : {}),
             ...(addType.trim() ? { type: addType.trim() } : {}),
         }, { merge: true })
-        setSaving(false)
+        session.assertActive()
         setAddTarget('')
         setAddLabel('')
         setAddType('')
         setAddedCount(c => c + 1)
-        load()
+        await load()
+        })
     }
 
     const handleDelete = async (id: string) => {
-        if (!confirm('確定要刪除這條關係？')) return
-        await deleteDoc(userDoc(investDB, 'industryRelations', id))
-        load()
+        if (!await confirmAction('確定要刪除這條關係？')) return
+        await mutation.run(async session => {
+            await deleteDoc(session.doc(investDB, 'industryRelations', id))
+            session.assertActive()
+            await load()
+        })
     }
 
     const listVisible = !focusCode || focusSearch.trim().length > 0
@@ -231,6 +254,7 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
         const current = dir === 'up' ? upstream : downstream
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '14px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', border: '1px dashed var(--c-border)', marginTop: '8px' }}>
+            {loadError && <p role="alert" style={{ color: 'var(--c-danger)' }}>資料載入失敗：{loadError}</p>}
                 <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--c-text)' }}>
                     {dir === 'up' ? '標記上游供應商' : '標記下游客戶'}
                     <span style={{ fontSize: '11px', fontWeight: 400, color: 'var(--c-muted)', marginLeft: '8px' }}>可連續加入多筆</span>
@@ -254,7 +278,7 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
                 <select value={addTarget} onChange={e => setAddTarget(e.target.value)} style={inp}>
                     <option value="">{dir === 'up' ? '選擇上游（供應給此檔的公司）' : '選擇下游（此檔供應的對象）'}</option>
                     {targetOptions.map(n => (
-                        <option key={n.code} value={n.code}>{n.code}　{n.name}〔{marketLabel(n.market)}〕</option>
+                        <option key={n.code} value={n.code}>{n.code} {n.name}〔{marketLabel(n.market)}〕</option>
                     ))}
                 </select>
                 <input style={inp} placeholder="供應內容 / 關係描述（選填，例：HBM3E 記憶體）" value={addLabel} onChange={e => setAddLabel(e.target.value)} />
@@ -305,9 +329,8 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
 
     return (
         <div>
-            <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
-                以你追蹤的股票為節點，由左到右呈現供應鏈：左邊是上游、右邊是下游，箭頭由供應商指向客戶。點任一節點即可重新聚焦、沿鏈往下追。關係類型可自由填寫，不限產業。
-            </div>
+            {(mutation.error || loadError) && <p role="alert" style={{ color: 'var(--c-danger)' }}>{mutation.error || loadError}</p>}
+            <DisclosureNote summary="上游 → 下游；點股票追蹤。" style={{ margin: '0 0 12px' }}>箭頭由供應商指向客戶；點連線刪除關係。顯示 {depth} 層，可調整。</DisclosureNote>
 
             {/* 焦點挑選 */}
             <div style={{ ...card, marginBottom: '16px', padding: '14px 16px' }}>
@@ -331,8 +354,8 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
                             <span style={{ fontSize: '13px', color: 'var(--c-muted)' }}>查無符合的標的</span>
                         ) : focusMatches.map(n => (
                             <button key={n.code} onClick={() => selectFocus(n.code)} style={{
-                                backgroundColor: n.code === focusCode ? 'var(--c-accent)' : 'var(--c-bg)',
-                                color: n.code === focusCode ? '#fff' : 'var(--c-text)',
+                                backgroundColor: n.code === focusCode ? 'var(--c-button-accent)' : 'var(--c-bg)',
+                                color: n.code === focusCode ? 'var(--c-on-accent)' : 'var(--c-text)',
                                 border: '1px solid var(--c-border)', borderRadius: '8px',
                                 padding: '6px 12px', fontSize: '13px', cursor: 'pointer',
                             }}>
@@ -386,10 +409,10 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
 
                             {/* 圖 / 清單切換 */}
                             <div style={{ display: 'flex', border: '1px solid var(--c-border)', borderRadius: '8px', overflow: 'hidden' }}>
-                                <button onClick={() => setView('graph')} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', border: 'none', cursor: 'pointer', fontSize: '12px', backgroundColor: view === 'graph' ? 'var(--c-accent)' : 'transparent', color: view === 'graph' ? '#fff' : 'var(--c-muted)' }}>
+                                <button onClick={() => setView('graph')} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', border: 'none', cursor: 'pointer', fontSize: '12px', backgroundColor: view === 'graph' ? 'var(--c-button-accent)' : 'transparent', color: view === 'graph' ? 'var(--c-on-accent)' : 'var(--c-muted)' }}>
                                     <Network size={13} />圖
                                 </button>
-                                <button onClick={() => setView('list')} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', border: 'none', cursor: 'pointer', fontSize: '12px', backgroundColor: view === 'list' ? 'var(--c-accent)' : 'transparent', color: view === 'list' ? '#fff' : 'var(--c-muted)' }}>
+                                <button onClick={() => setView('list')} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', border: 'none', cursor: 'pointer', fontSize: '12px', backgroundColor: view === 'list' ? 'var(--c-button-accent)' : 'transparent', color: view === 'list' ? 'var(--c-on-accent)' : 'var(--c-muted)' }}>
                                     <List size={13} />清單
                                 </button>
                             </div>
@@ -452,9 +475,6 @@ export function ChainView({ nodes }: { nodes: ChainNode[] }) {
                                         )
                                     })}
                                 </svg>
-                            </div>
-                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginTop: '8px', padding: '0 4px' }}>
-                                點節點可重新聚焦；點連線可刪除該關係。預設顯示 {depth} 層，可在上方調整。
                             </div>
                         </div>
                     )}

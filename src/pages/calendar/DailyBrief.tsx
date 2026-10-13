@@ -1,8 +1,13 @@
-import { useState, useEffect } from 'react'
+import { card } from '../../ui/styles'
+import { captureUserSession } from '../../lib/userDB'
+import AnnualDataNotice from '../../components/AnnualDataNotice'
+import { useInvestSync } from '../../InvestSyncContext'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { fetchCalendarEvents, fetchTasks } from '../../lib/plannerData'
 import { getDailyNews } from '../../lib/gemini'
 import { FOMC_DATES, TECH_EVENTS, getFuturesSettlementDates, EVENT_COLORS, EVENT_LABELS } from '../../lib/calendarData'
 import { toLocalDateString } from '../../lib/date'
+import { eventOccursOn, type EventTiming } from '../../lib/calendarTiming'
 import { RefreshCw, Calendar, CheckSquare, Globe, Newspaper, AlertCircle } from 'lucide-react'
 
 interface NewsItem {
@@ -12,7 +17,7 @@ interface NewsItem {
     source: string
 }
 
-interface EventItem {
+interface EventItem extends EventTiming {
     id: string
     date: string
     title: string
@@ -28,107 +33,118 @@ interface TaskItem {
     priority?: string
 }
 
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
 const CATEGORY_COLORS: Record<string, string> = {
     市場: 'var(--c-positive)', 科技: '#a78bfa', 經濟: 'var(--c-warning)', 政治: 'var(--c-danger)'
 }
 
+function readNewsCache(): { news: NewsItem[]; time: string } | null {
+    try {
+        if (sessionStorage.getItem('newsDate') !== toLocalDateString()) return null
+        const rows: unknown = JSON.parse(sessionStorage.getItem('newsData') || 'null')
+        if (!Array.isArray(rows) || !rows.length || !rows.every(row => row && ['title', 'category', 'url', 'source'].every(key => typeof row[key] === 'string'))) return null
+        return { news: rows, time: sessionStorage.getItem('newsTime') || '' }
+    } catch { return null }
+}
+
 export default function DailyBrief() {
+    const { version: syncVersion } = useInvestSync()
+    const [cachedNews] = useState(readNewsCache)
+    const [dataError, setDataError] = useState('')
+    const newsRequest = useRef(0)
     const today = new Date()
     const todayStr = toLocalDateString(today)
 
-    const [news, setNews] = useState<NewsItem[]>([])
-    const [newsLoading, setNewsLoading] = useState(false)
-    const [newsError, setNewsError] = useState(false)
+    const [news, setNews] = useState<NewsItem[]>(cachedNews?.news || [])
+    const [newsLoading, setNewsLoading] = useState(!cachedNews)
+    const [newsError, setNewsError] = useState('')
     const [todayEvents, setTodayEvents] = useState<EventItem[]>([])
     const [upcomingEvents, setUpcomingEvents] = useState<EventItem[]>([])
     const [todayTasks, setTodayTasks] = useState<TaskItem[]>([])
     const [overdueTasks, setOverdueTasks] = useState<TaskItem[]>([])
     const [dataLoading, setDataLoading] = useState(true)
-    const [lastNewsTime, setLastNewsTime] = useState('')
+    const [lastNewsTime, setLastNewsTime] = useState(cachedNews?.time || '')
     const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set())
 
-    const loadData = async () => {
-        setDataLoading(true)
-        try {
-            const [personalRows, taskRows] = await Promise.all([
-                fetchCalendarEvents<EventItem>(),
-                fetchTasks<TaskItem>(),
-            ])
+    useEffect(() => {
+        let active = true
+        const loadData = async () => {
+            try {
+                const session = captureUserSession()
+                const [personalRows, taskRows] = await Promise.all([
+                    fetchCalendarEvents<EventItem>(),
+                    fetchTasks<TaskItem>(),
+                ])
 
-            // 行事曆事件
-            const personal: EventItem[] = personalRows.map(row => ({
-                id: row.id,
-                date: row.date,
-                title: row.title,
-                type: 'personal',
-                description: row.description
-            }))
+                if (!active) return
+                session.assertActive()
+                setDataError('')
+                // 行事曆事件
+                const personal: EventItem[] = personalRows.map(row => ({
+                    ...row,
+                    type: row.type || 'personal',
+                }))
 
-            const futuresThisMonth = getFuturesSettlementDates(today.getFullYear(), today.getMonth() + 1)
-            const next14Str = toLocalDateString(new Date(Date.now() + 14 * 86400000))
+                const futuresThisMonth = getFuturesSettlementDates(Number(todayStr.slice(0, 4)), Number(todayStr.slice(5, 7)))
+                const next14Str = toLocalDateString(new Date(Date.now() + 14 * 86400000))
 
-            const allEvents: EventItem[] = [
-                ...FOMC_DATES,
-                ...TECH_EVENTS,
-                ...futuresThisMonth,
-                ...personal,
-            ]
+                const allEvents: EventItem[] = [
+                    ...FOMC_DATES,
+                    ...TECH_EVENTS,
+                    ...futuresThisMonth,
+                    ...personal,
+                ]
 
-            setTodayEvents(allEvents.filter(e => e.date === todayStr))
-            setUpcomingEvents(
-                allEvents
-                    .filter(e => e.date > todayStr && e.date <= next14Str)
-                    .sort((a, b) => a.date.localeCompare(b.date))
-                    .slice(0, 5)
-            )
+                setTodayEvents(allEvents.filter(e => eventOccursOn(e, todayStr)))
+                setUpcomingEvents(
+                    allEvents
+                        .filter(e => e.date > todayStr && e.date <= next14Str)
+                        .sort((a, b) => a.date.localeCompare(b.date))
+                        .slice(0, 5)
+                )
 
-            // 任務
-            const tasks = taskRows
-            setTodayTasks(tasks.filter(t => !t.done && t.dueDate === todayStr))
-            setOverdueTasks(tasks.filter(t => !t.done && t.dueDate && t.dueDate < todayStr))
+                // 任務
+                const tasks = taskRows
+                setTodayTasks(tasks.filter(t => !t.done && t.dueDate === todayStr))
+                setOverdueTasks(tasks.filter(t => !t.done && t.dueDate && t.dueDate < todayStr))
 
-        } catch (err) { console.error(err) }
-        setDataLoading(false)
-    }
+            } catch {
+                if (active) setDataError('行程與任務載入失敗，請重新整理後重試。')
+            } finally { if (active) setDataLoading(false) }
+        }
+        void loadData()
+        return () => { active = false }
+    }, [todayStr, syncVersion])
 
-    const loadNews = async () => {
-        setNewsLoading(true)
-        setNewsError(false)
+    const loadNews = useCallback(async () => {
+        const request = ++newsRequest.current
         try {
             const result = await getDailyNews()
+            if (request !== newsRequest.current) return
+            setNewsError('')
             if (result.length === 0) {
-                setNewsError(true)
+                setNewsError('新聞服務未回傳資料，請稍後再試')
             } else {
                 const time = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
                 const todayDate = toLocalDateString()
                 setNews(result)
                 setLastNewsTime(time)
                 setSelectedSources(new Set())
-                sessionStorage.setItem('newsDate', todayDate)
-                sessionStorage.setItem('newsData', JSON.stringify(result))
-                sessionStorage.setItem('newsTime', time)
+                // Storage restrictions must not turn a successful fetch into an error.
+                try {
+                    sessionStorage.setItem('newsDate', todayDate)
+                    sessionStorage.setItem('newsData', JSON.stringify(result))
+                    sessionStorage.setItem('newsTime', time)
+                } catch { /* The fetched news is still usable in memory. */ }
             }
-        } catch { setNewsError(true) }
-        setNewsLoading(false)
-    }
-
-    useEffect(() => {
-        loadData()
-
-        const todayDate = toLocalDateString()
-        const cachedDate = sessionStorage.getItem('newsDate')
-        const cachedNews = sessionStorage.getItem('newsData')
-
-        if (cachedDate === todayDate && cachedNews) {
-            try {
-                setNews(JSON.parse(cachedNews))
-                setLastNewsTime(sessionStorage.getItem('newsTime') || '')
-            } catch { loadNews() }
-        } else {
-            loadNews()
-        }
+        } catch (error) { if (request === newsRequest.current) setNewsError(error instanceof Error ? error.message : '新聞載入失敗') }
+        finally { if (request === newsRequest.current) setNewsLoading(false) }
     }, [])
+
+    const cancelNews = useCallback(() => { newsRequest.current++ }, [])
+    useEffect(() => {
+        if (!cachedNews) void loadNews()
+        return cancelNews
+    }, [cachedNews, loadNews, cancelNews])
 
     // 來源篩選邏輯
     const allSources = Array.from(new Set(news.map(n => n.source).filter(Boolean)))
@@ -146,9 +162,10 @@ export default function DailyBrief() {
     }
 
     return (
-        <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1200px', margin: '0 auto' }}>
+        <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1200px', margin: '0 auto' }}>
+            {dataError && <p role="alert" style={{ color: 'var(--c-danger)' }}>{dataError}</p>}
             {/* 標題 */}
-            <div style={{ marginBottom: '24px' }}>
+            <div style={{ marginBottom: '16px' }}>
                 <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>
                     每日簡報
                 </h1>
@@ -157,6 +174,7 @@ export default function DailyBrief() {
                 </p>
             </div>
 
+            <AnnualDataNotice fomcRange={{ start: todayStr, end: toLocalDateString(new Date(Date.now() + 14 * 86400000)) }} />
             <div style={{ display: 'grid', gap: '16px', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
 
                 {/* 今日事件 */}
@@ -253,7 +271,7 @@ export default function DailyBrief() {
                             <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text)' }}>市場新聞</span>
                             {lastNewsTime && <span style={{ fontSize: '12px', color: 'var(--c-muted)' }}>更新於 {lastNewsTime}</span>}
                         </div>
-                        <button onClick={loadNews} disabled={newsLoading}
+                        <button onClick={() => { setNewsLoading(true); setNewsError(''); void loadNews() }} disabled={newsLoading}
                             style={{ background: 'none', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '6px 12px', color: 'var(--c-muted)', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', opacity: newsLoading ? 0.6 : 1 }}>
                             <RefreshCw size={13} style={{ animation: newsLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {newsLoading ? '載入中...' : '重新整理'}
@@ -268,9 +286,9 @@ export default function DailyBrief() {
                                 style={{
                                     fontSize: '12px', padding: '4px 14px', borderRadius: '20px',
                                     border: '1px solid', cursor: 'pointer', transition: 'all 0.15s',
-                                    backgroundColor: selectedSources.size === 0 ? 'var(--c-accent)' : 'transparent',
-                                    borderColor: selectedSources.size === 0 ? 'var(--c-accent)' : 'var(--c-border)',
-                                    color: selectedSources.size === 0 ? '#fff' : 'var(--c-muted)',
+                                    backgroundColor: selectedSources.size === 0 ? 'var(--c-button-accent)' : 'transparent',
+                                    borderColor: selectedSources.size === 0 ? 'var(--c-button-accent)' : 'var(--c-border)',
+                                    color: selectedSources.size === 0 ? 'var(--c-on-accent)' : 'var(--c-muted)',
                                 }}>
                                 全部 {selectedSources.size === 0 && <span style={{ opacity: 0.75 }}>({news.length})</span>}
                             </button>
@@ -284,9 +302,9 @@ export default function DailyBrief() {
                                         style={{
                                             fontSize: '12px', padding: '4px 14px', borderRadius: '20px',
                                             border: '1px solid', cursor: 'pointer', transition: 'all 0.15s',
-                                            backgroundColor: active ? 'var(--c-accent)' : 'transparent',
-                                            borderColor: active ? 'var(--c-accent)' : 'var(--c-border)',
-                                            color: active ? '#fff' : 'var(--c-muted)',
+                                            backgroundColor: active ? 'var(--c-button-accent)' : 'transparent',
+                                            borderColor: active ? 'var(--c-button-accent)' : 'var(--c-border)',
+                                            color: active ? 'var(--c-on-accent)' : 'var(--c-muted)',
                                         }}>
                                         {src} <span style={{ opacity: 0.75 }}>({count})</span>
                                     </button>
@@ -295,16 +313,17 @@ export default function DailyBrief() {
                         </div>
                     )}
 
-                    {newsError ? (
+                    {newsError && (
                         <div style={{ textAlign: 'center', padding: '32px', color: 'var(--c-muted)' }}>
                             <AlertCircle size={24} style={{ marginBottom: '8px', color: 'var(--c-danger)' }} />
-                            <div style={{ fontSize: '14px' }}>新聞載入失敗，請稍後再試</div>
+                            <div role="alert" style={{ fontSize: '14px' }}>{newsError}</div>
                         </div>
-                    ) : newsLoading && news.length === 0 ? (
+                    )}
+                    {newsLoading && news.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '32px', color: 'var(--c-muted)', fontSize: '14px' }}>
                             正在搜尋最新市場資訊...
                         </div>
-                    ) : filteredNews.length === 0 ? (
+                    ) : newsError && news.length === 0 ? null : filteredNews.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '32px', color: 'var(--c-muted)', fontSize: '14px' }}>
                             此來源目前沒有新聞
                         </div>

@@ -1,3 +1,5 @@
+import { invokeEventHandler } from '../lib/http-function.js'
+import { authorizeApi, apiError, apiHeaders, cachedApi } from '../lib/api-access.js'
 // netlify/functions/market-cap-proxy.js
 // ──────────────────────────────────────────────────────────────
 // 查詢台股「已發行股數」，供前端計算市值（現價 × 股數）。
@@ -23,19 +25,15 @@ const CACHE_TTL_MS = 12 * 60 * 60 * 1000 // 12 小時（股本資料變動極少
 // 模組級變數：同一個 lambda 容器（warm start）之間共用快取
 let cache = null // { data: Record<string, number>, fetchedAt: number }
 
-export const handler = async (event) => {
-    const headers = {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type',
-    }
+export const handleEvent = async (event) => {
+    const headers = apiHeaders
+    const denied = await authorizeApi(event, 'marketCap')
+    if (denied) return denied
 
-    if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 200, headers, body: '' }
-    }
 
     const codesParam = event.queryStringParameters?.codes || ''
-    const codes = codesParam.split(',').map(s => s.trim()).filter(Boolean)
+    const codes = [...new Set(codesParam.split(',').map(s => s.trim()).filter(Boolean))]
+    if (codesParam.length > 1000 || codes.length > 100 || codes.some(code => !/^[A-Za-z0-9]{2,10}$/.test(code))) return apiError(400, '單次最多 100 個有效代號')
 
     if (codes.length === 0) {
         return {
@@ -151,4 +149,7 @@ function splitCSVLine(line) {
     }
     fields.push(cur)
     return fields
+}
+export default async function (request) {
+    return invokeEventHandler(request, handleEvent)
 }

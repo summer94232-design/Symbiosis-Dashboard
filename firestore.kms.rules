@@ -17,6 +17,14 @@ service cloud.firestore {
       allow read, write: if ownsUserPath(userId);
     }
 
+    match /kmsSearch/{userId}/state/{documentId} {
+      allow read: if ownsUserPath(userId);
+      allow write: if false;
+    }
+    match /kmsSearch/{userId}/fulltextShards/{documentId} {
+      allow read: if ownsUserPath(userId);
+      allow write: if false;
+    }
     match /uidMappings/{kmsUid} {
       allow read, write: if false;
     }

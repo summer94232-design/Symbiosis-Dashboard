@@ -1,0 +1,602 @@
+{
+  "layouts": [
+    {
+      "page": "dashboard",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "holdings",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "history",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "trades",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "settings",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "review",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "planner",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "industry",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "export",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "graph",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "broker",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "cash",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "margin",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "dividend",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "dashboard",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "holdings",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "history",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "trades",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "settings",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "review",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "planner",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "industry",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "export",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "graph",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "broker",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "cash",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "margin",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "dividend",
+      "width": 393,
+      "height": 852,
+      "bodyWidth": 394,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "dashboard",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "holdings",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "history",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "trades",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "settings",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "review",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "planner",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "industry",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "export",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "graph",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "broker",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "cash",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "margin",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "dividend",
+      "width": 320,
+      "height": 568,
+      "bodyWidth": 320,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "dashboard",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "holdings",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "history",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "trades",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "settings",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "review",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "planner",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "industry",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "export",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "graph",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "broker",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "cash",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "margin",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "dividend",
+      "width": 844,
+      "height": 390,
+      "bodyWidth": 844,
+      "empty": false,
+      "invalidIcons": 0
+    },
+    {
+      "page": "dashboard",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "holdings",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "history",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "trades",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "settings",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "review",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "planner",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "industry",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "export",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "graph",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "broker",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "cash",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "margin",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    },
+    {
+      "page": "dividend",
+      "theme": "light",
+      "width": 1280,
+      "height": 900,
+      "bodyWidth": 1280,
+      "empty": false
+    }
+  ],
+  "sync": [
+    {
+      "width": 1280,
+      "height": 900,
+      "rightShift": 0,
+      "arrowY": 55.84000015258789,
+      "dotY": 55.84000015258789,
+      "right": 1242.2399673461914,
+      "textY": 55.84000015258789
+    },
+    {
+      "width": 393,
+      "height": 852,
+      "rightShift": 0,
+      "arrowY": 55.84000015258789,
+      "dotY": 55.84000015258789,
+      "right": 375.8400039672851,
+      "textY": 55.84000015258789
+    },
+    {
+      "width": 320,
+      "height": 568,
+      "rightShift": 0,
+      "arrowY": 55.84000015258789,
+      "dotY": 55.84000015258789,
+      "right": 304.23999786376953,
+      "textY": 55.84000015258789
+    },
+    {
+      "width": 844,
+      "height": 390,
+      "rightShift": 0,
+      "arrowY": 55.84000015258789,
+      "dotY": 55.84000015258789,
+      "right": 813.0799942016602,
+      "textY": 55.84000015258789
+    }
+  ]
+}

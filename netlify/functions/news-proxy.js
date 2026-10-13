@@ -1,3 +1,5 @@
+import { invokeEventHandler } from '../lib/http-function.js'
+import { authorizeApi, apiError, apiHeaders, cachedApi } from '../lib/api-access.js'
 // netlify/functions/news-proxy.js
 // 架構：三個來源並行抓取，各自失敗不影響其他來源
 //   1. News API      → 英文國際財經新聞
@@ -42,7 +44,7 @@ async function fetchNewsAPI(apiKey) {
 
     for (const q of queries) {
         try {
-            const res = await fetch(
+            const res = await newsFetch(
                 `https://newsapi.org/v2/everything?q=${encodeURIComponent(q)}&language=en&sortBy=publishedAt&pageSize=5&apiKey=${apiKey}`
             )
             const data = await res.json()
@@ -72,7 +74,7 @@ async function fetchNewsAPI(apiKey) {
 
 // ── 2. 鉅亨網 API（中文台股） ──────────────────────────────────────────────
 async function fetchCnyes() {
-    const res = await fetch(
+    const res = await newsFetch(
         'https://api.cnyes.com/media/api/v1/newslist/category/tw_stock?limit=20',
         {
             headers: {
@@ -96,7 +98,7 @@ async function fetchCnyes() {
 
 // ── 3. Yahoo 股市 RSS（中文台股） ───────────────────────────────────────────
 async function fetchYahooRSS() {
-    const res = await fetch('https://tw.stock.yahoo.com/rss', {
+    const res = await newsFetch('https://tw.stock.yahoo.com/rss', {
         headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/rss+xml, application/xml, text/xml, */*',
@@ -132,12 +134,18 @@ async function fetchYahooRSS() {
 }
 
 // ── 主 handler ──────────────────────────────────────────────────────────────
-export const handler = async () => {
+export const handleEvent = async event => {
+    const denied = await authorizeApi(event, 'news')
+    if (denied) return denied
+    try { return await cachedApi('news', 300000, loadNews) }
+    catch { return apiError(502, '新聞服務暫時無法使用') }
+}
+const loadNews = async () => {
     const NEWS_API_KEY = process.env.NEWS_API_KEY
 
     // 三個來源並行抓取，各自錯誤不影響其他
     const [newsAPIResult, cnyesResult, yahooResult] = await Promise.allSettled([
-        fetchNewsAPI(NEWS_API_KEY),
+        NEWS_API_KEY ? fetchNewsAPI(NEWS_API_KEY) : Promise.resolve([]),
         fetchCnyes(),
         fetchYahooRSS(),
     ])
@@ -174,9 +182,15 @@ export const handler = async () => {
         return true
     })
 
+    if (!result.length) throw new Error('No news sources available')
     return {
         statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiHeaders,
         body: JSON.stringify(result),
     }
+}
+function newsFetch(url, options = {}) { return fetch(url, { ...options, signal: AbortSignal.timeout(8000) }) }
+
+export default async function (request) {
+    return invokeEventHandler(request, handleEvent)
 }

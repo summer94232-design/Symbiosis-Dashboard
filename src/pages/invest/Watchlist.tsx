@@ -1,12 +1,15 @@
-import { useState, useEffect, useRef } from 'react'
+import { card, inp, lbl, btn } from '../../ui/styles'
+import { confirmAction } from '../../ui/dialogs'
+import { authenticatedFetch } from '../../lib/authenticatedFetch'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { getDocs, setDoc, deleteDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { userDoc, captureUserSession } from '../../lib/userDB'
 import { getHistoricalCandles } from '../../lib/fugle'
-import { getForeignQuotes } from '../../lib/foreignQuote'
+import { quoteKey } from '../../lib/quoteUniverse'
 import { calcMarketCap, formatMarketCap } from '../../lib/marketCap'
 import { toLocalDateString } from '../../lib/date'
-import { useMarketCap } from '../../MarketCapContext'
+import { useMarketCap } from '../../lib/marketCapContext'
 import {
     Plus, Trash2, RefreshCw, TrendingUp, Pencil, Check, X,
     FileText, LayoutGrid, Table2, Tag, ChevronDown, ChevronRight, Activity, BarChart2, Landmark
@@ -38,11 +41,17 @@ interface ChartBar {
     volume: number
 }
 
+async function forEachHistoryItem<T>(items: T[], action: (item: T) => Promise<void>) {
+    let cursor = 0
+    await Promise.all(Array.from({ length: Math.min(3, items.length) }, async () => {
+        while (cursor < items.length) {
+            const item = items[cursor++]
+            await action(item)
+        }
+    }))
+}
+
 const UNGROUPED = '未分類'
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }
-const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 const MARKETS = {
     tw: { label: '台股 TW', color: 'var(--c-accent)', bg: 'color-mix(in srgb, var(--c-accent) 12%, transparent)', activeColor: 'var(--c-accent)' },
@@ -142,6 +151,14 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
         return v.toLocaleString()
     }
 
+    const showPoint = (clientX: number) => {
+        const rect = svgRef.current?.getBoundingClientRect()
+        if (!rect?.width) return
+        const mx = (clientX - rect.left) * W / rect.width
+        const i = Math.max(0, Math.min(n - 1, Math.round((mx - PAD_X) / step)))
+        setTooltip({ i, x: pts[i].x, y: pts[i].y })
+    }
+
     return (
         <div style={{ position: 'relative', userSelect: 'none' }}>
             {/* tooltip */}
@@ -149,8 +166,8 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
                 <div style={{
                     position: 'absolute',
                     top: -2,
-                    left: tooltip!.x < W / 2 ? tooltip!.x + 8 : undefined,
-                    right: tooltip!.x >= W / 2 ? W - tooltip!.x + 8 : undefined,
+                    left: tooltip!.x < W / 2 ? `calc(${tooltip!.x / W * 100}% + 8px)` : undefined,
+                    right: tooltip!.x >= W / 2 ? `calc(${(W - tooltip!.x) / W * 100}% + 8px)` : undefined,
                     backgroundColor: 'var(--c-sidebar)',
                     border: '1px solid var(--c-border)',
                     borderRadius: '6px',
@@ -172,16 +189,11 @@ function MiniChart({ data, market }: { data: ChartBar[]; market: MarketKey }) {
                 ref={svgRef}
                 width="100%"
                 viewBox={`0 0 ${W} ${H}`}
-                style={{ display: 'block', overflow: 'visible' }}
-                onMouseLeave={() => setTooltip(null)}
-                onMouseMove={e => {
-                    const rect = svgRef.current?.getBoundingClientRect()
-                    if (!rect) return
-                    const ratio = W / rect.width
-                    const mx = (e.clientX - rect.left) * ratio
-                    const i = Math.max(0, Math.min(n - 1, Math.round((mx - PAD_X) / step)))
-                    setTooltip({ i, x: pts[i].x / ratio * (rect.width / W), y: pts[i].y })
-                }}
+                style={{ display: 'block', overflow: 'visible', touchAction: 'pan-y' }}
+                onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); showPoint(e.clientX) }}
+                onPointerMove={e => { if (e.pointerType === 'mouse' || e.buttons) showPoint(e.clientX) }}
+                onPointerLeave={e => { if (e.pointerType === 'mouse') setTooltip(null) }}
+                onPointerCancel={() => setTooltip(null)}
             >
                 {/* 填色背景 */}
                 <path d={fillPath} fill={fillColor} />
@@ -350,11 +362,12 @@ function TableRow({ item, ma, marketCap, onEdit, onDelete }: {
 // ── 主元件 ────────────────────────────────────────────────────────
 export default function Watchlist() {
     const { version: syncVersion } = useInvestSync()
-    const { prices, lastUpdated, priceLoading, updatePrices: ctxUpdatePrices } = usePrices()
+    const { prices, priceLoading, updatePrices: ctxUpdatePrices } = usePrices()
     const { shares: sharesData, sharesLoading, updateShares } = useMarketCap()
 
-    const [items, setItems] = useState<WatchItem[]>([])
+    const [storedItems, setItems] = useState<WatchItem[]>([])
     const [loading, setLoading] = useState(true)
+    const [hasLoaded, setHasLoaded] = useState(false)
     const [showForm, setShowForm] = useState(false)
     const [editingCode, setEditingCode] = useState<string | null>(null)
     const [expandedNote, setExpandedNote] = useState<string | null>(null)
@@ -365,12 +378,13 @@ export default function Watchlist() {
 
     const [maData, setMaData] = useState<Record<string, MAData>>({})
     const [maLoading, setMaLoading] = useState(false)
-    const [maUpdatedAt, setMaUpdatedAt] = useState('')
 
     // 小線圖資料
     const [chartData, setChartData] = useState<Record<string, ChartBar[]>>({})
     const [chartLoading, setChartLoading] = useState(false)
-    const [chartUpdatedAt, setChartUpdatedAt] = useState('')
+    const [maIssues, setMaIssues] = useState<string[]>([])
+    const [chartIssues, setChartIssues] = useState<string[]>([])
+    const historyBusy = useRef({ ma: false, chart: false })
 
     // 市值資料（已發行股數，僅台股支援；來源：MOPS 公開資料）
     // → 已改用全站共用的 MarketCapContext（見上方 useMarketCap()），與產業地圖頁共用同一份快取
@@ -378,103 +392,107 @@ export default function Watchlist() {
     const emptyForm = { code: '', name: '', market: 'tw' as MarketKey, targetHigh: '', targetLow: '', note: '', group: '' }
     const [form, setForm] = useState(emptyForm)
 
+    const items = useMemo(() => storedItems.map(item => {
+        const price = prices[quoteKey(item.code, item.market)]
+        return { ...item, currentPrice: price ?? undefined }
+    }), [storedItems, prices])
+
     const allGroups = Array.from(new Set(items.map(i => i.group || UNGROUPED))).sort()
     const MARKET_ORDER: MarketKey[] = ['tw', 'jp', 'us']
 
-    const load = async () => {
-        setLoading(true)
-        const snap = await getDocs(userCol(investDB, 'watchlist'))
-        const data = snap.docs.map(d => {
-            const raw = d.data()
-            return { code: d.id, market: 'tw' as MarketKey, ...raw } as WatchItem
-        })
-        data.forEach(item => {
-            if (item.market === 'tw') {
-                const ctxPrice = prices[item.code]
-                if (ctxPrice !== null && ctxPrice !== undefined) item.currentPrice = ctxPrice
-            }
-        })
-        setItems(data.sort((a, b) => {
-            const gA = a.group || UNGROUPED; const gB = b.group || UNGROUPED
-            return gA !== gB ? gA.localeCompare(gB) : a.code.localeCompare(b.code)
-        }))
-        const dictSnap = await getDocs(userCol(investDB, 'stockDict'))
-        const dict: Record<string, string> = {}
-        dictSnap.docs.forEach(d => { dict[d.id] = d.data().name })
-        setStockDict(dict)
-        setLoading(false)
-    }
+    const [loadError, setLoadError] = useState('')
+    const loadRevision = useRef(0)
+    const load = useCallback(async () => {
+        const request = ++loadRevision.current
+        try {
+            const session = captureUserSession()
 
-    useEffect(() => { void load() }, [syncVersion])
+            const [snap, dictSnap] = await Promise.all([getDocs(session.col(investDB, 'watchlist')), getDocs(session.col(investDB, 'stockDict'))])
+            if (request !== loadRevision.current) return
+            session.assertActive()
+            const data = snap.docs.map(d => {
+                const raw = d.data()
+                return { code: d.id, market: 'tw' as MarketKey, ...raw } as WatchItem
+            })
+            setItems(data.sort((a, b) => {
+                const gA = a.group || UNGROUPED; const gB = b.group || UNGROUPED
+                return gA !== gB ? gA.localeCompare(gB) : a.code.localeCompare(b.code)
+            }))
+            const dict: Record<string, string> = {}
+            dictSnap.docs.forEach(d => { dict[d.id] = d.data().name })
+            setStockDict(dict)
+            setLoadError('')
+            setHasLoaded(true)
+        } catch (error) {
+            if (request === loadRevision.current) setLoadError(error instanceof Error ? error.message : '資料載入失敗，請重新整理後重試。')
+        } finally {
+            if (request === loadRevision.current) setLoading(false)
+        }
+    }, [])
 
-    useEffect(() => {
-        if (Object.keys(prices).length === 0) return
-        setItems(prev => prev.map(item => {
-            if (item.market !== 'tw') return item
-            const ctxPrice = prices[item.code]
-            if (ctxPrice !== null && ctxPrice !== undefined) return { ...item, currentPrice: ctxPrice }
-            return item
-        }))
-    }, [prices])
+    const cancelLoad = useCallback(() => { loadRevision.current++ }, [])
+    useEffect(() => { void load(); return cancelLoad }, [load, cancelLoad, syncVersion])
 
     // ★ 更新現價
     const handleUpdatePrices = async () => {
-        if (items.length === 0) return
-        const twCodes = items.filter(i => i.market === 'tw').map(i => i.code)
-        const foreignItems = items.filter(i => i.market !== 'tw')
-        if (twCodes.length > 0) await ctxUpdatePrices(twCodes)
-        if (foreignItems.length > 0) {
-            const yahooSymbols = foreignItems.map(i => toYahooSymbol(i.code, i.market))
-            const quotes = await getForeignQuotes(yahooSymbols)
-            setItems(prev => prev.map(item => {
-                if (item.market === 'tw') return item
-                const price = quotes[toYahooSymbol(item.code, item.market)]
-                return price != null ? { ...item, currentPrice: price } : item
-            }))
-        }
+        try {
+            await ctxUpdatePrices(items.map(item => quoteKey(item.code, item.market)))
+        } catch (error) { setLoadError(error instanceof Error ? error.message : '報價更新失敗') }
     }
 
     // ★ 更新 MA（台股）
     const handleUpdateMA = async () => {
         const twItems = items.filter(i => i.market === 'tw')
-        if (twItems.length === 0) return
+        if (twItems.length === 0 || historyBusy.current.ma) return
+        historyBusy.current.ma = true
         setMaLoading(true)
+        setMaIssues([])
+        const issues: string[] = []
         try {
             const to = toLocalDateString()
             const from = toLocalDateString(new Date(Date.now() - 45 * 86400000))
             const results: Record<string, MAData> = {}
-            await Promise.all(twItems.map(async item => {
+            await forEachHistoryItem(twItems, async item => {
                 try {
                     const data = await getHistoricalCandles(item.code, from, to)
-                    if (!data?.data?.length) { results[item.code] = { ma5: null, ma10: null, ma20: null }; return }
-                    const closes: number[] = data.data.filter((d: any) => d.close != null).map((d: any) => d.close)
+                    if (!data.data.length) { issues.push(`${item.code}：此期間無歷史資料`); results[item.code] = { ma5: null, ma10: null, ma20: null }; return }
+                    const closes: number[] = data.data.filter((d: {date: string; open: number; high: number; low: number; close: number; volume?: number}) => d.close != null).map((d: {date: string; open: number; high: number; low: number; close: number; volume?: number}) => d.close)
                     results[item.code] = { ma5: calcMA(closes, 5), ma10: calcMA(closes, 10), ma20: calcMA(closes, 20) }
-                } catch { results[item.code] = { ma5: null, ma10: null, ma20: null } }
-            }))
+                } catch (error) {
+                    issues.push(`${item.code}：${error instanceof Error ? error.message : 'MA 載入失敗，請重試'}`)
+                    results[item.code] = { ma5: null, ma10: null, ma20: null }
+                }
+            })
             setMaData(results)
-            setMaUpdatedAt(new Date().toLocaleString('zh-TW'))
-        } catch (err) { console.error(err) }
-        setMaLoading(false)
+        } catch { issues.push('MA 更新失敗，請重試') }
+        finally {
+            setMaIssues(issues)
+            historyBusy.current.ma = false
+            setMaLoading(false)
+        }
     }
 
     // ★ 更新小線圖（10日歷史）
     const handleUpdateChart = async () => {
-        if (items.length === 0) return
+        if (items.length === 0 || historyBusy.current.chart) return
+        historyBusy.current.chart = true
         setChartLoading(true)
+        setChartIssues([])
+        const issues: string[] = []
         const results: Record<string, ChartBar[]> = {}
-
+        try {
         const to = toLocalDateString()
         const from = toLocalDateString(new Date(Date.now() - 20 * 86400000)) // 多抓幾天保證有10個交易日
 
-        await Promise.all(items.map(async item => {
+        await forEachHistoryItem(items, async item => {
             try {
                 if (item.market === 'tw') {
                     // 台股：Fugle 歷史資料
                     const data = await getHistoricalCandles(item.code, from, to)
-                    if (!data?.data?.length) return
+                    if (!data.data.length) { issues.push(`${item.code}：此期間無歷史資料`); return }
                     const bars: ChartBar[] = data.data
-                        .filter((d: any) => d.close != null && d.date != null)
-                        .map((d: any) => ({ date: d.date, close: d.close, volume: d.volume ?? 0 }))
+                        .filter((d: {date: string; open: number; high: number; low: number; close: number; volume?: number}) => d.close != null && d.date != null)
+                        .map((d: {date: string; open: number; high: number; low: number; close: number; volume?: number}) => ({ date: d.date, close: d.close, volume: d.volume ?? 0 }))
                         // ✅ 修正：確保資料由舊到新排序（左=最舊，右=最新）
                         .sort((a: ChartBar, b: ChartBar) => a.date.localeCompare(b.date))
                         .slice(-10)
@@ -482,26 +500,30 @@ export default function Watchlist() {
                 } else {
                     // 外股：透過 Netlify Function 避免 CORS
                     const symbol = toYahooSymbol(item.code, item.market)
-                    const res = await fetch(
+                    const res = await authenticatedFetch(
                         `/.netlify/functions/foreign-quote?type=chart&symbol=${encodeURIComponent(symbol)}`
                     )
-                    if (!res.ok) return
+                    if (!res.ok) throw new Error(`線圖服務 HTTP ${res.status}`)
                     const json = await res.json()
                     if (json.bars?.length) {
                         // ✅ 修正：確保資料由舊到新排序（左=最舊，右=最新）
                         results[item.code] = [...json.bars].sort(
                             (a: ChartBar, b: ChartBar) => a.date.localeCompare(b.date)
                         )
-                    }
+                    } else { issues.push(`${item.code}：此期間無歷史資料`) }
                 }
             } catch (err) {
-                console.error(`[chart] ${item.code}`, err)
+                issues.push(`${item.code}：${err instanceof Error ? err.message : '線圖載入失敗，請重試'}`)
             }
-        }))
+        })
 
         setChartData(results)
-        setChartUpdatedAt(new Date().toLocaleString('zh-TW'))
-        setChartLoading(false)
+        } catch { issues.push('線圖更新失敗，請重試') }
+        finally {
+            setChartIssues(issues)
+            historyBusy.current.chart = false
+            setChartLoading(false)
+        }
     }
 
     // ★ 更新市值（僅台股，透過 MOPS 公開資料取得已發行股數；經由全站共用 Context，與產業地圖頁連動）
@@ -543,7 +565,7 @@ export default function Watchlist() {
     }
 
     const handleDelete = async (code: string) => {
-        if (!confirm(`確定要從自選股移除 ${code}？`)) return
+        if (!await confirmAction(`確定要從自選股移除 ${code}？`)) return
         await deleteDoc(userDoc(investDB, 'watchlist', code)); load()
     }
 
@@ -553,7 +575,7 @@ export default function Watchlist() {
     }
 
     const toggleGroup = (g: string) => {
-        setCollapsedGroups(prev => { const next = new Set(prev); next.has(g) ? next.delete(g) : next.add(g); return next })
+        setCollapsedGroups(prev => { const next = new Set(prev); if (next.has(g)) next.delete(g); else next.add(g); return next })
     }
 
     const getPriceStatus = (item: WatchItem) => {
@@ -571,6 +593,10 @@ export default function Watchlist() {
 
     return (
         <>
+            {loadError && <p role="alert" style={{ color: 'var(--c-danger)' }}>資料載入失敗：{loadError}</p>}
+            {(maLoading || chartLoading) && <p role="status" style={{ fontSize: '12px', color: 'var(--c-muted)' }}>歷史資料更新中，限流時等待。</p>}
+            {maIssues.length > 0 && <p role="alert" style={{ fontSize: '12px', color: 'var(--c-warning)', overflowWrap: 'anywhere' }}>MA：{maIssues.join('；')}。可按「更新 MA」重試。</p>}
+            {chartIssues.length > 0 && <p role="alert" style={{ fontSize: '12px', color: 'var(--c-warning)', overflowWrap: 'anywhere' }}>線圖：{chartIssues.join('；')}。可按「更新線圖」重試。</p>}
             <style>{`
                 .watch-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
                 @media (max-width: 700px) { .watch-grid { grid-template-columns: 1fr; } }
@@ -586,7 +612,7 @@ export default function Watchlist() {
                 .market-toggle button { flex: 1; padding: 8px 0; border: none; cursor: pointer; font-size: 12px; font-weight: 700; transition: background 0.15s, color 0.15s; }
             `}</style>
 
-            <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1400px', margin: '0 auto' }}>
+            <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1400px', margin: '0 auto' }}>
 
                 {/* 標題列 */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
@@ -615,7 +641,7 @@ export default function Watchlist() {
                             <Activity size={14} style={{ animation: maLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {maLoading ? 'MA 計算中...' : '更新 MA'}
                         </button>
-                        <button onClick={handleUpdatePrices} disabled={priceLoading || items.length === 0} style={btn('var(--c-card)')}>
+                        <button onClick={handleUpdatePrices} disabled={priceLoading} style={btn('var(--c-card)')}>
                             <RefreshCw size={14} style={{ animation: priceLoading ? 'spin 1s linear infinite' : 'none' }} />
                             {priceLoading ? '更新中...' : '更新現價'}
                         </button>
@@ -711,7 +737,8 @@ export default function Watchlist() {
                 )}
 
                 {/* 載入中 / 空狀態 */}
-                {loading ? (
+                {loading && hasLoaded && <p className="ui-refresh-status" role="status">資料更新中…</p>}
+                {loading && !hasLoaded ? (
                     <div style={{ textAlign: 'center', padding: '60px', color: 'var(--c-muted)' }}>
                         <RefreshCw size={24} style={{ animation: 'spin 1s linear infinite', marginBottom: '12px' }} />
                         <p>載入中...</p>

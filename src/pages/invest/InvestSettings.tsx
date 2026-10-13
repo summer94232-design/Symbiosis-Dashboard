@@ -1,14 +1,20 @@
+import { buttonFill } from '../../ui/styles'
 import { importDayTradeFields, orderTradeImportRows, exportDayTradeFields } from '../../lib/dayTradeCsv'
-import { useState, useEffect } from 'react'
-import { getDocs, getDoc, setDoc, orderBy, query, addDoc } from 'firebase/firestore'
+import { useState, useEffect, useRef } from 'react'
+import { getDocs, getDoc, setDoc, orderBy, query, addDoc, doc } from 'firebase/firestore'
+import { commitLedgerWrites } from '../../lib/ledgerWrites'
 import { investDB } from '../../lib/firebase'
 import { invalidateTrades, invalidateCashflow, invalidateDividends, invalidateAllInvestData } from '../../lib/investData'
 import { invalidateAllKmsData } from '../../lib/kmsData'
-import { userCol, userDoc, userDocNested, getUID } from '../../lib/userDB'
-import { buildFullBackup, downloadBackup, parseBackup, restoreFullBackup, backupSummary, countBackupDocs, type FullBackup } from '../../lib/backup'
+import { userCol, userDocNested, captureUserSession } from '../../lib/userDB'
+import { buildFullBackup, downloadBackup, parseBackup, previewFullRestore, restoreFullBackup, countBackupDocs, type FullBackup, type RestorePreview } from '../../lib/backup'
+import RestoreDifferencePreview from '../../components/RestoreDifferencePreview'
+import DisclosureNote from '../../components/DisclosureNote'
+import ImportFailureNotice from '../../components/ImportFailureNotice'
+import { cacheStockName } from '../../lib/stockDict'
 import { analyzeDayTrades, calcFee, calcTax, calcTradeTotal, calcSharesBeforeTrade, reconcileSnapshotBreakdowns, DEFAULT_MARGIN_INTEREST_RATE, type TradeRecord, type DividendRecord } from '../../lib/calc'
 // ✅ 1-2：共用 CSV 解析模組
-import { parseCSVLine, toNum, toInt } from '../../lib/csv'
+import { parseCSVRecords, toNum, toInt } from '../../lib/csv'
 import { toLocalDateString } from '../../lib/date'
 import { Download, Upload, FileSpreadsheet, Database, FileDown, User, Calendar, FileJson, AlertTriangle } from 'lucide-react'
 import * as XLSX from 'xlsx'
@@ -67,6 +73,10 @@ interface CashflowRow {
 }
 
 interface DividendRow {
+    status?: 'announced' | 'confirmed'
+    cashPaymentDate?: string
+    stockDistributionDate?: string
+    stockDividendMarginShares?: number
     date: string
     code: string
     name: string
@@ -77,12 +87,12 @@ interface DividendRow {
 
 type ExportFormat = 'csv' | 'xlsx'
 
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '24px' }
-const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '10px 18px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' })
+const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: 'var(--ui-card-padding, 24px)' }
+const btn = (color: string): React.CSSProperties => ({ backgroundColor: buttonFill(color), border: 'none', borderRadius: '8px', padding: '10px 18px', color: /border|transparent|sidebar|card/.test(color) ? 'var(--c-text)' : /^var\(--c-(accent|positive|danger|warning|purple)\)$/.test(color) ? 'var(--c-on-accent)' : '#fff', fontSize: '14px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' })
 
 /**
  * 將物件陣列序列化成 CSV 字串。
- * 欄位含逗號、引號或換行時自動以雙引號包裹（與 parseCSVLine 對應，可正確 round-trip）。
+ * 欄位含逗號、引號或換行時自動以雙引號包裹（與整份 CSV 解析器對應）。
  */
 function objectsToCSV(rows: Record<string, unknown>[]): string {
     if (rows.length === 0) return ''
@@ -98,23 +108,43 @@ function objectsToCSV(rows: Record<string, unknown>[]): string {
     return lines.join('\n')
 }
 
+    // 共用小元件：分項匯出列（標籤 + CSV / Excel 兩顆按鈕）
+    const ExportRowItem = ({ label, color, onExport, exportLoading }: { label: string; color: string; onExport: (f: ExportFormat) => void; exportLoading: boolean }) => (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '8px 0', borderBottom: '1px solid var(--c-border)' }}>
+            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--c-text)' }}>{label}</span>
+            <div style={{ display: 'flex', gap: '8px' }}>
+                <button style={{ ...btn(color), padding: '6px 12px', fontSize: '12px', opacity: exportLoading ? 0.6 : 1 }} onClick={() => onExport('csv')} disabled={exportLoading}>
+                    <Download size={13} />CSV
+                </button>
+                <button style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', padding: '6px 12px', fontSize: '12px', color: 'var(--c-text)', opacity: exportLoading ? 0.6 : 1 }} onClick={() => onExport('xlsx')} disabled={exportLoading}>
+                    <FileSpreadsheet size={13} />Excel
+                </button>
+            </div>
+        </div>
+    )
+
 export default function InvestSettings() {
     const [importing, setImporting] = useState(false)
-    const [importResult, setImportResult] = useState<{ success: number; failed: number } | null>(null)
-    const [tradeImportResult, setTradeImportResult] = useState<{ success: number; failed: number; skipped: number; duplicated: number } | null>(null)
-    const [cashImportResult, setCashImportResult] = useState<{ success: number; failed: number; duplicated: number } | null>(null)
-    const [divImportResult, setDivImportResult] = useState<{ success: number; failed: number; duplicated: number } | null>(null)
+    const [importResult, setImportResult] = useState<{ success: number; failed: number; error?: string } | null>(null)
+    const [tradeImportResult, setTradeImportResult] = useState<{ success: number; failed: number; skipped: number; duplicated: number; error?: string } | null>(null)
+    const [cashImportResult, setCashImportResult] = useState<{ success: number; failed: number; duplicated: number; error?: string } | null>(null)
+    const [divImportResult, setDivImportResult] = useState<{ success: number; failed: number; duplicated: number; error?: string } | null>(null)
     const [exportLoading, setExportLoading] = useState(false)
     const [fullExportLoading, setFullExportLoading] = useState(false)
     const [trendExportLoading, setTrendExportLoading] = useState(false)
     const [tradeImporting, setTradeImporting] = useState(false)
     const [cashImporting, setCashImporting] = useState(false)
     const [divImporting, setDivImporting] = useState(false)
+    const importLock = useRef(false)
+    const importBusy = importing || tradeImporting || cashImporting || divImporting
     const [msg, setMsg] = useState('')
 
     // ── JSON 完整備份／還原（2-4）──────────────────────────────────────────
     const [jsonExportLoading, setJsonExportLoading] = useState(false)
-    const [restorePreview, setRestorePreview] = useState<FullBackup | null>(null)
+    const [restorePreview, setRestorePreview] = useState<{ backup: FullBackup; diff: RestorePreview } | null>(null)
+    const [restoreReading, setRestoreReading] = useState(false)
+    const restoreRequest = useRef(0)
+    useEffect(() => () => { restoreRequest.current++ }, [])
     const [restoreUidMismatch, setRestoreUidMismatch] = useState(false)
     const [restoring, setRestoring] = useState(false)
     const [restoreProgress, setRestoreProgress] = useState(0)
@@ -187,296 +217,358 @@ export default function InvestSettings() {
     }
 
     // ── 匯入股票字典（Excel）──────────────────────────────────────────────
-    const handleImportDict = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
+    const handleImportDict = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const input = e.target, file = input.files?.[0]
+        if (!file || importLock.current || restoring) return
+        importLock.current = true
         setImporting(true)
         setImportResult(null)
-        const reader = new FileReader()
-        reader.onload = async (evt) => {
-            try {
-                const data = new Uint8Array(evt.target!.result as ArrayBuffer)
-                const workbook = XLSX.read(data, { type: 'array' })
-                const sheet = workbook.Sheets[workbook.SheetNames[0]]
-                const rows = XLSX.utils.sheet_to_json<StockRow>(sheet)
-                let success = 0, failed = 0
-                for (const row of rows) {
-                    const code = String(row['股票代號'] || row['代號'] || row.code || row.Code || '').trim()
-                    const name = String(row['股票名稱'] || row['名稱'] || row.name || row.Name || '').trim()
-                    if (code && name) {
-                        try { await setDoc(userDoc(investDB, 'stockDict', code), { name }); success++ }
-                        catch { failed++ }
-                    } else { failed++ }
+        let success = 0, failed = 0, error: string | undefined
+        try {
+            const session = captureUserSession()
+            const buffer = await file.arrayBuffer()
+            session.assertActive()
+            const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' })
+            const sheet = workbook.Sheets[workbook.SheetNames[0]]
+            if (!sheet) throw new Error('找不到工作表，請確認股票字典檔案格式')
+            const rows = XLSX.utils.sheet_to_json<StockRow>(sheet)
+            for (const row of rows) {
+                session.assertActive()
+                const code = String(row['股票代號'] || row['代號'] || row.code || row.Code || '').trim()
+                const name = String(row['股票名稱'] || row['名稱'] || row.name || row.Name || '').trim()
+                if (!code || !name || code.includes('/') || code === '.' || code === '..') { failed++; continue }
+                try {
+                    await setDoc(session.doc(investDB, 'stockDict', code), { name })
+                } catch (err) {
+                    session.assertActive()
+                    failed++
+                    throw new Error(`股票字典寫入未確認：${err instanceof Error ? err.message : '請核對雲端紀錄後重試'}`)
                 }
-                setImportResult({ success, failed })
-                showMsg(`✅ 匯入完成！成功 ${success} 筆，失敗 ${failed} 筆`)
-            } catch {
-                showMsg('❌ 檔案格式錯誤，請確認欄位名稱為「股票代號」和「股票名稱」')
+                success++
+                session.assertActive()
+                cacheStockName(code, name)
             }
+            showMsg(`✅ 匯入完成！成功 ${success} 筆，失敗 ${failed} 筆`)
+        } catch (err) {
+            error = err instanceof Error ? err.message : '股票字典匯入未完成'
+            showMsg(`❌ 匯入已中止：${error}；已確認成功 ${success} 筆，請核對後重試。`)
+        } finally {
+            cache.invalidatePrefix('stock:')
+            setImportResult({ success, failed, ...(error ? { error } : {}) })
+            importLock.current = false
             setImporting(false)
-            e.target.value = ''
+            input.value = ''
         }
-        reader.readAsArrayBuffer(file)
     }
 
     // ── 匯入買賣紀錄 CSV ──────────────────────────────────────────────────
     const handleImportTradesCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
+        const input = e.target, file = input.files?.[0]
+        if (!file || importLock.current || restoring) return
+        importLock.current = true
         setTradeImporting(true)
         setTradeImportResult(null)
 
-        // ── 重複偵測：key = 日期|代號|類型|價格|股數 ──
-        const [existTradesSnap, dividendsSnap] = await Promise.all([
-            getDocs(userCol(investDB, 'trades')),
-            getDocs(userCol(investDB, 'dividends')),
-        ])
-        const tradeKeys = new Set(existTradesSnap.docs.map(d => {
-            const t = d.data()
-            return `${t.date}|${t.code}|${t.type}|${Number(t.price)}|${Number(t.shares)}|${String(t.brokerAccount || '').trim()}`
-        }))
-        const existingIds = new Set(existTradesSnap.docs.map(d => d.id))
-        let duplicated = 0
-        const validationTrades: TradeRecord[] = existTradesSnap.docs.map(d => ({ id: d.id, ...d.data() } as TradeRecord))
-        const validationDividends: DividendRecord[] = dividendsSnap.docs.map(d => ({ id: d.id, ...d.data() } as DividendRecord))
+        let success = 0, failed = 0, skipped = 0, duplicated = 0, error: string | undefined
+        try {
+            const session = captureUserSession()
+            // ── 重複偵測：key = 日期|代號|類型|價格|股數 ──
+            const [existTradesSnap, dividendsSnap] = await Promise.all([
+                getDocs(session.col(investDB, 'trades')),
+                getDocs(session.col(investDB, 'dividends')),
+            ])
+            const tradeKeys = new Set(existTradesSnap.docs.map(d => {
+                const t = d.data()
+                return `${t.date}|${t.code}|${t.type}|${Number(t.price)}|${Number(t.shares)}|${String(t.brokerAccount || '').trim()}`
+            }))
+            const existingIds = new Set(existTradesSnap.docs.map(d => d.id))
+            const validationTrades: TradeRecord[] = existTradesSnap.docs.map(d => ({ id: d.id, ...d.data() } as TradeRecord))
+            const validationDividends: DividendRecord[] = dividendsSnap.docs.map(d => ({ id: d.id, ...d.data() } as DividendRecord))
 
-        const text = await file.text()
-        const lines = text
-            .replace(/^\uFEFF/, '')
-            .replace(/\r\n/g, '\n')
-            .replace(/\r/g, '\n')
-            .split('\n')
-            .filter(l => l.trim())
+            session.assertActive()
+            const text = await file.text()
+            session.assertActive()
+            const lines = parseCSVRecords(text)
 
-        if (lines.length < 2) {
-            showMsg('❌ CSV 檔案內容為空或格式錯誤')
-            setTradeImporting(false)
-            e.target.value = ''
-            return
-        }
+            if (lines.length < 2) throw new Error('CSV 內容為空或格式錯誤')
 
-        const headers = parseCSVLine(lines[0])
-        let success = 0, failed = 0, skipped = 0
+            const headers = lines[0].map(header => header.trim())
 
-        const importBaseTime = Date.now()
-        const importRows = orderTradeImportRows(lines.slice(1).map((line, index) => {
-            const cols = parseCSVLine(line)
-            return { row: Object.fromEntries(headers.map((h, idx) => [h, cols[idx] || ''])), sourceIndex: index + 1 }
-        }))
-        for (const { row, sourceIndex: i } of importRows) {
+            const importBaseTime = Date.now()
+            const importRows = orderTradeImportRows(lines.slice(1).map((line, index) => {
+                const cols = line
+                return { row: Object.fromEntries(headers.map((h, idx) => [h, cols[idx] || ''])), sourceIndex: index + 1 }
+            }))
+            for (const { row, sourceIndex: i } of importRows) {
+                session.assertActive()
 
-            const date = row['日期'] || ''
-            const typeStr = row['類型'] || ''
-            const code = (row['代號'] || row['股票代號'] || '').replace('.TW', '').replace('.tw', '').trim()
-            const name = (row['名稱'] || row['股票名稱'] || '').trim()
-            const price = toNum(row['價格'] || row['價格/金額'] || '')
-            const shares = toInt(row['股數'])
-            const note = row['備註'] || row['備註/筆記'] || ''
-            const sourceId = (row['Firestore ID'] || '').trim()
+                const date = row['日期'] || ''
+                const typeStr = row['類型'] || ''
+                const code = (row['代號'] || row['股票代號'] || '').replace('.TW', '').replace('.tw', '').trim()
+                const name = (row['名稱'] || row['股票名稱'] || '').trim()
+                const price = toNum(row['價格'] || row['價格/金額'] || '')
+                const shares = toInt(row['股數'])
+                const note = row['備註'] || row['備註/筆記'] || ''
+                const sourceId = (row['Firestore ID'] || '').trim()
 
-            if (!date || !typeStr) { skipped++; continue }
-            const validTypes = ['買入', '賣出', '買進', '現貨買入', '現貨賣出', '融資買入', '融資賣出']
-            if (!validTypes.includes(typeStr)) { skipped++; continue }
-            if (!code || !price || !shares) { failed++; continue }
+                if (sourceId.includes('/') || sourceId === '.' || sourceId === '..') { failed++; continue }
+                if (!date || !typeStr) { skipped++; continue }
+                const validTypes = ['買入', '賣出', '買進', '現貨買入', '現貨賣出', '融資買入', '融資賣出']
+                if (!validTypes.includes(typeStr)) { skipped++; continue }
+                if (!code || !price || !shares) { failed++; continue }
 
-            const tradeType: 'buy' | 'sell' = (typeStr === '買入' || typeStr === '買進' || typeStr === '現貨買入' || typeStr === '融資買入') ? 'buy' : 'sell'
-            const tradeKey = `${date}|${code}|${tradeType}|${Number(price)}|${Number(shares)}|${(row['券商帳戶'] || '').trim()}`
-            if (!sourceId && tradeKeys.has(tradeKey)) { duplicated++; continue }
-            if (sourceId && existingIds.has(sourceId)) { duplicated++; continue }
-            const isMargin = typeStr === '融資買入' || typeStr === '融資賣出'
-            const marginRatio = isMargin
-                ? (row['融資成數'] !== undefined && row['融資成數'] !== '' ? toNum(row['融資成數']) || 0.6 : 0.6)
-                : 0
-            const marginRepay = isMargin && tradeType === 'sell'
-                ? (row['融資償還金額'] !== undefined && row['融資償還金額'] !== '' ? toNum(row['融資償還金額']) : 0)
-                : 0
-            const marginPrincipal = isMargin && tradeType === 'sell' ? toNum(row['融資本金'] || '') || 0 : 0
-            const marginInterest = isMargin && tradeType === 'sell' ? toNum(row['融資利息'] || '') || 0 : 0
-            const rawInterestRate = toNum(row['融資年利率 (%)'] || '')
-            const marginInterestRate = isMargin
-                ? (rawInterestRate && rawInterestRate > 1 ? rawInterestRate / 100 : rawInterestRate || DEFAULT_MARGIN_INTEREST_RATE)
-                : 0
+                const tradeType: 'buy' | 'sell' = (typeStr === '買入' || typeStr === '買進' || typeStr === '現貨買入' || typeStr === '融資買入') ? 'buy' : 'sell'
+                const tradeKey = `${date}|${code}|${tradeType}|${Number(price)}|${Number(shares)}|${(row['券商帳戶'] || '').trim()}`
+                if (!sourceId && tradeKeys.has(tradeKey)) { duplicated++; continue }
+                if (sourceId && existingIds.has(sourceId)) { duplicated++; continue }
+                const isMargin = typeStr === '融資買入' || typeStr === '融資賣出'
+                const marginRatio = isMargin
+                    ? (row['融資成數'] !== undefined && row['融資成數'] !== '' ? toNum(row['融資成數']) || 0.6 : 0.6)
+                    : 0
+                const marginRepay = isMargin && tradeType === 'sell'
+                    ? (row['融資償還金額'] !== undefined && row['融資償還金額'] !== '' ? toNum(row['融資償還金額']) : 0)
+                    : 0
+                const marginPrincipal = isMargin && tradeType === 'sell' ? toNum(row['融資本金'] || '') || 0 : 0
+                const marginInterest = isMargin && tradeType === 'sell' ? toNum(row['融資利息'] || '') || 0 : 0
+                const rawInterestRate = toNum(row['融資年利率 (%)'] || '')
+                const marginInterestRate = isMargin
+                    ? (rawInterestRate && rawInterestRate > 1 ? rawInterestRate / 100 : rawInterestRate || DEFAULT_MARGIN_INTEREST_RATE)
+                    : 0
 
-            const feeRaw = row['手續費'] !== undefined && row['手續費'] !== '' ? toNum(row['手續費']) : null
-            const taxRaw = row['交易稅'] !== undefined && row['交易稅'] !== '' ? toNum(row['交易稅']) : null
-            const fee = feeRaw !== null ? feeRaw : calcFee(price, shares)
-            const tax = taxRaw !== null ? taxRaw : (tradeType === 'sell' ? calcTax(price, shares, code) : 0)
-            const totalRaw = row['收付金額'] !== undefined && row['收付金額'] !== '' ? toNum(row['收付金額']) : null
-            const total = totalRaw !== null ? totalRaw
-                : calcTradeTotal({ type: tradeType, price, shares, fee, tax, isMargin, marginRatio, marginRepay })
+                const feeRaw = row['手續費'] !== undefined && row['手續費'] !== '' ? toNum(row['手續費']) : null
+                const taxRaw = row['交易稅'] !== undefined && row['交易稅'] !== '' ? toNum(row['交易稅']) : null
+                const fee = feeRaw !== null ? feeRaw : calcFee(price, shares)
+                const tax = taxRaw !== null ? taxRaw : (tradeType === 'sell' ? calcTax(price, shares, code, date) : 0)
+                const totalRaw = row['收付金額'] !== undefined && row['收付金額'] !== '' ? toNum(row['收付金額']) : null
+                const total = totalRaw !== null ? totalRaw
+                    : calcTradeTotal({ type: tradeType, price, shares, fee, tax, isMargin, marginRatio, marginRepay })
 
-            const createdAt = (row['建立時間'] || '').trim() || new Date(importBaseTime + i).toISOString()
-            const importedSequence = toNum(row['同日順序'] || '')
-            const sequence = typeof importedSequence === 'number' && Number.isFinite(importedSequence) ? importedSequence : i
-            let dayTradeFields: ReturnType<typeof importDayTradeFields>
-            try { dayTradeFields = importDayTradeFields(row) } catch { failed++; continue }
-            const candidate: TradeRecord = {
-                ...dayTradeFields,
-                id: sourceId || `__settings_csv_${i}`, date, type: tradeType, code, name, price, shares, fee, tax, total, note,
-                isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay,
-                marginPrincipal, marginInterest, marginInterestRate, marginRepayManual: Boolean(marginRepay), createdAt, sequence,
-            }
-            if (!validateTradeForWrite(candidate).valid) {
-                failed++
-                continue
-            }
-            if (tradeType === 'sell' && !candidate.dayTradePending && shares > calcSharesBeforeTrade(candidate, validationTrades, validationDividends)) {
-                failed++
-                continue
-            }
-
-            const existingMatchIssues = new Set(analyzeDayTrades(validationTrades, false).issues.map(issue => issue.trade.id))
-            if (analyzeDayTrades([...validationTrades, candidate], false).issues.some(issue => issue.trade === candidate || !existingMatchIssues.has(issue.trade.id))) { failed++; continue }
-
-            try {
-                const payload = {
+                const createdAt = (row['建立時間'] || '').trim() || new Date(importBaseTime + i).toISOString()
+                const importedSequence = toNum(row['同日順序'] || '')
+                const sequence = typeof importedSequence === 'number' && Number.isFinite(importedSequence) ? importedSequence : i
+                let dayTradeFields: ReturnType<typeof importDayTradeFields>
+                try { dayTradeFields = importDayTradeFields(row) } catch { failed++; continue }
+                const candidate: TradeRecord = {
                     ...dayTradeFields,
-                    date, type: tradeType, code, name, price, shares, fee, tax, total, note,
+                    id: sourceId || `__settings_csv_${i}`, date, type: tradeType, code, name, price, shares, fee, tax, total, note,
                     isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay,
                     marginPrincipal, marginInterest, marginInterestRate, marginRepayManual: Boolean(marginRepay), createdAt, sequence,
                 }
-                let importedId = sourceId
-                if (sourceId) {
-                    await setDoc(userDoc(investDB, 'trades', sourceId), payload)
-                    existingIds.add(sourceId)
-                } else {
-                    const docRef = await addDoc(userCol(investDB, 'trades'), payload)
-                    importedId = docRef.id
+                if (!validateTradeForWrite(candidate).valid) {
+                    failed++
+                    continue
                 }
-                validationTrades.push({ ...candidate, id: importedId })
-                tradeKeys.add(tradeKey)
-                if (name && code) await setDoc(userDoc(investDB, 'stockDict', code), { name })
-                success++
-            } catch { failed++ }
-        }
+                if (tradeType === 'sell' && !candidate.dayTradePending && shares > calcSharesBeforeTrade(candidate, validationTrades, validationDividends)) {
+                    failed++
+                    continue
+                }
 
-        invalidateTrades()   // ✅ 1-1：匯入寫入後清快取
-        setTradeImportResult({ success, failed, skipped, duplicated })
-        showMsg(`✅ 買賣紀錄匯入完成！成功 ${success} 筆，失敗 ${failed} 筆，略過 ${skipped} 筆，重複略過 ${duplicated} 筆`)
-        setTradeImporting(false)
-        e.target.value = ''
+                const existingMatchIssues = new Set(analyzeDayTrades(validationTrades, false).issues.map(issue => issue.trade.id))
+                if (analyzeDayTrades([...validationTrades, candidate], false).issues.some(issue => issue.trade === candidate || !existingMatchIssues.has(issue.trade.id))) { failed++; continue }
+
+                let tradeWritten = false
+                try {
+                    session.assertActive()
+                    const payload = {
+                        ...dayTradeFields,
+                        date, type: tradeType, code, name, price, shares, fee, tax, total, note,
+                        isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay,
+                        marginPrincipal, marginInterest, marginInterestRate, marginRepayManual: Boolean(marginRepay), createdAt, sequence,
+                    }
+                    const importedId = sourceId || doc(session.col(investDB, 'trades')).id
+                    await commitLedgerWrites([{ collection: 'trades', id: importedId, data: payload, mode: 'create' }], session)
+                    existingIds.add(importedId)
+                    tradeWritten = true
+                    success++
+                    session.assertActive()
+                    validationTrades.push({ ...candidate, id: importedId })
+                    tradeKeys.add(tradeKey)
+                    if (name && code) {
+                        await setDoc(session.doc(investDB, 'stockDict', code), { name })
+                        session.assertActive()
+                        cacheStockName(code, name)
+                    }
+                } catch (err) {
+                    session.assertActive()
+                    if (!tradeWritten) failed++
+                    throw new Error(`${tradeWritten ? '交易已匯入，但股票名稱更新未完成' : '交易寫入未確認'}：${err instanceof Error ? err.message : '請核對雲端紀錄後重試'}`)
+                }
+            }
+
+            session.assertActive()
+            showMsg(`✅ 買賣紀錄匯入完成！成功 ${success} 筆，失敗 ${failed} 筆，略過 ${skipped} 筆，重複略過 ${duplicated} 筆`)
+        } catch (err) {
+            error = err instanceof Error ? err.message : '匯入未完成'
+            showMsg(`❌ 買賣紀錄匯入已中止：${error}；已確認成功 ${success} 筆，請核對後重試。`)
+        } finally {
+            invalidateTrades()
+            cache.invalidatePrefix('stock:')
+            setTradeImportResult({ success, failed, skipped, duplicated, ...(error ? { error } : {}) })
+            importLock.current = false
+            setTradeImporting(false)
+            input.value = ''
+        }
     }
 
     // ── 匯入出入金 CSV ────────────────────────────────────────────────────
     const handleImportCashCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
+        const input = e.target, file = input.files?.[0]
+        if (!file || importLock.current || restoring) return
+        importLock.current = true
         setCashImporting(true)
         setCashImportResult(null)
 
-        // ── 重複偵測：key = 日期|類型|金額|備註 ──
-        const existCashSnap = await getDocs(userCol(investDB, 'cashflow'))
-        const cashKeys = new Set(existCashSnap.docs.map(d => {
-            const c = d.data()
-            return `${c.date}|${c.type}|${Number(c.amount)}|${c.note || ''}`
-        }))
-        let duplicated = 0
+        let success = 0, failed = 0, duplicated = 0, error: string | undefined
+        try {
+            const session = captureUserSession()
+            // ── 重複偵測：key = 日期|類型|金額|備註 ──
+            const existCashSnap = await getDocs(session.col(investDB, 'cashflow'))
+            const cashKeys = new Set(existCashSnap.docs.map(d => {
+                const c = d.data()
+                return `${c.date}|${c.type}|${Number(c.amount)}|${c.note || ''}`
+            }))
 
-        const text = await file.text()
-        const lines = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim())
+            session.assertActive()
+            const text = await file.text()
+            session.assertActive()
+            const lines = parseCSVRecords(text)
 
-        if (lines.length < 2) {
-            showMsg('❌ CSV 內容為空或格式錯誤')
+            if (lines.length < 2) throw new Error('CSV 內容為空或格式錯誤')
+
+            const headers = lines[0].map(header => header.trim())
+
+            for (let i = 1; i < lines.length; i++) {
+                session.assertActive()
+                const cols = lines[i]
+                const row: Record<string, string> = {}
+                headers.forEach((h, idx) => { row[h] = cols[idx] || '' })
+
+                const date = row['日期'] || ''
+                const typeStr = row['類型'] || ''
+                const amount = toNum(row['金額'] || row['金額/收付'] || '')
+                const note = row['備註'] || ''
+
+                if (!date || !typeStr || !amount) { failed++; continue }
+
+                const cashType = typeStr === '入金' || typeStr === 'in' ? 'in' : typeStr === '出金' || typeStr === 'out' ? 'out' : null
+                if (!cashType) { failed++; continue }
+                if (!validateCashflowForWrite({ date, type: cashType, amount }).valid) { failed++; continue }
+
+                const cashKey = `${date}|${cashType}|${Number(amount)}|${note}`
+                if (cashKeys.has(cashKey)) { duplicated++; continue }
+
+                try {
+                    session.assertActive()
+                    await addDoc(session.col(investDB, 'cashflow'), { date, type: cashType, amount, note })
+                    success++
+                    session.assertActive()
+                    cashKeys.add(cashKey)
+                } catch (err) {
+                    session.assertActive()
+                    failed++
+                    throw new Error(`出入金寫入未確認：${err instanceof Error ? err.message : '請核對雲端紀錄後重試'}`)
+                }
+            }
+
+            session.assertActive()
+            showMsg(`✅ 出入金匯入完成！成功 ${success} 筆，失敗 ${failed} 筆，重複略過 ${duplicated} 筆`)
+        } catch (err) {
+            error = err instanceof Error ? err.message : '匯入未完成'
+            showMsg(`❌ 出入金匯入已中止：${error}；已確認成功 ${success} 筆，請核對後重試。`)
+        } finally {
+            invalidateCashflow()
+            cache.invalidatePrefix('stock:')
+            setCashImportResult({ success, failed, duplicated, ...(error ? { error } : {}) })
+            importLock.current = false
             setCashImporting(false)
-            e.target.value = ''
-            return
+            input.value = ''
         }
-
-        const headers = parseCSVLine(lines[0])
-        let success = 0, failed = 0
-
-        for (let i = 1; i < lines.length; i++) {
-            const cols = parseCSVLine(lines[i])
-            const row: Record<string, string> = {}
-            headers.forEach((h, idx) => { row[h] = cols[idx] || '' })
-
-            const date = row['日期'] || ''
-            const typeStr = row['類型'] || ''
-            const amount = toNum(row['金額'] || row['金額/收付'] || '')
-            const note = row['備註'] || ''
-
-            if (!date || !typeStr || !amount) { failed++; continue }
-
-            const cashType = typeStr === '入金' || typeStr === 'in' ? 'in' : typeStr === '出金' || typeStr === 'out' ? 'out' : null
-            if (!cashType) { failed++; continue }
-            if (!validateCashflowForWrite({ date, type: cashType, amount }).valid) { failed++; continue }
-
-            const cashKey = `${date}|${cashType}|${Number(amount)}|${note}`
-            if (cashKeys.has(cashKey)) { duplicated++; continue }
-            cashKeys.add(cashKey)
-
-            try {
-                await addDoc(userCol(investDB, 'cashflow'), { date, type: cashType, amount, note })
-                success++
-            } catch { failed++ }
-        }
-
-        invalidateCashflow()   // ✅ 1-1：匯入寫入後清快取
-        setCashImportResult({ success, failed, duplicated })
-        showMsg(`✅ 出入金匯入完成！成功 ${success} 筆，失敗 ${failed} 筆，重複略過 ${duplicated} 筆`)
-        setCashImporting(false)
-        e.target.value = ''
     }
 
     // ── 匯入除權息 CSV ────────────────────────────────────────────────────
     const handleImportDividendCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
+        const input = e.target, file = input.files?.[0]
+        if (!file || importLock.current || restoring) return
+        importLock.current = true
         setDivImporting(true)
         setDivImportResult(null)
 
-        // ── 重複偵測：key = 日期|代號|現金股利|股票股利 ──
-        const existDivSnap = await getDocs(userCol(investDB, 'dividends'))
-        const divKeys = new Set(existDivSnap.docs.map(d => {
-            const r = d.data()
-            return `${r.date}|${r.code}|${Number(r.cashDividend) || 0}|${Number(r.stockDividend) || 0}`
-        }))
-        let duplicated = 0
+        let success = 0, failed = 0, duplicated = 0, error: string | undefined
+        try {
+            const session = captureUserSession()
+            // ── 重複偵測：key = 日期|代號|現金股利|股票股利 ──
+            const existDivSnap = await getDocs(session.col(investDB, 'dividends'))
+            const divKeys = new Set(existDivSnap.docs.map(d => {
+                const r = d.data()
+                return `${r.date}|${r.code}|${Number(r.cashDividend) || 0}|${Number(r.stockDividend) || 0}`
+            }))
 
-        const text = await file.text()
-        const lines = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim())
+            session.assertActive()
+            const text = await file.text()
+            session.assertActive()
+            const lines = parseCSVRecords(text)
 
-        if (lines.length < 2) {
-            showMsg('❌ CSV 內容為空或格式錯誤')
+            if (lines.length < 2) throw new Error('CSV 內容為空或格式錯誤')
+
+            const headers = lines[0].map(header => header.trim())
+
+            for (let i = 1; i < lines.length; i++) {
+                session.assertActive()
+                const cols = lines[i]
+                const row: Record<string, string> = {}
+                headers.forEach((h, idx) => { row[h] = cols[idx] || '' })
+
+                const date = row['日期'] || ''
+                const code = (row['代號'] || row['股票代號'] || '').trim()
+                const name = (row['名稱'] || row['股票名稱'] || '').trim()
+                const cashDividend = toNum(row['現金股利'] || row['現金'] || '')
+                const stockDividend = toNum(row['股票股利'] || row['股票'] || '')
+                const note = row['備註'] || ''
+
+                if (!date || !code) { failed++; continue }
+                const status = row['股利狀態'] || ''
+                const cashPaymentDate = row['現金入帳日期'] ? row['現金入帳日期'].trim() : ''
+                const stockDistributionDate = row['股票配發日期'] ? row['股票配發日期'].trim() : ''
+                const classification = row['配股融資股數']?.trim() ? { stockDividendMarginShares: Number(row['配股融資股數'].replaceAll(',', '')) } : {}
+                const timing = { ...classification, ...(status ? { status } : {}), cashPaymentDate, stockDistributionDate }
+                if (!validateDividendForWrite({ date, code, name, cashDividend, stockDividend, ...timing }).valid) { failed++; continue }
+
+                const divKey = `${date}|${code}|${Number(cashDividend) || 0}|${Number(stockDividend) || 0}`
+                if (divKeys.has(divKey)) { duplicated++; continue }
+
+                let dividendWritten = false
+                try {
+                    session.assertActive()
+                    await commitLedgerWrites([{ collection: 'dividends', id: doc(session.col(investDB, 'dividends')).id, data: { date, code, name, cashDividend, stockDividend, note, ...timing }, mode: 'create' }], session)
+                    dividendWritten = true
+                    success++
+                    session.assertActive()
+                    divKeys.add(divKey)
+                    if (name && code) {
+                        await setDoc(session.doc(investDB, 'stockDict', code), { name })
+                        session.assertActive()
+                        cacheStockName(code, name)
+                    }
+                } catch (err) {
+                    session.assertActive()
+                    if (!dividendWritten) failed++
+                    throw new Error(`${dividendWritten ? '股利已匯入，但股票名稱更新未完成' : '股利寫入未確認'}：${err instanceof Error ? err.message : '請核對雲端紀錄後重試'}`)
+                }
+            }
+
+            session.assertActive()
+            showMsg(`✅ 除權息匯入完成！成功 ${success} 筆，失敗 ${failed} 筆，重複略過 ${duplicated} 筆`)
+        } catch (err) {
+            error = err instanceof Error ? err.message : '匯入未完成'
+            showMsg(`❌ 除權息匯入已中止：${error}；已確認成功 ${success} 筆，請核對後重試。`)
+        } finally {
+            invalidateDividends()
+            cache.invalidatePrefix('stock:')
+            setDivImportResult({ success, failed, duplicated, ...(error ? { error } : {}) })
+            importLock.current = false
             setDivImporting(false)
-            e.target.value = ''
-            return
+            input.value = ''
         }
-
-        const headers = parseCSVLine(lines[0])
-        let success = 0, failed = 0
-
-        for (let i = 1; i < lines.length; i++) {
-            const cols = parseCSVLine(lines[i])
-            const row: Record<string, string> = {}
-            headers.forEach((h, idx) => { row[h] = cols[idx] || '' })
-
-            const date = row['日期'] || ''
-            const code = (row['代號'] || row['股票代號'] || '').trim()
-            const name = (row['名稱'] || row['股票名稱'] || '').trim()
-            const cashDividend = toNum(row['現金股利'] || row['現金'] || '')
-            const stockDividend = toNum(row['股票股利'] || row['股票'] || '')
-            const note = row['備註'] || ''
-
-            if (!date || !code) { failed++; continue }
-            if (!validateDividendForWrite({ date, code, name, cashDividend, stockDividend }).valid) { failed++; continue }
-
-            const divKey = `${date}|${code}|${Number(cashDividend) || 0}|${Number(stockDividend) || 0}`
-            if (divKeys.has(divKey)) { duplicated++; continue }
-            divKeys.add(divKey)
-
-            try {
-                await addDoc(userCol(investDB, 'dividends'), { date, code, name, cashDividend, stockDividend, note })
-                if (name && code) await setDoc(userDoc(investDB, 'stockDict', code), { name })
-                success++
-            } catch { failed++ }
-        }
-
-        invalidateDividends()   // ✅ 1-1：匯入寫入後清快取
-        setDivImportResult({ success, failed, duplicated })
-        showMsg(`✅ 除權息匯入完成！成功 ${success} 筆，失敗 ${failed} 筆，重複略過 ${duplicated} 筆`)
-        setDivImporting(false)
-        e.target.value = ''
     }
 
     // ── 一鍵匯出全部資料（多工作表 Excel）──────────────────────────────
@@ -543,6 +635,10 @@ export default function InvestSettings() {
                         '名稱': r.name,
                         '現金股利': r.cashDividend,
                         '股票股利': r.stockDividend,
+                        '配股融資股數': r.stockDividendMarginShares ?? '',
+                        '股利狀態': r.status || '',
+                        '現金入帳日期': r.cashPaymentDate || '',
+                        '股票配發日期': r.stockDistributionDate || '',
                         '備註': r.note ?? '',
                     }
                 })
@@ -681,6 +777,10 @@ export default function InvestSettings() {
                 '名稱': r.name,
                 '現金股利': r.cashDividend,
                 '股票股利': r.stockDividend,
+                        '配股融資股數': r.stockDividendMarginShares ?? '',
+                        '股利狀態': r.status || '',
+                        '現金入帳日期': r.cashPaymentDate || '',
+                        '股票配發日期': r.stockDistributionDate || '',
                 '備註': r.note ?? '',
             }))
             exportRows(rows, '除權息紀錄', `除權息紀錄${rangeSuffix()}`, format, [12, 8, 12, 10, 10, 20])
@@ -736,35 +836,39 @@ export default function InvestSettings() {
         setJsonExportLoading(false)
     }
 
-    const handlePickRestoreFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
-        const reader = new FileReader()
-        reader.onload = (evt) => {
-            try {
-                const backup = parseBackup(String(evt.target?.result ?? ''))
-                let mismatch = false
-                try { mismatch = !!backup.uid && backup.uid !== getUID() } catch { /* 未登入時不判斷 */ }
-                setRestoreUidMismatch(mismatch)
-                setRestoreProgress(0)
-                setRestorePreview(backup)   // 顯示預覽面板，等使用者按「確認還原」
-            } catch (err) {
-                showMsg(`❌ ${err instanceof Error ? err.message : '備份檔讀取失敗'}`)
-            }
-            e.target.value = ''
+    const handlePickRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const input = e.target, file = input.files?.[0]
+        if (!file || restoring || restoreReading) return
+        const request = ++restoreRequest.current
+        setRestoreReading(true)
+        setRestorePreview(null)
+        try {
+            const session = captureUserSession()
+            const text = await file.text()
+            session.assertActive()
+            const backup = parseBackup(text)
+            const diff = await previewFullRestore(backup)
+            session.assertActive()
+            if (request !== restoreRequest.current) return
+            setRestoreUidMismatch(!!backup.uid && backup.uid !== diff.uid)
+            setRestoreProgress(0)
+            setRestorePreview({ backup, diff })
+        } catch (err) {
+            if (request === restoreRequest.current) showMsg(`❌ 差異預覽失敗，尚未寫入任何資料：${err instanceof Error ? err.message : '備份檔讀取失敗'}`)
+        } finally {
+            input.value = ''
+            if (request === restoreRequest.current) setRestoreReading(false)
         }
-        reader.onerror = () => { showMsg('❌ 備份檔讀取失敗'); e.target.value = '' }
-        reader.readAsText(file)
     }
 
     const handleConfirmRestore = async () => {
-        if (!restorePreview || restoring) return
+        if (!restorePreview || restoring || importLock.current) return
         setRestoring(true)
         setRestoreProgress(0)
         try {
-            const res = await restoreFullBackup(restorePreview, (done, total) => {
+            const res = await restoreFullBackup(restorePreview.backup, (done, total) => {
                 setRestoreProgress(total > 0 ? Math.round((done / total) * 100) : 100)
-            })
+            }, restorePreview.diff)
             invalidateAllInvestData()
             invalidateAllKmsData()
             cache.clear()
@@ -772,7 +876,9 @@ export default function InvestSettings() {
             setRestorePreview(null)
         } catch (err) {
             console.error('[backup] restore failed:', err)
-            showMsg('❌ 還原中途失敗。已寫入的批次不會回復；備份還原可重複執行，請直接再試一次即可補齊。')
+            const detail = err instanceof Error ? err.message : '請稍後再試'
+            if (detail.startsWith('還原前檢查')) setRestorePreview(null)
+            showMsg(`❌ ${detail}${detail.startsWith('還原前檢查') ? '' : '。已寫入的批次不會回復，請確認帳號與資料後重試。'}`)
         }
         setRestoring(false)
     }
@@ -785,21 +891,6 @@ export default function InvestSettings() {
 
     const today = () => toLocalDateString()
 
-    // 共用小元件：分項匯出列（標籤 + CSV / Excel 兩顆按鈕）
-    const ExportRowItem = ({ label, color, onExport }: { label: string; color: string; onExport: (f: ExportFormat) => void }) => (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '8px 0', borderBottom: '1px solid var(--c-border)' }}>
-            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--c-text)' }}>{label}</span>
-            <div style={{ display: 'flex', gap: '8px' }}>
-                <button style={{ ...btn(color), padding: '6px 12px', fontSize: '12px', opacity: exportLoading ? 0.6 : 1 }} onClick={() => onExport('csv')} disabled={exportLoading}>
-                    <Download size={13} />CSV
-                </button>
-                <button style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', padding: '6px 12px', fontSize: '12px', color: 'var(--c-text)', opacity: exportLoading ? 0.6 : 1 }} onClick={() => onExport('xlsx')} disabled={exportLoading}>
-                    <FileSpreadsheet size={13} />Excel
-                </button>
-            </div>
-        </div>
-    )
-
     const inputStyle: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 10px', color: 'var(--c-text)', fontSize: '13px', outline: 'none', colorScheme: 'dark' }
     const chip = (active: boolean): React.CSSProperties => ({ backgroundColor: active ? 'var(--c-accent)' : 'var(--c-bg)', border: `1px solid ${active ? 'var(--c-accent)' : 'var(--c-border)'}`, borderRadius: '20px', padding: '5px 12px', color: active ? '#fff' : 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' })
 
@@ -807,10 +898,10 @@ export default function InvestSettings() {
     const isThisYearPreset = dateFrom === `${thisYear}-01-01` && dateTo === `${thisYear}-12-31`
 
     return (
-        <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1200px', margin: '0 auto' }}>
-            <div style={{ marginBottom: '24px' }}>
+        <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1200px', margin: '0 auto' }}>
+            <div style={{ marginBottom: '16px' }}>
                 <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>設定與備份</h1>
-                <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>匯入資料、匯出報表與完整備份</p>
+                
             </div>
 
             {msg && (
@@ -824,7 +915,7 @@ export default function InvestSettings() {
                 <User size={15} color="var(--c-muted)" />
                 <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--c-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>帳戶管理</span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '14px', marginBottom: '24px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))', gap: '14px', marginBottom: '24px' }}>
                 <div style={card}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                         <User size={16} color="var(--c-muted)" />
@@ -844,7 +935,7 @@ export default function InvestSettings() {
                 <Upload size={15} color="var(--c-muted)" />
                 <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--c-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>匯入資料</span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '14px', marginBottom: '24px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))', gap: '14px', marginBottom: '24px' }}>
 
                 {/* ① 股票字典 */}
                 <div style={card}>
@@ -856,16 +947,17 @@ export default function InvestSettings() {
                     <p style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
                         需含 <strong style={{ color: '#a78bfa' }}>「股票代號」</strong> 和 <strong style={{ color: '#a78bfa' }}>「股票名稱」</strong> 欄位。匯入後輸入代號自動帶入名稱。
                     </p>
-                    <label style={{ ...btn('#a78bfa'), width: 'fit-content', cursor: 'pointer', opacity: importing ? 0.6 : 1, fontSize: '13px' }}>
+                    <label style={{ ...btn('#a78bfa'), width: 'fit-content', cursor: importBusy || restoring ? 'not-allowed' : 'pointer', opacity: importBusy || restoring ? 0.6 : 1, fontSize: '13px' }}>
                         <Upload size={14} />{importing ? '匯入中...' : '選擇 Excel 匯入'}
-                        <input type="file" accept=".xlsx,.xls" onChange={handleImportDict} disabled={importing} style={{ display: 'none' }} />
+                        <input type="file" aria-label="匯入股票字典" accept=".xlsx,.xls" onChange={handleImportDict} disabled={importBusy || restoring} style={{ display: 'none' }} />
                     </label>
                     {importResult && (
                         <div style={{ marginTop: '10px', padding: '10px 14px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', border: '1px solid var(--c-border)', display: 'flex', gap: '20px' }}>
                             <div><div style={{ fontSize: '11px', color: 'var(--c-muted)' }}>成功</div><div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-positive)' }}>{importResult.success}</div></div>
-                            {importResult.failed > 0 && <div><div style={{ fontSize: '11px', color: 'var(--c-muted)' }}>略過</div><div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-danger)' }}>{importResult.failed}</div></div>}
+                            {importResult.failed > 0 && <div><div style={{ fontSize: '11px', color: 'var(--c-muted)' }}>失敗</div><div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-danger)' }}>{importResult.failed}</div></div>}
                         </div>
                     )}
+                    {importResult && <ImportFailureNotice error={importResult.error} success={importResult.success} />}
                 </div>
 
                 {/* ② 買賣紀錄 */}
@@ -879,9 +971,9 @@ export default function InvestSettings() {
                         <span style={{ color: 'var(--c-accent)' }}>必填：</span>日期、類型（買入/賣出）、代號、名稱、價格、股數<br />
                         <span style={{ color: 'var(--c-muted)' }}>選填：</span>手續費、交易稅、收付金額、備註
                     </div>
-                    <label style={{ ...btn('var(--c-positive)'), width: 'fit-content', cursor: 'pointer', opacity: tradeImporting ? 0.6 : 1, fontSize: '13px' }}>
+                    <label style={{ ...btn('var(--c-positive)'), width: 'fit-content', cursor: importBusy || restoring ? 'not-allowed' : 'pointer', opacity: importBusy || restoring ? 0.6 : 1, fontSize: '13px' }}>
                         <Upload size={14} />{tradeImporting ? '匯入中...' : '選擇 CSV 匯入'}
-                        <input type="file" accept=".csv" onChange={handleImportTradesCSV} disabled={tradeImporting} style={{ display: 'none' }} />
+                        <input type="file" aria-label="匯入買賣紀錄" accept=".csv" onChange={handleImportTradesCSV} disabled={importBusy || restoring} style={{ display: 'none' }} />
                     </label>
                     {tradeImportResult && (
                         <div style={{ marginTop: '10px', padding: '10px 14px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', border: '1px solid var(--c-border)', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
@@ -891,6 +983,7 @@ export default function InvestSettings() {
                             {tradeImportResult.duplicated > 0 && <div><div style={{ fontSize: '11px', color: 'var(--c-muted)' }}>重複略過</div><div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-warning)' }}>{tradeImportResult.duplicated}</div></div>}
                         </div>
                     )}
+                    {tradeImportResult && <ImportFailureNotice error={tradeImportResult.error} success={tradeImportResult.success} />}
                 </div>
 
                 {/* ③ 除權息 */}
@@ -904,9 +997,9 @@ export default function InvestSettings() {
                         <span style={{ color: 'var(--c-accent)' }}>必填：</span>日期、代號<br />
                         <span style={{ color: 'var(--c-muted)' }}>選填：</span>名稱、現金股利、股票股利、備註
                     </div>
-                    <label style={{ ...btn('var(--c-warning)'), width: 'fit-content', cursor: 'pointer', opacity: divImporting ? 0.6 : 1, fontSize: '13px' }}>
+                    <label style={{ ...btn('var(--c-warning)'), width: 'fit-content', cursor: importBusy || restoring ? 'not-allowed' : 'pointer', opacity: importBusy || restoring ? 0.6 : 1, fontSize: '13px' }}>
                         <Upload size={14} />{divImporting ? '匯入中...' : '選擇 CSV 匯入'}
-                        <input type="file" accept=".csv" onChange={handleImportDividendCSV} disabled={divImporting} style={{ display: 'none' }} />
+                        <input type="file" aria-label="匯入除權息" accept=".csv" onChange={handleImportDividendCSV} disabled={importBusy || restoring} style={{ display: 'none' }} />
                     </label>
                     {divImportResult && (
                         <div style={{ marginTop: '10px', padding: '10px 14px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', border: '1px solid var(--c-border)', display: 'flex', gap: '16px' }}>
@@ -915,6 +1008,7 @@ export default function InvestSettings() {
                             {divImportResult.duplicated > 0 && <div><div style={{ fontSize: '11px', color: 'var(--c-muted)' }}>重複略過</div><div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-warning)' }}>{divImportResult.duplicated}</div></div>}
                         </div>
                     )}
+                    {divImportResult && <ImportFailureNotice error={divImportResult.error} success={divImportResult.success} />}
                 </div>
 
                 {/* ④ 出入金 */}
@@ -928,9 +1022,9 @@ export default function InvestSettings() {
                         <span style={{ color: 'var(--c-accent)' }}>必填：</span>日期、類型（入金/出金）、金額<br />
                         <span style={{ color: 'var(--c-muted)' }}>選填：</span>備註
                     </div>
-                    <label style={{ ...btn('var(--c-accent)'), width: 'fit-content', cursor: 'pointer', opacity: cashImporting ? 0.6 : 1, fontSize: '13px' }}>
+                    <label style={{ ...btn('var(--c-accent)'), width: 'fit-content', cursor: importBusy || restoring ? 'not-allowed' : 'pointer', opacity: importBusy || restoring ? 0.6 : 1, fontSize: '13px' }}>
                         <Upload size={14} />{cashImporting ? '匯入中...' : '選擇 CSV 匯入'}
-                        <input type="file" accept=".csv" onChange={handleImportCashCSV} disabled={cashImporting} style={{ display: 'none' }} />
+                        <input type="file" aria-label="匯入出入金" accept=".csv" onChange={handleImportCashCSV} disabled={importBusy || restoring} style={{ display: 'none' }} />
                     </label>
                     {cashImportResult && (
                         <div style={{ marginTop: '10px', padding: '10px 14px', backgroundColor: 'var(--c-bg)', borderRadius: '8px', border: '1px solid var(--c-border)', display: 'flex', gap: '16px' }}>
@@ -939,6 +1033,7 @@ export default function InvestSettings() {
                             {cashImportResult.duplicated > 0 && <div><div style={{ fontSize: '11px', color: 'var(--c-muted)' }}>重複略過</div><div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--c-warning)' }}>{cashImportResult.duplicated}</div></div>}
                         </div>
                     )}
+                    {cashImportResult && <ImportFailureNotice error={cashImportResult.error} success={cashImportResult.success} />}
                 </div>
 
             </div>
@@ -954,7 +1049,7 @@ export default function InvestSettings() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
                     <Calendar size={16} color="var(--c-accent)" />
                     <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>匯出日期區間</span>
-                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>套用於下方所有匯出（含完整備份），留空＝不限</span>
+                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>報表／XLSX 依日期，留空不限；JSON 固定全量</span>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
                     <input type="date" value={dateFrom} max={dateTo || undefined} onChange={e => setDateFrom(e.target.value)} style={inputStyle} />
@@ -973,7 +1068,7 @@ export default function InvestSettings() {
                 )}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '14px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))', gap: '14px' }}>
 
                 {/* 完整備份 */}
                 <div style={{ ...card, border: '1px solid var(--c-accent)', background: 'linear-gradient(135deg, var(--c-sidebar) 0%, var(--c-card) 100%)' }}>
@@ -983,8 +1078,9 @@ export default function InvestSettings() {
                         <span style={{ fontSize: '11px', backgroundColor: 'rgba(79,142,247,0.2)', color: 'var(--c-accent)', padding: '1px 7px', borderRadius: '20px' }}>xlsx 多工作表</span>
                     </div>
                     <p style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '14px', lineHeight: 1.6 }}>
-                        買賣紀錄、出入金、除權息、股票字典全部一次匯出，含 Firestore ID 方便核查錯誤資料。股票字典不受日期區間限制。
+                        匯出交易、出入金、股利與股票字典。
                     </p>
+                    <DisclosureNote summary="XLSX 匯出範圍">含文件 ID，方便核查資料；股票字典不受日期區間限制。</DisclosureNote>
                     <button style={{ ...btn('var(--c-accent)'), opacity: fullExportLoading ? 0.6 : 1, fontSize: '13px' }} onClick={exportAllData} disabled={fullExportLoading}>
                         <FileDown size={14} />{fullExportLoading ? '匯出中...' : '匯出完整備份 (.xlsx)'}
                     </button>
@@ -998,47 +1094,38 @@ export default function InvestSettings() {
                         <span style={{ fontSize: '11px', backgroundColor: 'color-mix(in srgb, var(--c-positive) 15%, transparent)', color: 'var(--c-positive)', padding: '1px 7px', borderRadius: '20px' }}>災難復原</span>
                     </div>
                     <p style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '14px', lineHeight: 1.6 }}>
-                        全系統資料打包成單一 JSON：投資紀錄、族群分類等全部設定、情緒／賣出追蹤、選股、產業地圖、行事曆、任務，以及 <strong style={{ color: 'var(--c-positive)' }}>KMS 筆記與回收桶</strong>。
-                        不受上方日期區間影響、永遠全量匯出。還原以文件 ID 覆蓋（可重複執行、不產生重複資料）。KMS 圖片存於雲端 Storage，不在備份範圍。
+                        備份全系統資料，不受日期限制；附件檔案另存雲端，未包含於 JSON。
                     </p>
+                    <DisclosureNote summary="備份範圍與還原方式">含全系統資料與附件引用，不含附件檔案；同 ID 覆蓋、不重複新增，還原前可確認差異。</DisclosureNote>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <button style={{ ...btn('var(--c-positive)'), fontSize: '13px', opacity: jsonExportLoading ? 0.6 : 1 }} onClick={handleExportJSON} disabled={jsonExportLoading}>
                             <FileDown size={14} />{jsonExportLoading ? '匯出中...' : '匯出 JSON 備份'}
                         </button>
-                        <label style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', color: 'var(--c-text)', cursor: restoring ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: restoring ? 0.6 : 1, width: 'fit-content' }}>
-                            <Upload size={14} />從 JSON 還原
-                            <input type="file" accept=".json,application/json" onChange={handlePickRestoreFile} disabled={restoring} style={{ display: 'none' }} />
+                        <label style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', color: 'var(--c-text)', cursor: restoring || restoreReading ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: restoring || restoreReading ? 0.6 : 1, width: 'fit-content' }}>
+                            <Upload size={14} />{restoreReading ? '比對雲端資料中…' : '從 JSON 還原'}
+                            <input type="file" aria-label="選擇 JSON 備份" accept=".json,application/json" onChange={handlePickRestoreFile} disabled={restoring || restoreReading} style={{ display: 'none' }} />
                         </label>
                     </div>
 
                     {restorePreview && (
-                        <div style={{ marginTop: '14px', border: '1px solid var(--c-warning)', borderRadius: '10px', padding: '14px', backgroundColor: 'color-mix(in srgb, var(--c-warning) 6%, transparent)' }}>
+                        <div style={{ marginTop: '10px', border: '1px solid var(--c-warning)', borderRadius: '10px', padding: '10px', backgroundColor: 'color-mix(in srgb, var(--c-warning) 6%, transparent)' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', color: 'var(--c-warning)', fontSize: '13px', fontWeight: 700 }}>
                                 <AlertTriangle size={14} />還原前確認
                             </div>
                             <div style={{ fontSize: '12px', color: 'var(--c-muted)', lineHeight: 1.7, marginBottom: '10px' }}>
-                                備份時間：{restorePreview.exportedAt ? new Date(restorePreview.exportedAt).toLocaleString('zh-TW') : '未知'}
+                                備份時間：{restorePreview.backup.exportedAt ? new Date(restorePreview.backup.exportedAt).toLocaleString('zh-TW') : '未知'}
                                 {restoreUidMismatch && (
                                     <span style={{ display: 'block', color: 'var(--c-warning)', fontWeight: 600 }}>
                                         ⚠ 此備份來自其他帳號，確認後將還原到「目前登入」的帳號。
                                     </span>
                                 )}
                             </div>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
-                                {backupSummary(restorePreview).map(s => (
-                                    <span key={s.label} style={{ fontSize: '11px', backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '20px', padding: '3px 10px', color: 'var(--c-text)' }}>
-                                        {s.label} {s.count}
-                                    </span>
-                                ))}
-                            </div>
-                            <div style={{ fontSize: '11px', color: 'var(--c-muted)', lineHeight: 1.7, marginBottom: '12px' }}>
-                                還原規則：同 ID 文件以備份內容覆蓋、備份外的既有資料保留不動（不會刪除任何資料）。
-                            </div>
+                            <RestoreDifferencePreview preview={restorePreview.diff} />
                             <div style={{ display: 'flex', gap: '8px' }}>
-                                <button style={{ ...btn('var(--c-warning)'), fontSize: '13px', opacity: restoring ? 0.6 : 1 }} onClick={handleConfirmRestore} disabled={restoring}>
+                                <button style={{ ...btn('var(--c-warning)'), minHeight: 44, fontSize: '13px', opacity: restoring || importBusy ? 0.6 : 1 }} onClick={handleConfirmRestore} disabled={restoring || importBusy || !restorePreview.diff.collections.some(row => row.added + row.overwritten + row.unchanged > 0)}>
                                     {restoring ? `還原中… ${restoreProgress}%` : '確認還原'}
                                 </button>
-                                <button style={{ ...btn('var(--c-card)'), border: '1px solid var(--c-border)', color: 'var(--c-text)', fontSize: '13px', opacity: restoring ? 0.6 : 1 }} onClick={handleCancelRestore} disabled={restoring}>
+                                <button style={{ ...btn('var(--c-card)'), minHeight: 44, border: '1px solid var(--c-border)', color: 'var(--c-text)', fontSize: '13px', opacity: restoring ? 0.6 : 1 }} onClick={handleCancelRestore} disabled={restoring}>
                                     取消
                                 </button>
                             </div>
@@ -1055,10 +1142,10 @@ export default function InvestSettings() {
                     </div>
                     <p style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>各類紀錄可單獨匯出，中文字符完整顯示。</p>
                     <div>
-                        <ExportRowItem label="買賣紀錄" color="var(--c-accent)" onExport={exportTrades} />
-                        <ExportRowItem label="出入金紀錄" color="var(--c-positive)" onExport={exportCashFlow} />
+                        <ExportRowItem exportLoading={exportLoading} label="買賣紀錄" color="var(--c-accent)" onExport={exportTrades} />
+                        <ExportRowItem exportLoading={exportLoading} label="出入金紀錄" color="var(--c-positive)" onExport={exportCashFlow} />
                         <div style={{ borderBottom: 'none' }}>
-                            <ExportRowItem label="除權息紀錄" color="var(--c-warning)" onExport={exportDividends} />
+                            <ExportRowItem exportLoading={exportLoading} label="除權息紀錄" color="var(--c-warning)" onExport={exportDividends} />
                         </div>
                     </div>
                 </div>
@@ -1071,7 +1158,7 @@ export default function InvestSettings() {
                         <span style={{ fontSize: '11px', backgroundColor: 'color-mix(in srgb, var(--c-positive) 15%, transparent)', color: 'var(--c-positive)', padding: '1px 7px', borderRadius: '20px' }}>CSV / xlsx</span>
                     </div>
                     <p style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '14px', lineHeight: 1.6 }}>
-                        匯出資產快照紀錄（日期、總資產、股票市值、現金），完整備份也已包含此資料。
+                        匯出資產快照；JSON 備份亦已包含。
                     </p>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <button style={{ ...btn('var(--c-positive)'), fontSize: '13px', opacity: trendExportLoading ? 0.6 : 1 }} onClick={() => exportTrend('csv')} disabled={trendExportLoading}>

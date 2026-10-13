@@ -13,8 +13,9 @@
 export const card: React.CSSProperties = {
     backgroundColor: 'var(--c-sidebar)',
     border: '1px solid var(--c-border)',
+    borderColor: 'var(--c-border)',
     borderRadius: '12px',
-    padding: '20px',
+    padding: 'var(--ui-card-padding, 20px)',
 }
 
 /** 標準輸入框（滿版寬度） */
@@ -38,16 +39,25 @@ export const lbl: React.CSSProperties = {
     marginBottom: '4px',
 }
 
+/** Filled actions share the original semantic palette through common button tokens. */
+export const buttonFill = (color: string): string => {
+    const match = color.match(/^var\(--c-(accent|positive|danger|warning|purple)\)$/)
+    return match ? `var(--c-button-${match[1]})` : color
+}
+
 /** 標準按鈕（傳入背景色） */
 export const btn = (color: string): React.CSSProperties => ({
-    backgroundColor: color,
+    backgroundColor: buttonFill(color),
     border: 'none',
     borderRadius: '8px',
-    padding: '8px 16px',
-    color: '#fff',
-    fontSize: '14px',
+    padding: '8px 12px',
+    minHeight: '36px',
+    color: /border|transparent|sidebar|card/.test(color) ? 'var(--c-text)' : /^var\(--c-(accent|positive|danger|warning|purple)\)$/.test(color) ? 'var(--c-on-accent)' : '#fff',
+    fontSize: '13px',
     cursor: 'pointer',
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: 1.4,
     gap: '6px',
 })

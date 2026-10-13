@@ -25,6 +25,7 @@ import { getDocs, query, orderBy } from 'firebase/firestore'
 import { investDB } from './firebase'
 import { userCol, getUID } from './userDB'
 import { cache } from './cache'
+import { alignSnapshotCashflows, type CashflowBasisSnapshot } from './performanceReturns'
 
 /** 快取存活秒數：在此秒數內重複進入各頁面不會重打 Firestore */
 const TTL_SECONDS = 90
@@ -65,8 +66,15 @@ export function fetchCashflow<T = Record<string, unknown>>(order: SortOrder = 'a
 }
 
 /** Reads asset history through the same cache and request-deduplication path. */
-export function fetchAssetSnapshots<T = Record<string, unknown>>(order: SortOrder = 'asc'): Promise<T[]> {
-    return fetchCollection<T>('assetSnapshots', order)
+export async function fetchAssetSnapshots<T = Record<string, unknown>>(order: SortOrder = 'asc'): Promise<T[]> {
+    const uid = getUID()
+    const [snapshots, flows] = await Promise.all([
+        fetchCollection<CashflowBasisSnapshot>('assetSnapshots', order),
+        fetchCashflow<{ date: string; type: string; amount: number }>(),
+    ])
+    if (getUID() !== uid) throw new Error('帳號已變更，請重新讀取快照')
+    if (flows.some(flow => !['in', 'out'].includes(flow.type) || !Number.isFinite(flow.amount) || flow.amount < 0)) throw new Error('出入金資料無效')
+    return alignSnapshotCashflows(snapshots, flows.map(flow => ({ date: flow.date, amount: flow.type === 'in' ? flow.amount : -flow.amount }))) as unknown as T[]
 }
 
 /** 買賣紀錄有任何寫入（新增/編輯/刪除/匯入）後呼叫 */

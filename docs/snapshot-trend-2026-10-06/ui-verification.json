@@ -1,0 +1,30 @@
+[
+  {
+    "size": "desktop",
+    "bodyOverflow": false,
+    "closingControls": 0,
+    "closingLabels": false,
+    "formFields": 5
+  },
+  {
+    "size": "portrait",
+    "bodyOverflow": false,
+    "closingControls": 0,
+    "closingLabels": false,
+    "formFields": 5
+  },
+  {
+    "size": "landscape",
+    "bodyOverflow": false,
+    "closingControls": 0,
+    "closingLabels": false,
+    "formFields": 5
+  },
+  {
+    "size": "narrow",
+    "bodyOverflow": false,
+    "closingControls": 0,
+    "closingLabels": false,
+    "formFields": 5
+  }
+]

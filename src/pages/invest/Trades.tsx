@@ -1,3 +1,6 @@
+import { confirmAction } from '../../ui/dialogs'
+import { useMobileLayout } from '../../lib/useMobileLayout'
+import AnnualDataNotice from '../../components/AnnualDataNotice'
 import TradeDayTradeExceptions from '../../components/TradeDayTradeExceptions'
 import TradeMarginToggle from '../../components/TradeMarginToggle'
 import TradeDayTradeBadge from '../../components/TradeDayTradeBadge'
@@ -5,13 +8,14 @@ import { compareTradeListRecords } from '../../lib/tradeList'
 import TradeSettlementDetails from '../../components/TradeSettlementDetails'
 import { importDayTradeFields, orderTradeImportRows } from '../../lib/dayTradeCsv'
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { addDoc, getDocs, setDoc, updateDoc, deleteDoc } from 'firebase/firestore'
+import { addDoc, getDocs, doc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userCol, userDoc } from '../../lib/userDB'
+import { captureUserSession } from '../../lib/userDB'
+import { commitLedgerWrites } from '../../lib/ledgerWrites'
 import { calcFee, calcTax, calcMarginDebt, calcTradeTotal, calcSharesBeforeTrade, inferTradingSession, aggregateMarginPositions, estimateMarginRepayment, DEFAULT_MARGIN_INTEREST_RATE, type DividendRecord, type MarginRepaymentEstimate } from '../../lib/calc'
 import { fetchTrades, fetchDividends, invalidateTrades, invalidateCashflow } from '../../lib/investData'
 // ✅ 1-2：共用模組（CSV 解析 / 股票字典 / UI 樣式）
-import { parseCSVLine, toNum, toInt } from '../../lib/csv'
+import { parseCSVRecords, toNum, toInt } from '../../lib/csv'
 import { toLocalDateString } from '../../lib/date'
 import { lookupStockName, cacheStockName, saveStockName, searchStockByCodePrefix, searchStockByNamePrefix, type StockCandidate } from '../../lib/stockDict'
 import { card, inp, lbl, btn } from '../../ui/styles'
@@ -71,10 +75,31 @@ function parseTradeDate(input: string): string | null {
 const displayTradeDate = (value: string) => value.replaceAll('-', '/')
 
 function TradeDateField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+    const isMobile = useMobileLayout()
+    const calendarRef = useRef<HTMLDivElement>(null)
     const rootRef = useRef<HTMLDivElement>(null)
     const inputRef = useRef<HTMLInputElement>(null)
     const [draft, setDraft] = useState(displayTradeDate(value))
     const [open, setOpen] = useState(false)
+    useEffect(() => {
+        if (!open || !isMobile) return
+        const viewport = window.visualViewport
+        const updateBounds = () => {
+            const height = viewport?.height ?? window.innerHeight
+            const top = height < 500 ? 8 : 84
+            calendarRef.current?.style.setProperty('--calendar-top', `${(viewport?.offsetTop ?? 0) + top}px`)
+            calendarRef.current?.style.setProperty('--calendar-height', `${Math.max(0, height - top - 8)}px`)
+        }
+        updateBounds()
+        viewport?.addEventListener('resize', updateBounds)
+        viewport?.addEventListener('scroll', updateBounds)
+        window.addEventListener('resize', updateBounds)
+        return () => {
+            viewport?.removeEventListener('resize', updateBounds)
+            viewport?.removeEventListener('scroll', updateBounds)
+            window.removeEventListener('resize', updateBounds)
+        }
+    }, [open, isMobile])
     const [viewMonth, setViewMonth] = useState(() => {
         const selected = parseTradeDate(value) ?? toLocalDateString()
         const [year, month] = selected.split('-').map(Number)
@@ -118,8 +143,8 @@ function TradeDateField({ value, onChange }: { value: string; onChange: (value: 
         const selected = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
         onChange(selected)
         setDraft(displayTradeDate(selected))
-        setOpen(false)
         inputRef.current?.focus()
+        setOpen(false)
     }
 
     const year = viewMonth.getFullYear()
@@ -161,8 +186,8 @@ function TradeDateField({ value, onChange }: { value: string; onChange: (value: 
             />
             <CalendarDays size={15} aria-hidden="true" style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: 'var(--c-muted)', pointerEvents: 'none' }} />
             {open && (
-                <div className="trade-date-calendar" style={{ position: 'absolute', zIndex: 1200, top: 'calc(100% + 6px)', left: 0, width: 'min(300px, calc(100vw - 56px))', padding: '12px', borderRadius: '10px', border: '1px solid var(--c-border)', backgroundColor: 'var(--c-card)', boxShadow: '0 14px 36px rgba(0,0,0,0.32)' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '34px 1fr 34px', alignItems: 'center', marginBottom: '8px' }}>
+                <div ref={calendarRef} className="trade-date-calendar" style={{ position: 'absolute', zIndex: 1200, top: 'calc(100% + 6px)', left: 0, width: 'min(300px, calc(100vw - 56px))', padding: '12px', borderRadius: '10px', border: '1px solid var(--c-border)', backgroundColor: 'var(--c-card)', boxShadow: '0 14px 36px rgba(0,0,0,0.32)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '44px 1fr 44px', alignItems: 'center', marginBottom: '8px' }}>
                         <button type="button" aria-label="上個月" onClick={() => setViewMonth(current => new Date(current.getFullYear(), current.getMonth() - 1, 1))} style={{ background: 'none', border: 0, color: 'var(--c-muted)', cursor: 'pointer', padding: '6px' }}><ChevronLeft size={17} /></button>
                         <strong style={{ textAlign: 'center', fontSize: '13px' }}>{year} 年 {month + 1} 月</strong>
                         <button type="button" aria-label="下個月" onClick={() => setViewMonth(current => new Date(current.getFullYear(), current.getMonth() + 1, 1))} style={{ background: 'none', border: 0, color: 'var(--c-muted)', cursor: 'pointer', padding: '6px' }}><ChevronRight size={17} /></button>
@@ -284,12 +309,12 @@ export default function Trades() {
     const [showCodeSuggestions, setShowCodeSuggestions] = useState(false)
     const [showNameSuggestions, setShowNameSuggestions] = useState(false)
     const [importing, setImporting] = useState(false)
-    const [importResult, setImportResult] = useState<{ success: number; failed: number; skipped: number; duplicated: number } | null>(null)
+    const [importResult, setImportResult] = useState<{ success: number; failed: number; skipped: number; duplicated: number; error?: string } | null>(null)
     const [search, setSearch] = useState('')
     const [showForm, setShowForm] = useState(false)
     const [showDayTradeDetails, setShowDayTradeDetails] = useState(false)
     const [expandedId, setExpandedId] = useState<string | null>(null)
-    const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+    const isMobile = useMobileLayout()
     const [editModal, setEditModal] = useState(false)
     const [desktopPage, setDesktopPage] = useState(1)
     const [notice, setNotice] = useState<ActionNoticeState | null>(null)
@@ -300,12 +325,6 @@ export default function Trades() {
     // debounce refs for code/name lookup
     const codeLookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
     const nameLookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-    useEffect(() => {
-        const handle = () => setIsMobile(window.innerWidth < 768)
-        window.addEventListener('resize', handle)
-        return () => window.removeEventListener('resize', handle)
-    }, [])
 
     useEffect(() => () => {
         if (codeLookupTimer.current) clearTimeout(codeLookupTimer.current)
@@ -351,7 +370,7 @@ export default function Trades() {
         const upper = code.toUpperCase()
         setForm(f => {
             const fee = f.price && f.shares ? calcFee(f.price, f.shares) : f.fee
-            const tax = f.type === 'sell' && f.price && f.shares ? calcTax(f.price, f.shares, upper) : 0
+            const tax = f.type === 'sell' && f.price && f.shares ? calcTax(f.price, f.shares, upper, f.date) : 0
             const u = { ...f, code: upper, fee, tax, marginInterestRate: editingId ? f.marginInterestRate : resolveMarginInterestRate(marginRules, upper) }
             u.total = calcTradeTotal(u)
             return u
@@ -413,7 +432,7 @@ export default function Trades() {
     const handleSelectSuggestion = (c: StockCandidate) => {
         setForm(f => {
             const fee = f.price && f.shares ? calcFee(f.price, f.shares) : f.fee
-            const tax = f.type === 'sell' && f.price && f.shares ? calcTax(f.price, f.shares, c.code) : 0
+            const tax = f.type === 'sell' && f.price && f.shares ? calcTax(f.price, f.shares, c.code, f.date) : 0
             const u = { ...f, code: c.code, name: c.name, fee, tax }
             u.total = calcTradeTotal(u)
             return u
@@ -431,10 +450,10 @@ export default function Trades() {
         setForm(f => {
             const u = { ...f, [key]: value }
             if (u.type !== 'sell' || u.isMargin || u.dayTradeExcluded || inferTradingSession(u) !== 'regular') u.dayTradePending = false
-            if (['price', 'shares', 'type', 'code', 'marginRatio', 'isMargin', 'marginRepay'].includes(key)) {
+            if (['date', 'price', 'shares', 'type', 'code', 'marginRatio', 'isMargin', 'marginRepay'].includes(key)) {
                 if (u.price && u.shares) {
                     u.fee = calcFee(u.price, u.shares)
-                    u.tax = u.type === 'sell' ? calcTax(u.price, u.shares, u.code) : 0
+                    u.tax = u.type === 'sell' ? calcTax(u.price, u.shares, u.code, u.date) : 0
                     if (u.type === 'buy' && u.isMargin) {
                         u.marginAmount = calcMarginDebt(u.price * u.shares, u.marginRatio || 0.6)
                     }
@@ -450,9 +469,14 @@ export default function Trades() {
     // 若使用者融資買進後賣出時忘了勾「融資」，維持率分母不會減少且永遠不歸零。
     const sellMarginWarning = useMemo(() => {
         if (form.type !== 'sell' || form.isMargin || !form.code) return null
-        const pos = aggregateMarginPositions(trades).find(m => m.code === form.code)
-        return pos && pos.shares > 0 ? pos : null
-    }, [trades, form.type, form.isMargin, form.code])
+        try {
+            const pos = aggregateMarginPositions(trades, undefined, dividends).find(m => m.code === form.code)
+            return pos && pos.shares > 0 ? `${form.code} 目前有融資部位（${pos.shares.toLocaleString()} 股、借款約 ${Math.round(pos.marginAmount).toLocaleString()} 元）。此筆為「現股賣出」，不會歸還融資借款；若實際是融資賣出，請開啟「融資」開關並填入償還金額。` : null
+        } catch (error) {
+            // A legacy classification error must not crash the form used to repair it.
+            return error instanceof Error ? error.message : '融資庫存無法核對，請先確認配股分類及交易紀錄。'
+        }
+    }, [trades, dividends, form.type, form.isMargin, form.code])
 
     // ── 防呆（2-5）：賣出股數 > 目前持股 ──
     // calc.ts 對負持倉雖有歸零防呆，但超賣會讓該筆已實現損益用到錯誤均價，
@@ -494,9 +518,15 @@ export default function Trades() {
         ? { ...inp, borderColor: 'var(--c-danger)', boxShadow: '0 0 0 1px color-mix(in srgb, var(--c-danger) 30%, transparent)' }
         : inp
 
+    const pendingTradeId = useRef<string | null>(null)
+    const saveLock = useRef(false)
     const handleSave = async () => {
+        if (saveLock.current) return
         setSaveAttempted(true)
-        if (missingRequiredFields.length > 0) return
+        if (missingRequiredFields.length > 0) {
+            requestAnimationFrame(() => document.querySelector<HTMLElement>('.trade-form-fields [aria-invalid="true"]')?.focus())
+            return
+        }
         const validation = validateTradeForWrite(form)
         if (!validation.valid) {
             showNotice({ type: 'error', message: `無法儲存：${validation.errors.join('；')}` })
@@ -511,29 +541,31 @@ export default function Trades() {
             return
         }
         if (duplicateTrade) {
-            const proceed = confirm(`可能重複：${form.date} ${form.code} ${form.type === 'buy' ? '買入' : '賣出'} ${form.shares.toLocaleString()} 股，價格 ${form.price}。\n\n確定仍要儲存？`)
+            const proceed = await confirmAction(`可能重複：${form.date} ${form.code} ${form.type === 'buy' ? '買入' : '賣出'} ${form.shares.toLocaleString()} 股，價格 ${form.price}。\n\n確定仍要儲存？`)
             if (!proceed) return
         }
         if (form.type === 'sell' && form.isMargin && !(form.marginRepay && form.marginRepay > 0)) {
-            const ok = confirm('融資賣出未填「融資償還金額」，可用現金將被高估（賣出淨入帳少扣了還款）。確定仍要儲存？')
+            const ok = await confirmAction('融資賣出未填「融資償還金額」，可用現金將被高估（賣出淨入帳少扣了還款）。確定仍要儲存？')
             if (!ok) return
         }
+        saveLock.current = true
         setLoading(true)
         const wasEditing = Boolean(editingId)
         try {
-            if (form.name && form.code) {
-                await saveStockName(form.code, form.name)
-            }
+            const session = captureUserSession()
+            session.assertActive()
             const now = new Date().toISOString()
             // 舊資料沒有 createdAt 時，編輯後仍保留以文件 ID 排序，避免一次普通編輯改變歷史順序。
             const payload = editingId
                 ? { ...form }
                 : { ...form, createdAt: now, sequence: Date.now() }
-            if (editingId) {
-                await updateDoc(userDoc(investDB, 'trades', editingId), payload)
-            } else {
-                await addDoc(userCol(investDB, 'trades'), payload)
-            }
+            const id = editingId || (pendingTradeId.current ||= doc(session.col(investDB, 'trades')).id)
+            await commitLedgerWrites([{ collection: 'trades', id, data: payload, mode: editingId ? 'update' : 'create' }], session)
+            session.assertActive()
+            invalidateTrades()
+            if (form.name && form.code) await saveStockName(form.code, form.name)
+            session.assertActive()
+            pendingTradeId.current = null
             invalidateTrades()   // ✅ 1-1：寫入後清快取，其他頁面才會拿到最新資料
             if (!wasEditing) setLastTradeDate(form.date)
             setEditingId(null)
@@ -547,15 +579,17 @@ export default function Trades() {
             showNotice({ type: 'success', message: wasEditing ? '交易紀錄已更新。' : '交易紀錄已新增，可繼續輸入下一筆。' })
         } catch (err) {
             console.error(err)
-            showNotice({ type: 'error', message: '交易紀錄儲存失敗，表單內容已保留。' })
+            showNotice({ type: 'error', message: err instanceof Error ? err.message : '交易紀錄儲存失敗，表單內容已保留。' })
         } finally {
+            saveLock.current = false
             setLoading(false)
         }
     }
 
     const handleEdit = (t: Trade) => {
+        pendingTradeId.current = null
         if (t.code && t.name) cacheStockName(t.code, t.name)
-        const estimate = estimateMarginRepayment(t, trades)
+        const estimate = estimateMarginRepayment(t, trades, dividends)
         const principal = t.marginPrincipal ?? estimate.principal
         setForm({
             ...emptyTrade,
@@ -569,21 +603,25 @@ export default function Trades() {
         setCodeSuggestions([]); setNameSuggestions([]); setShowCodeSuggestions(false); setShowNameSuggestions(false)
     }
     const handleCancel = () => {
+        pendingTradeId.current = null
         setForm({ ...emptyTrade, date: lastTradeDate, marginInterestRate: marginRules.defaultInterestRate }); setEditingId(null); setShowForm(false); setEditModal(false)
         setSaveAttempted(false)
         setCodeSuggestions([]); setNameSuggestions([]); setShowCodeSuggestions(false); setShowNameSuggestions(false)
     }
     const handleDelete = async (id: string) => {
         const linked = trades.some(t => t.dayTradeMatches?.some(link => link.buyId === id))
-        if (!confirm(linked ? '此買入有已確認的當沖配對。刪除後配對會失效、損益將重算，請再到當沖核對區處理。確定刪除？' : '確定要刪除？')) return
+        const record = trades.find(trade => trade.id === id)
+        if (!await confirmAction(linked ? '此買入有已確認的當沖配對。刪除後配對會失效、損益將重算，請再到當沖核對區處理。確定刪除？' : `確定刪除 ${record?.date || ''} ${record?.code || ''} ${record?.name || ''} ${record?.type === 'sell' ? '賣出' : '買入'} ${record?.shares.toLocaleString() || '—'} 股的交易？`)) return
         try {
-            await deleteDoc(userDoc(investDB, 'trades', id))
+            const session = captureUserSession()
+            await commitLedgerWrites([{ collection: 'trades', id }], session)
+            session.assertActive()
             invalidateTrades()   // ✅ 1-1：寫入後清快取
             await load()
             showNotice({ type: 'success', message: '交易紀錄已刪除。' })
         } catch (err) {
             console.error(err)
-            showNotice({ type: 'error', message: '交易紀錄刪除失敗，請稍後再試。' })
+            showNotice({ type: 'error', message: err instanceof Error ? err.message : '交易紀錄刪除失敗，請稍後再試。' })
         }
     }
 
@@ -594,8 +632,11 @@ export default function Trades() {
             createdAt: form.createdAt || (editingId ? undefined : '9999-12-31T23:59:59.999Z'),
             sequence: form.sequence ?? (editingId ? undefined : Number.MAX_SAFE_INTEGER),
         }
-        return estimateMarginRepayment(target, trades)
-    }, [trades, form, editingId])
+        return estimateMarginRepayment(target, trades, dividends)
+    }, [trades, dividends, form, editingId])
+
+    const settlementRange = { start: trades.filter(t => t.isMargin && t.type === 'buy' && t.code === form.code && t.date <= form.date)
+        .reduce((earliest, t) => t.date < earliest ? t.date : earliest, form.date), end: form.date }
 
     useEffect(() => {
         if (form.type !== 'sell' || !form.isMargin || form.marginRepayManual) return
@@ -634,170 +675,188 @@ export default function Trades() {
         const file = e.target.files?.[0]
         if (!file) return
         setImporting(true); setImportResult(null)
-
-        const text = await file.text()
-        const lines = text
-            .replace(/^\uFEFF/, '')
-            .replace(/\r\n/g, '\n')
-            .replace(/\r/g, '\n')
-            .split('\n')
-            .filter(l => l.trim())
-
-        if (lines.length < 2) {
-            setImporting(false); e.target.value = ''; return
-        }
-
-        const headers = parseCSVLine(lines[0])
         let success = 0, failed = 0, skipped = 0, duplicated = 0
+        let session: ReturnType<typeof captureUserSession> | undefined
+        try {
+            // Pin the account before reading the file; unmounting does not cancel async work.
+            session = captureUserSession()
 
-        // ── 重複偵測：以既有資料建 key 集合，命中者略過不寫入 ──
-        //    交易 key = 日期|代號|類型|價格|股數；出入金 key = 日期|類型|金額|備註
-        //    ⚠️ 同日同價同量的「真實重複交易」也會被當成重複，匯入結果會單獨顯示重複筆數供核對。
-        const [existTradesSnap, existCashSnap] = await Promise.all([
-            getDocs(userCol(investDB, 'trades')),
-            getDocs(userCol(investDB, 'cashflow')),
-        ])
-        const tradeKeys = new Set(existTradesSnap.docs.map(d => {
-            const t = d.data()
-            return `${t.date}|${t.code}|${t.type}|${Number(t.price)}|${Number(t.shares)}|${String(t.brokerAccount || '').trim()}`
-        }))
-        const existingIds = new Set(existTradesSnap.docs.map(d => d.id))
-        const cashKeys = new Set(existCashSnap.docs.map(d => {
-            const c = d.data()
-            return `${c.date}|${c.type}|${Number(c.amount)}|${c.note || ''}`
-        }))
-        const validationTrades: Trade[] = existTradesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Trade))
+            const text = await file.text()
+            session.assertActive()
+            const lines = parseCSVRecords(text)
 
-        const importBaseTime = Date.now()
-        const importRows = orderTradeImportRows(lines.slice(1).map((line, index) => {
-            const cols = parseCSVLine(line)
-            return { row: Object.fromEntries(headers.map((h, idx) => [h, cols[idx] || ''])), sourceIndex: index + 1 }
-        }))
-        for (const { row, sourceIndex: i } of importRows) {
-
-            const type = row['類型']
-            const date = row['日期']
-            const sourceId = (row['Firestore ID'] || '').trim()
-
-            if (type === '入金' || type === '出金') {
-                const amount = toNum(row['價格/金額'] || row['金額'] || '')
-                if (amount > 0) {
-                    const cashNote = row['備註/筆記'] || row['備註'] || ''
-                    const cashCandidate = { date, type: type === '入金' ? 'in' : 'out', amount }
-                    if (!validateCashflowForWrite(cashCandidate).valid) { failed++; continue }
-                    const cashKey = `${date}|${type === '入金' ? 'in' : 'out'}|${Number(amount)}|${cashNote}`
-                    if (cashKeys.has(cashKey)) { duplicated++; continue }
-                    cashKeys.add(cashKey)
-                    await addDoc(userCol(investDB, 'cashflow'), {
-                        date,
-                        type: type === '入金' ? 'in' : 'out',
-                        amount,
-                        note: cashNote
-                    })
-                    success++
-                } else { skipped++ }
-                continue
-            }
-            // 支援新舊格式：現貨買入/現貨賣出/融資買入/融資賣出/買進/賣出
-            const validTypes = ['買入', '買進', '賣出', '現貨買入', '現貨賣出', '融資買入', '融資賣出']
-            if (!validTypes.includes(type)) { skipped++; continue }
-
-            const isMarginCSV = type === '融資買入' || type === '融資賣出'
-            const tradeType = (type === '賣出' || type === '現貨賣出' || type === '融資賣出') ? 'sell' : 'buy'
-
-            const rawCode = (row['代號'] || '').replace('.TW', '').replace('.tw', '').trim()
-            const name = (row['名稱'] || '').trim()
-            const price = toNum(row['價格/金額'] || row['價格'] || '')
-            const shares = toInt(row['股數'])
-
-            if (!rawCode || !price || !shares) { failed++; continue }
-
-            const tradeKey = `${date}|${rawCode}|${tradeType}|${Number(price)}|${Number(shares)}|${(row['券商帳戶'] || '').trim()}`
-            if (!sourceId && tradeKeys.has(tradeKey)) { duplicated++; continue }
-            if (sourceId && existingIds.has(sourceId)) { duplicated++; continue }
-
-            const isSell = tradeType === 'sell'
-            const fee = calcFee(price, shares)
-            const tax = isSell ? calcTax(price, shares, rawCode) : 0
-            // 若 CSV 含融資欄位（完整備份）則沿用，否則融資成數預設 0.6、償還金額 0。
-            // ⚠️ 非備份來源的融資賣出無法得知償還金額（含利息），匯入後請逐筆補上「融資償還金額」。
-            const marginRatioCSV = isMarginCSV
-                ? (row['融資成數'] ? toNum(row['融資成數']) || 0.6 : 0.6)
-                : 0
-            const marginRepayCSV = isMarginCSV && isSell
-                ? (row['融資償還金額'] ? toNum(row['融資償還金額']) : 0)
-                : 0
-            const marginPrincipalCSV = isMarginCSV && isSell ? toNum(row['融資本金'] || '') || 0 : 0
-            const marginInterestCSV = isMarginCSV && isSell ? toNum(row['融資利息'] || '') || 0 : 0
-            const rateValue = toNum(row['融資年利率 (%)'] || '')
-            const marginInterestRateCSV = isMarginCSV
-                ? (rateValue && rateValue > 1 ? rateValue / 100 : rateValue || resolveMarginInterestRate(marginRules, rawCode))
-                : 0
-            const totalRawCSV = row['收付金額'] ? toNum(row['收付金額']) : null
-            const total = totalRawCSV !== null ? totalRawCSV : calcTradeTotal({
-                type: tradeType, price, shares, fee, tax,
-                isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV
-            })
-
-            const createdAt = (row['建立時間'] || '').trim() || new Date(importBaseTime + i).toISOString()
-            const importedSequence = toNum(row['同日順序'] || '')
-            const sequence = typeof importedSequence === 'number' && Number.isFinite(importedSequence) ? importedSequence : i
-            let dayTradeFields: ReturnType<typeof importDayTradeFields>
-            try { dayTradeFields = importDayTradeFields(row) } catch { failed++; continue }
-            const candidate: Trade = {
-                ...dayTradeFields,
-                id: sourceId || `__csv_${i}`, date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total,
-                isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV,
-                marginPrincipal: marginPrincipalCSV, marginInterest: marginInterestCSV,
-                marginInterestRate: marginInterestRateCSV, marginRepayManual: Boolean(marginRepayCSV),
-                note: row['備註/筆記'] || row['備註'] || '', createdAt, sequence,
-            }
-            if (!validateTradeForWrite(candidate).valid) {
-                failed++
-                continue
-            }
-            if (isSell && !candidate.dayTradePending && shares > calcSharesBeforeTrade(candidate, validationTrades, dividends)) {
-                failed++
-                continue
+            if (lines.length < 2) {
+                return
             }
 
-            const existingMatchIssues = new Set(analyzeDayTrades(validationTrades, false).issues.map(issue => issue.trade.id))
-            if (analyzeDayTrades([...validationTrades, candidate], false).issues.some(issue => issue.trade === candidate || !existingMatchIssues.has(issue.trade.id))) { failed++; continue }
+            const headers = lines[0].map(header => header.trim())
 
-            try {
-                const payload = {
+            // ── 重複偵測：以既有資料建 key 集合，命中者略過不寫入 ──
+            //    交易 key = 日期|代號|類型|價格|股數；出入金 key = 日期|類型|金額|備註
+            //    ⚠️ 同日同價同量的「真實重複交易」也會被當成重複，匯入結果會單獨顯示重複筆數供核對。
+            const [existTradesSnap, existCashSnap] = await Promise.all([
+                getDocs(session.col(investDB, 'trades')),
+                getDocs(session.col(investDB, 'cashflow')),
+            ])
+            session.assertActive()
+            const tradeKeys = new Set(existTradesSnap.docs.map(d => {
+                const t = d.data()
+                return `${t.date}|${t.code}|${t.type}|${Number(t.price)}|${Number(t.shares)}|${String(t.brokerAccount || '').trim()}`
+            }))
+            const existingIds = new Set(existTradesSnap.docs.map(d => d.id))
+            const cashKeys = new Set(existCashSnap.docs.map(d => {
+                const c = d.data()
+                return `${c.date}|${c.type}|${Number(c.amount)}|${c.note || ''}`
+            }))
+            const validationTrades: Trade[] = existTradesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Trade))
+
+            const importBaseTime = Date.now()
+            const importRows = orderTradeImportRows(lines.slice(1).map((line, index) => {
+                const cols = line
+                return { row: Object.fromEntries(headers.map((h, idx) => [h, cols[idx] || ''])), sourceIndex: index + 1 }
+            }))
+            for (const { row, sourceIndex: i } of importRows) {
+                session.assertActive()
+
+                const type = row['類型']
+                const date = row['日期']
+                const sourceId = (row['Firestore ID'] || '').trim()
+
+                if (type === '入金' || type === '出金') {
+                    const amount = toNum(row['價格/金額'] || row['金額'] || '')
+                    if (amount > 0) {
+                        const cashNote = row['備註/筆記'] || row['備註'] || ''
+                        const cashCandidate = { date, type: type === '入金' ? 'in' : 'out', amount }
+                        if (!validateCashflowForWrite(cashCandidate).valid) { failed++; continue }
+                        const cashKey = `${date}|${type === '入金' ? 'in' : 'out'}|${Number(amount)}|${cashNote}`
+                        if (cashKeys.has(cashKey)) { duplicated++; continue }
+                        await addDoc(session.col(investDB, 'cashflow'), {
+                            date,
+                            type: type === '入金' ? 'in' : 'out',
+                            amount,
+                            note: cashNote
+                        })
+                        success++
+                        session.assertActive()
+                        cashKeys.add(cashKey)
+                    } else { skipped++ }
+                    continue
+                }
+                // 支援新舊格式：現貨買入/現貨賣出/融資買入/融資賣出/買進/賣出
+                const validTypes = ['買入', '買進', '賣出', '現貨買入', '現貨賣出', '融資買入', '融資賣出']
+                if (!validTypes.includes(type)) { skipped++; continue }
+
+                const isMarginCSV = type === '融資買入' || type === '融資賣出'
+                const tradeType = (type === '賣出' || type === '現貨賣出' || type === '融資賣出') ? 'sell' : 'buy'
+
+                const rawCode = (row['代號'] || '').replace('.TW', '').replace('.tw', '').trim()
+                const name = (row['名稱'] || '').trim()
+                const price = toNum(row['價格/金額'] || row['價格'] || '')
+                const shares = toInt(row['股數'])
+
+                if (!rawCode || !price || !shares) { failed++; continue }
+
+                const tradeKey = `${date}|${rawCode}|${tradeType}|${Number(price)}|${Number(shares)}|${(row['券商帳戶'] || '').trim()}`
+                if (!sourceId && tradeKeys.has(tradeKey)) { duplicated++; continue }
+                if (sourceId && existingIds.has(sourceId)) { duplicated++; continue }
+
+                const isSell = tradeType === 'sell'
+                const fee = row['手續費']?.trim() ? toNum(row['手續費']) : calcFee(price, shares)
+                const tax = row['交易稅']?.trim() ? toNum(row['交易稅']) : isSell ? calcTax(price, shares, rawCode, date) : 0
+                // 若 CSV 含融資欄位（完整備份）則沿用，否則融資成數預設 0.6、償還金額 0。
+                // ⚠️ 非備份來源的融資賣出無法得知償還金額（含利息），匯入後請逐筆補上「融資償還金額」。
+                const marginRatioCSV = isMarginCSV
+                    ? (row['融資成數'] ? toNum(row['融資成數']) || 0.6 : 0.6)
+                    : 0
+                const marginRepayCSV = isMarginCSV && isSell
+                    ? (row['融資償還金額'] ? toNum(row['融資償還金額']) : 0)
+                    : 0
+                const marginPrincipalCSV = isMarginCSV && isSell ? toNum(row['融資本金'] || '') || 0 : 0
+                const marginInterestCSV = isMarginCSV && isSell ? toNum(row['融資利息'] || '') || 0 : 0
+                const rateValue = toNum(row['融資年利率 (%)'] || '')
+                const marginInterestRateCSV = isMarginCSV
+                    ? (rateValue && rateValue > 1 ? rateValue / 100 : rateValue || resolveMarginInterestRate(marginRules, rawCode))
+                    : 0
+                const totalRawCSV = row['收付金額'] ? toNum(row['收付金額']) : null
+                const total = totalRawCSV !== null ? totalRawCSV : calcTradeTotal({
+                    type: tradeType, price, shares, fee, tax,
+                    isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV
+                })
+
+                const createdAt = (row['建立時間'] || '').trim() || new Date(importBaseTime + i).toISOString()
+                const importedSequence = toNum(row['同日順序'] || '')
+                const sequence = typeof importedSequence === 'number' && Number.isFinite(importedSequence) ? importedSequence : i
+                let dayTradeFields: ReturnType<typeof importDayTradeFields>
+                try { dayTradeFields = importDayTradeFields(row) } catch { failed++; continue }
+                const candidate: Trade = {
                     ...dayTradeFields,
-                    date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total,
+                    id: sourceId || `__csv_${i}`, date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total,
                     isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV,
                     marginPrincipal: marginPrincipalCSV, marginInterest: marginInterestCSV,
                     marginInterestRate: marginInterestRateCSV, marginRepayManual: Boolean(marginRepayCSV),
-                    note: row['備註/筆記'] || row['備註'] || '',
-                    createdAt, sequence,
+                    note: row['備註/筆記'] || row['備註'] || '', createdAt, sequence,
                 }
-                let importedId = sourceId
-                if (sourceId) {
-                    await setDoc(userDoc(investDB, 'trades', sourceId), payload)
-                    existingIds.add(sourceId)
-                } else {
-                    const docRef = await addDoc(userCol(investDB, 'trades'), payload)
-                    importedId = docRef.id
+                if (!validateTradeForWrite(candidate).valid) {
+                    failed++
+                    continue
                 }
-                validationTrades.push({ ...candidate, id: importedId })
-                tradeKeys.add(tradeKey)
-                // ★ CSV 匯入時同步寫入 stockDict（只寫有名稱的）
-                if (name && rawCode) {
-                    await saveStockName(rawCode, name)
+                if (isSell && !candidate.dayTradePending && shares > calcSharesBeforeTrade(candidate, validationTrades, dividends)) {
+                    failed++
+                    continue
                 }
-                success++
-            } catch { failed++ }
-        }
 
-        // ✅ 1-1：匯入會寫入 trades 與 cashflow，兩種快取都要清
-        invalidateTrades()
-        invalidateCashflow()
-        setImportResult({ success, failed, skipped, duplicated })
-        setImporting(false); e.target.value = ''
-        load()
+                const existingMatchIssues = new Set(analyzeDayTrades(validationTrades, false).issues.map(issue => issue.trade.id))
+                if (analyzeDayTrades([...validationTrades, candidate], false).issues.some(issue => issue.trade === candidate || !existingMatchIssues.has(issue.trade.id))) { failed++; continue }
+
+                let tradeWritten = false
+                try {
+                    const payload = {
+                        ...dayTradeFields,
+                        date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total,
+                        isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV,
+                        marginPrincipal: marginPrincipalCSV, marginInterest: marginInterestCSV,
+                        marginInterestRate: marginInterestRateCSV, marginRepayManual: Boolean(marginRepayCSV),
+                        note: row['備註/筆記'] || row['備註'] || '',
+                        createdAt, sequence,
+                    }
+                    const importedId = sourceId || doc(session.col(investDB, 'trades')).id
+                    await commitLedgerWrites([{ collection: 'trades', id: importedId, data: payload, mode: 'create' }], session)
+                    existingIds.add(importedId)
+                    success++
+                    tradeWritten = true
+                    session.assertActive()
+                    validationTrades.push({ ...candidate, id: importedId })
+                    tradeKeys.add(tradeKey)
+                    // ★ CSV 匯入時同步寫入 stockDict（只寫有名稱的）
+                    if (name && rawCode) {
+                        await saveStockName(rawCode, name)
+                        session.assertActive()
+                    }
+                } catch (error) {
+                    session.assertActive()
+                    if (tradeWritten) throw new Error(`交易已匯入，但股票名稱更新未完成：${error instanceof Error ? error.message : '請確認資料後重試'}`)
+                    failed++
+                    throw new Error(`交易寫入未確認：${error instanceof Error ? error.message : '請核對後重試'}`)
+                }
+            }
+
+            // ✅ 1-1：匯入會寫入 trades 與 cashflow，兩種快取都要清
+            invalidateTrades()
+            invalidateCashflow()
+            setImportResult({ success, failed, skipped, duplicated })
+            load()
+        } catch (error) {
+            // Completed rows stay in the original account; never report a clean completion.
+            invalidateTrades()
+            invalidateCashflow()
+            setImportResult({ success, failed, skipped, duplicated,
+                error: error instanceof Error ? error.message : '匯入未完成，請確認資料後重試。' })
+            // Do not let an old page reload data using the newly selected account.
+            try { session?.assertActive(); if (session) load() } catch { /* account changed */ }
+        } finally {
+            setImporting(false)
+            e.target.value = ''
+        }
     }
 
     const dayTradeAnalysis = useMemo(() => analyzeDayTrades(trades, false), [trades])
@@ -870,6 +929,7 @@ export default function Trades() {
                             <div style={{ position: 'relative' }}>
                                 <label style={lbl}>股票代號</label>
                                 <input
+                                    aria-invalid={saveAttempted && (!form.code.trim())}
                                     style={requiredErrorStyle(saveAttempted && !form.code.trim())}
                                     placeholder="例：2330"
                                     value={form.code}
@@ -891,12 +951,14 @@ export default function Trades() {
                         <div className="trade-form-execution">
                             <div>
                                 <label style={lbl}>價格</label>
-                                <input type="number" style={requiredErrorStyle(saveAttempted && !(form.price > 0))} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} />
+                                <input type="number" aria-invalid={saveAttempted && (!(form.price > 0))}
+                                    style={requiredErrorStyle(saveAttempted && !(form.price > 0))} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} />
                                 <RequiredFieldMessage show={saveAttempted && !(form.price > 0)} label="價格" />
                             </div>
                             <div>
                                 <label style={lbl}>股數</label>
-                                <input type="number" style={requiredErrorStyle(saveAttempted && !(form.shares > 0))} placeholder="0" value={form.shares || ''} onChange={e => handleChange('shares', parseInt(e.target.value) || 0)} />
+                                <input type="number" aria-invalid={saveAttempted && (!(form.shares > 0))}
+                                    style={requiredErrorStyle(saveAttempted && !(form.shares > 0))} placeholder="0" value={form.shares || ''} onChange={e => handleChange('shares', parseInt(e.target.value) || 0)} />
                                 <RequiredFieldMessage show={saveAttempted && !(form.shares > 0)} label="股數" />
                             </div>
                             <TradeSettlementDetails form={form} onChange={(key, value) => handleChange(key, value)} />
@@ -913,6 +975,7 @@ export default function Trades() {
                                 </div>
                             )}
                             <MarginTradeFields form={form} estimate={marginRepaymentEstimate} onChange={handleChange} onRepayChange={handleMarginRepayChange} />
+                            {form.isMargin && form.type === 'sell' && <AnnualDataNotice className="span2" settlementRange={settlementRange} />}
                             {oversellWarning && (
                                 <div className="span2" style={{ backgroundColor: 'color-mix(in srgb, var(--c-danger) 10%, transparent)', border: '1px solid var(--c-danger)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--c-danger)', lineHeight: 1.6 }}>
                                     ⚠️ 賣出股數（{form.shares.toLocaleString()}）超過 {form.code} 目前持股（{oversellWarning.held.toLocaleString()} 股）。
@@ -921,8 +984,7 @@ export default function Trades() {
                             )}
                             {sellMarginWarning && (
                                 <div className="span2" style={{ backgroundColor: 'color-mix(in srgb, var(--c-warning) 10%, transparent)', border: '1px solid var(--c-warning)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--c-warning)', lineHeight: 1.6 }}>
-                                    ⚠️ {form.code} 目前有融資部位（{sellMarginWarning.shares.toLocaleString()} 股、借款約 {Math.round(sellMarginWarning.marginAmount).toLocaleString()} 元）。
-                                    此筆為「現股賣出」，不會歸還融資借款；若實際是融資賣出，請開啟「融資」開關並填入償還金額，否則維持率與可用現金會失真。
+                                    ⚠️ {sellMarginWarning}
                                 </div>
                             )}
                         </div>
@@ -945,7 +1007,7 @@ export default function Trades() {
         @media (max-width: 1100px) { .trades-grid { grid-template-columns: repeat(3, 1fr); } }
         @media (max-width: 700px) { .trades-grid { grid-template-columns: repeat(2, 1fr); } }
         @media (max-width: 480px) { .trades-grid { grid-template-columns: 1fr; } .trades-grid .span2 { grid-column: span 1; } }
-        @media (max-width: 700px) { .trade-date-calendar { position: fixed !important; top: 84px !important; left: 50% !important; width: min(340px, calc(100vw - 32px)) !important; transform: translateX(-50%); } }
+        @media (max-width: 767px), (max-width: 950px) and (pointer: coarse) and (orientation: landscape) { .trade-date-calendar { position: fixed !important; top: var(--calendar-top, 84px) !important; max-height: var(--calendar-height, calc(100dvh - 92px)); overflow-y: auto; overscroll-behavior: contain; left: 50% !important; width: min(340px, calc(100vw - 32px)) !important; transform: translateX(-50%); } }
         .trade-sticky-controls { position: sticky; top: 0; z-index: 30; margin: -4px -4px 12px; padding: 4px; background: color-mix(in srgb, var(--c-bg) 94%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
         .trade-search-toolbar { display: block; }
         .trade-search-box { position: relative; flex: 1; min-width: 0; }
@@ -960,7 +1022,7 @@ export default function Trades() {
         .trade-pagination button:disabled { opacity: .45; cursor: not-allowed; }
         .trade-card { background: var(--c-bg); border-radius: 10px; padding: 12px 14px; border: 1px solid var(--c-border); margin-bottom: 8px; }
         .trade-card:active { border-color: var(--c-accent); }
-        @media (max-width: 767px) {
+        @media (max-width: 767px), (max-width: 950px) and (pointer: coarse) and (orientation: landscape) {
             .trade-sticky-controls { position: static; margin: 0 0 12px; padding: 0; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; }
             .trade-search-toolbar { display: block; }
         }
@@ -1013,6 +1075,7 @@ export default function Trades() {
                         {importResult.failed > 0 && <div><span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>失敗</span><div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--c-danger)' }}>{importResult.failed} 筆</div></div>}
                         {importResult.skipped > 0 && <div><span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>略過</span><div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--c-muted)' }}>{importResult.skipped} 筆</div></div>}
                         {importResult.duplicated > 0 && <div><span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>重複略過</span><div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--c-warning)' }}>{importResult.duplicated} 筆</div></div>}
+                        {importResult.error && <div role="alert" style={{ width: '100%', color: 'var(--c-danger)', fontSize: '13px' }}>匯入已中止：{importResult.error} 已完成 {importResult.success} 筆，請確認原帳號資料後再試。</div>}
                     </div>
                 )}
 
@@ -1035,6 +1098,7 @@ export default function Trades() {
                                 <label style={lbl}>股票代號</label>
                                 <input
                                     ref={newCodeInputRef}
+                                    aria-invalid={saveAttempted && (!form.code.trim())}
                                     style={requiredErrorStyle(saveAttempted && !form.code.trim())}
                                     placeholder="例：2330"
                                     value={form.code}
@@ -1056,12 +1120,14 @@ export default function Trades() {
                         <div className="trade-form-execution">
                             <div>
                                 <label style={lbl}>價格</label>
-                                <input type="number" style={requiredErrorStyle(saveAttempted && !(form.price > 0))} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} />
+                                <input type="number" aria-invalid={saveAttempted && (!(form.price > 0))}
+                                    style={requiredErrorStyle(saveAttempted && !(form.price > 0))} placeholder="0" value={form.price || ''} onChange={e => handleChange('price', parseFloat(e.target.value) || 0)} />
                                 <RequiredFieldMessage show={saveAttempted && !(form.price > 0)} label="價格" />
                             </div>
                             <div>
                                 <label style={lbl}>股數</label>
-                                <input type="number" style={requiredErrorStyle(saveAttempted && !(form.shares > 0))} placeholder="0" value={form.shares || ''} onChange={e => handleChange('shares', parseInt(e.target.value) || 0)} />
+                                <input type="number" aria-invalid={saveAttempted && (!(form.shares > 0))}
+                                    style={requiredErrorStyle(saveAttempted && !(form.shares > 0))} placeholder="0" value={form.shares || ''} onChange={e => handleChange('shares', parseInt(e.target.value) || 0)} />
                                 <RequiredFieldMessage show={saveAttempted && !(form.shares > 0)} label="股數" />
                             </div>
                             <TradeSettlementDetails form={form} onChange={(key, value) => handleChange(key, value)} />
@@ -1078,6 +1144,7 @@ export default function Trades() {
                                 </div>
                             )}
                             <MarginTradeFields form={form} estimate={marginRepaymentEstimate} onChange={handleChange} onRepayChange={handleMarginRepayChange} />
+                            {form.isMargin && form.type === 'sell' && <AnnualDataNotice className="span2" settlementRange={settlementRange} />}
                             {oversellWarning && (
                                 <div className="span2" style={{ backgroundColor: 'color-mix(in srgb, var(--c-danger) 10%, transparent)', border: '1px solid var(--c-danger)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--c-danger)', lineHeight: 1.6 }}>
                                     ⚠️ 賣出股數（{form.shares.toLocaleString()}）超過 {form.code} 目前持股（{oversellWarning.held.toLocaleString()} 股）。
@@ -1086,8 +1153,7 @@ export default function Trades() {
                             )}
                             {sellMarginWarning && (
                                 <div className="span2" style={{ backgroundColor: 'color-mix(in srgb, var(--c-warning) 10%, transparent)', border: '1px solid var(--c-warning)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--c-warning)', lineHeight: 1.6 }}>
-                                    ⚠️ {form.code} 目前有融資部位（{sellMarginWarning.shares.toLocaleString()} 股、借款約 {Math.round(sellMarginWarning.marginAmount).toLocaleString()} 元）。
-                                    此筆為「現股賣出」，不會歸還融資借款；若實際是融資賣出，請開啟「融資」開關並填入償還金額，否則維持率與可用現金會失真。
+                                    ⚠️ {sellMarginWarning}
                                 </div>
                             )}
                         </div>

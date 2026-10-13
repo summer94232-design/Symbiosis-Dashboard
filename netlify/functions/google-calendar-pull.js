@@ -1,3 +1,5 @@
+import { authorizeGoogleRequest } from '../lib/google-calendar-security.js'
+import { invokeEventHandler } from '../lib/http-function.js'
 // netlify/functions/google-calendar-pull.js
 // 讀出「專屬行事曆」目前所有事件（含最近被刪除、標記為 cancelled 的），
 // 回傳給前端做「App ↔ Google」雙向比對用。
@@ -5,11 +7,11 @@
 // Request:  { refreshToken: string, calendarId: string }
 // Response: { events: { googleEventId, sourceId, title, date, description, updated, cancelled }[] }
 
-export const handler = async (event) => {
+export const handleEvent = async (event) => {
     const headers = {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        'Cache-Control': 'private, no-store',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
     }
     if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' }
@@ -19,10 +21,15 @@ export const handler = async (event) => {
 
     let payload
     try {
+        if ((event.body || '').length > 200000) throw new Error('Request too large')
         payload = JSON.parse(event.body || '{}')
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Invalid request')
     } catch {
         return { statusCode: 400, headers, body: JSON.stringify({ error: '請求格式錯誤（非合法 JSON）' }) }
     }
+
+    const denied = await authorizeGoogleRequest(event, payload)
+    if (denied) return denied
 
     const { refreshToken, calendarId } = payload
     if (!refreshToken || !calendarId) {
@@ -69,9 +76,18 @@ export const handler = async (event) => {
             for (const item of data.items || []) {
                 events.push({
                     googleEventId: item.id,
-                    sourceId: item.extendedProperties?.private?.sourceId || null,
+                    sourceKind: item.extendedProperties?.private?.sourceKind || null,
+                    sourceType: item.extendedProperties?.private?.sourceType || null,
+                    // Series properties can be inherited by every instance; only accept an instance's own binding.
+                    sourceId: item.recurringEventId && item.extendedProperties?.private?.sourceGoogleEventId !== item.id
+                        ? null : item.extendedProperties?.private?.sourceId || null,
                     title: item.summary || '',
-                    date: item.start?.date || (item.start?.dateTime ? item.start.dateTime.slice(0, 10) : ''),
+                    date: item.start?.date || (item.start?.dateTime ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(item.start.dateTime)) : ''),
+                    start: item.start || null,
+                    end: item.end || null,
+                    recurringEventId: item.recurringEventId || null,
+                    originalStartTime: item.originalStartTime || null,
+                    etag: item.etag || '',
                     description: item.description || '',
                     updated: item.updated || '',
                     cancelled: item.status === 'cancelled',
@@ -102,4 +118,8 @@ async function refreshAccessToken(refreshToken) {
         throw new Error(`Google 憑證已失效，請重新連結帳號（${tokenData.error || 'unknown'}）`)
     }
     return tokenData.access_token
+}
+
+export default async function (request) {
+    return invokeEventHandler(request, handleEvent)
 }

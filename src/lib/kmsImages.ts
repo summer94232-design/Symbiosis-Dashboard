@@ -1,8 +1,8 @@
 import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage'
-import { deleteDoc, getDoc, setDoc } from 'firebase/firestore'
+import { deleteDoc, getDocFromServer, setDoc } from 'firebase/firestore'
 import { kmsAuth } from './auth'
 import { kmsDB, kmsStorage } from './firebase'
-import { userDoc } from './userDB'
+import { captureUserSession } from './userDB'
 
 export interface NoteImageAsset {
   id: string
@@ -224,23 +224,25 @@ function readUploadDrafts(): ImageUploadDraft[] {
   }
 }
 
-async function registerUploadDraft(draft: ImageUploadDraft): Promise<void> {
+async function registerUploadDraft(draft: ImageUploadDraft, session = captureUserSession()): Promise<void> {
+  session.assertActive()
   const rows = readUploadDrafts().filter(row => row.assetId !== draft.assetId)
   localStorage.setItem(uploadDraftStorageKey(), JSON.stringify([...rows, draft]))
-  await setDoc(userDoc(kmsDB, UPLOAD_DRAFT_COLLECTION, draft.assetId), draft).catch(error => {
+  await setDoc(session.doc(kmsDB, UPLOAD_DRAFT_COLLECTION, draft.assetId), draft).catch(error => {
     // 規則／後端尚未部署時仍保留本機清理能力，不阻斷正常上傳。
     console.warn('跨裝置圖片草稿登記失敗，將使用本機清理', error)
   })
 }
 
-async function removeUploadDrafts(assetIds: string[]): Promise<void> {
+async function removeUploadDrafts(assetIds: string[], session = captureUserSession()): Promise<void> {
+  session.assertActive()
   const removeIds = new Set(assetIds)
-  localStorage.setItem(uploadDraftStorageKey(), JSON.stringify(
-    readUploadDrafts().filter(row => !removeIds.has(row.assetId)),
-  ))
-  await Promise.allSettled([...removeIds].map(assetId => deleteDoc(
-    userDoc(kmsDB, UPLOAD_DRAFT_COLLECTION, assetId),
-  )))
+  const storageKey = uploadDraftStorageKey()
+  for (const assetId of removeIds) {
+    await deleteDoc(session.doc(kmsDB, UPLOAD_DRAFT_COLLECTION, assetId))
+    session.assertActive()
+  }
+  localStorage.setItem(storageKey, JSON.stringify(readUploadDrafts().filter(row => !removeIds.has(row.assetId))))
 }
 
 export async function prepareAndUploadNoteImage(
@@ -248,6 +250,7 @@ export async function prepareAndUploadNoteImage(
   noteId: string,
   onProgress: (progress: number) => void = () => undefined,
 ): Promise<NoteImageAsset> {
+  const session = captureUserSession()
   const uid = kmsAuth.currentUser?.uid
   if (!uid) throw new Error('請先登入知識庫帳號')
   if (!file.type.startsWith('image/') && !isHeif(file)) throw new Error('請選擇圖片檔案')
@@ -275,10 +278,12 @@ export async function prepareAndUploadNoteImage(
       noteId,
       storagePath,
       createdAt: new Date().toISOString(),
-    })
+    }, session)
 
     try {
+      session.assertActive()
       const downloadUrl = await uploadBlob(storagePath, main.blob, progress => onProgress(0.18 + progress * 0.82))
+      session.assertActive()
       onProgress(1)
 
       return {
@@ -292,11 +297,12 @@ export async function prepareAndUploadNoteImage(
         originalName: file.name,
       }
     } catch (error) {
+      session.assertActive()
       // 第二個檔案失敗時同步回收可能已完成的第一個檔案，避免留下孤兒資產。
       await Promise.allSettled([
         deleteObject(ref(kmsStorage, storagePath)),
       ])
-      await removeUploadDrafts([id])
+      await removeUploadDrafts([id], session)
       throw error
     }
   } finally {
@@ -305,6 +311,7 @@ export async function prepareAndUploadNoteImage(
 }
 
 export async function deleteNoteImageAssets(assets: NoteImageAsset[]): Promise<void> {
+  const session = captureUserSession()
   const paths = [...new Set(assets.flatMap(asset => [asset.storagePath, asset.thumbnailPath]).filter(Boolean))]
   await Promise.all(paths.map(async path => {
     try {
@@ -314,35 +321,41 @@ export async function deleteNoteImageAssets(assets: NoteImageAsset[]): Promise<v
       if (code !== 'storage/object-not-found') throw error
     }
   }))
-  await removeUploadDrafts(assets.map(asset => asset.id))
+  session.assertActive()
+  await removeUploadDrafts(assets.map(asset => asset.id), session)
 }
 
 export async function finalizeNoteImageAssets(assets: NoteImageAsset[]): Promise<void> {
+  const session = captureUserSession()
   if (!assets.length) return
-  await removeUploadDrafts(assets.map(asset => asset.id))
+  await removeUploadDrafts(assets.map(asset => asset.id), session)
 }
 
 /**
- * 回收 24 小時前未完成的圖片上傳。若圖片已被 notes 或 trash 引用，只移除草稿紀錄，
+ * 回收 24 小時前未完成的圖片上傳。若圖片已被 notes、noteBodies 或 trash 引用，只移除草稿紀錄，
  * 不刪除圖片，避免 Firestore 已保存但草稿清理失敗時誤刪正式資產。
  */
 export async function cleanupStaleNoteImageDrafts(): Promise<number> {
+  const session = captureUserSession()
   const cutoff = new Date(Date.now() - STALE_UPLOAD_HOURS * 60 * 60 * 1000).toISOString()
   const staleDrafts = readUploadDrafts().filter(draft => draft.createdAt < cutoff).slice(0, 20)
   let removed = 0
 
   for (const draft of staleDrafts) {
+    session.assertActive()
     if (!draft.assetId || !draft.noteId || !draft.storagePath) {
-      await removeUploadDrafts([draft.assetId])
+      await removeUploadDrafts([draft.assetId], session)
       removed += 1
       continue
     }
 
-    const [noteSnapshot, trashSnapshot] = await Promise.all([
-      getDoc(userDoc(kmsDB, 'notes', draft.noteId)),
-      getDoc(userDoc(kmsDB, 'trash', draft.noteId)),
+    const [noteSnapshot, bodySnapshot, trashSnapshot] = await Promise.all([
+      getDocFromServer(session.doc(kmsDB, 'notes', draft.noteId)),
+      getDocFromServer(session.doc(kmsDB, 'noteBodies', draft.noteId)),
+      getDocFromServer(session.doc(kmsDB, 'trash', draft.noteId)),
     ])
-    const referenced = [noteSnapshot, trashSnapshot].some(documentSnapshot => {
+    session.assertActive()
+    const referenced = [noteSnapshot, bodySnapshot, trashSnapshot].some(documentSnapshot => {
       if (!documentSnapshot.exists()) return false
       const assets = documentSnapshot.data().assets
       return Array.isArray(assets) && assets.some(asset => asset?.id === draft.assetId)
@@ -360,6 +373,7 @@ export async function cleanupStaleNoteImageDrafts(): Promise<number> {
         }
         }))
     }
+    session.assertActive()
     await removeUploadDrafts([draft.assetId])
     removed += 1
   }

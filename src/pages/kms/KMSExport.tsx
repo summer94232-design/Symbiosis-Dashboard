@@ -1,4 +1,9 @@
-import { useState, useEffect } from 'react'
+import LoadingState from '../../components/LoadingState'
+import { captureUserSession } from '../../lib/userDB'
+import { card, btn } from '../../ui/styles'
+import { alertAction } from '../../ui/dialogs'
+import { useState, useEffect, useRef } from 'react'
+import DisclosureNote from '../../components/DisclosureNote'
 import { fetchKmsBodiesInBatches, fetchKmsNoteSummaries, fetchKmsTagStats } from '../../lib/kmsData'
 import { toLocalDateString } from '../../lib/date'
 import { Download, FileText, Filter, Check } from 'lucide-react'
@@ -18,8 +23,6 @@ interface Note {
     updatedAt: string
 }
 
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
-const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 function richDocToMarkdown(doc: JSONContent, assets: NoteImageAsset[] = []): string {
     const render = (node: JSONContent, depth = 0): string => {
@@ -75,21 +78,32 @@ export default function KMSExport() {
     const [allTags, setAllTags] = useState<string[]>([])
     const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set())
     const [format, setFormat] = useState<'single-txt' | 'per-tag-txt' | 'markdown'>('single-txt')
+    const [loadError, setLoadError] = useState('')
     const [loading, setLoading] = useState(true)
+    const [hasLoaded, setHasLoaded] = useState(false)
     const [exporting, setExporting] = useState(false)
     const [exportProgress, setExportProgress] = useState('')
     const [filterMode, setFilterMode] = useState<'all' | 'tag'>('all')
+    const loadedSession = useRef<ReturnType<typeof captureUserSession> | null>(null)
+    const exportingLock = useRef(false)
 
     const load = async () => {
         setLoading(true)
-        const [data, stats] = await Promise.all([
-            fetchKmsNoteSummaries<Note>(),
-            fetchKmsTagStats(),
-        ])
-        setNotes(data)
-        const tags = stats ? Object.keys(stats.counts) : [...new Set(data.flatMap(note => note.hashtags || []))]
-        setAllTags(tags.sort())
-        setLoading(false)
+        setLoadError('')
+        try {
+            const session = captureUserSession()
+            const [data, stats] = await Promise.all([
+                fetchKmsNoteSummaries<Note>(),
+                fetchKmsTagStats(),
+            ])
+            session.assertActive()
+            loadedSession.current = session
+            setNotes(data)
+            setHasLoaded(true)
+            const tags = stats ? Object.keys(stats.counts) : [...new Set(data.flatMap(note => note.hashtags || []))]
+            setAllTags(tags.sort())
+        } catch { setLoadError('筆記載入失敗，請稍後重試。') }
+        finally { setLoading(false) }
     }
 
     useEffect(() => { load() }, [])
@@ -145,14 +159,21 @@ export default function KMSExport() {
     }
 
     const handleExport = async () => {
+        if (exportingLock.current) return
+        exportingLock.current = true
         setExporting(true)
         setExportProgress('準備讀取正文…')
         try {
+        const session = loadedSession.current
+        if (!session) throw new Error('請先重新載入筆記')
+        session.assertActive()
         const bodyMap = await fetchKmsBodiesInBatches<Pick<Note, 'content' | 'contentDoc' | 'assets'>>(
             filteredNotes.map(note => note.id),
             20,
             (completed, total) => setExportProgress(`讀取正文 ${completed} / ${total}`),
+            session,
         )
+        session.assertActive()
         const exportNotes = filteredNotes.map(note => ({ ...note, ...(bodyMap[note.id] || {}) }))
         const ext = format === 'markdown' ? 'md' : 'txt'
         const date = toLocalDateString()
@@ -182,7 +203,9 @@ export default function KMSExport() {
                     ...tagNotes.map(n => formatNote(n, 'txt'))
                 ].join('\n')
                 const safeName = tag.replace(/\//g, '_')
-                setTimeout(() => downloadFile(content, `知識庫_${safeName}_${date}.txt`), i * 300)
+                if (i > 0) await new Promise(resolve => setTimeout(resolve, 300))
+                session.assertActive()
+                downloadFile(content, `知識庫_${safeName}_${date}.txt`)
             }
         } else {
             // 單一檔案匯出
@@ -196,13 +219,17 @@ export default function KMSExport() {
             ].join('\n')
 
             const body = exportNotes.map(n => formatNote(n, format)).join('\n')
+            session.assertActive()
             downloadFile(header + body, `知識庫_${date}.${ext}`)
         }
 
         } catch (error) {
             console.error(error)
-            alert('匯出失敗，已停止讀取後續正文，請稍後重試。')
+            const accountChanged = error instanceof Error && /登入|帳號|帳戶/.test(error.message)
+            if (accountChanged) { loadedSession.current = null; setNotes([]); setAllTags([]); setHasLoaded(false); setLoadError('登入帳號已變更，請重新載入筆記。') }
+            void alertAction(accountChanged ? '登入帳號已變更，匯出已取消；請重新載入筆記後再試。' : '匯出失敗，已停止讀取後續正文，請稍後重試。')
         } finally {
+            exportingLock.current = false
             setExporting(false)
             setExportProgress('')
         }
@@ -211,21 +238,23 @@ export default function KMSExport() {
     const exportCount = filteredNotes.length
 
     return (
-        <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '900px', margin: '0 auto' }}>
-            <div style={{ marginBottom: '24px' }}>
+        <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '900px', margin: '0 auto' }}>
+            <div style={{ marginBottom: '16px' }}>
                 <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>匯出至 NotebookLM</h1>
-                <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>將筆記匯出為文字檔，上傳到 NotebookLM 進行 AI 分析</p>
+            <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>匯出筆記，供 NotebookLM 分析。</p>
             </div>
 
-            {loading ? (
-                <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>載入中...</div>
+            {loadError && <div role="alert" className="ui-load-error">{loadError} <button className="ui-button ui-button-secondary" disabled={loading} onClick={() => void load()}>重新載入</button></div>}
+            {loading && hasLoaded && <p className="ui-refresh-status" role="status">資料更新中…</p>}
+                {loading && !hasLoaded ? (
+                <LoadingState />
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
 
                     {/* 步驟一：篩選範圍 */}
                     <div style={card}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                            <div style={{ backgroundColor: 'var(--c-accent)', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: '#fff', flexShrink: 0 }}>1</div>
+                            <div style={{ backgroundColor: 'var(--c-button-accent)', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: 'var(--c-on-accent)', flexShrink: 0 }}>1</div>
                             <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>選擇匯出範圍</span>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
@@ -233,7 +262,7 @@ export default function KMSExport() {
                                 { key: 'all', label: '全部筆記', icon: FileText },
                                 { key: 'tag', label: '依標籤篩選', icon: Filter },
                             ].map(({ key, label, icon: Icon }) => (
-                                <button key={key} onClick={() => setFilterMode(key as any)}
+                                <button key={key} onClick={() => setFilterMode(key as 'all' | 'tag')}
                                     style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', border: '1px solid', borderColor: filterMode === key ? 'var(--c-accent)' : 'var(--c-border)', backgroundColor: filterMode === key ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent', color: filterMode === key ? 'var(--c-accent)' : 'var(--c-muted)', fontSize: '13px', cursor: 'pointer' }}>
                                     <Icon size={14} />{label}
                                 </button>
@@ -260,16 +289,16 @@ export default function KMSExport() {
                     {/* 步驟二：選擇格式 */}
                     <div style={card}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                            <div style={{ backgroundColor: 'var(--c-accent)', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: '#fff', flexShrink: 0 }}>2</div>
+                            <div style={{ backgroundColor: 'var(--c-button-accent)', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: 'var(--c-on-accent)', flexShrink: 0 }}>2</div>
                             <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>選擇匯出格式</span>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             {[
-                                { key: 'single-txt', label: '單一 TXT 檔', desc: '所有筆記合併為一個文字檔，最適合 NotebookLM 上傳' },
-                                { key: 'per-tag-txt', label: '依標籤分類 TXT', desc: '每個標籤產生一個 TXT 檔，方便建立不同主題的 Notebook' },
-                                { key: 'markdown', label: 'Markdown 格式', desc: '保留標題、標籤等格式結構，適合進階使用' },
+                                { key: 'single-txt', label: '單一 TXT 檔', desc: '全部筆記合併一檔' },
+                                { key: 'per-tag-txt', label: '依標籤分類 TXT', desc: '每個標籤各一檔' },
+                                { key: 'markdown', label: 'Markdown 格式', desc: '保留標題與標籤結構' },
                             ].map(({ key, label, desc }) => (
-                                <div key={key} onClick={() => setFormat(key as any)}
+                                <div key={key} onClick={() => setFormat(key as typeof format)}
                                     style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 14px', borderRadius: '8px', border: `1px solid ${format === key ? 'var(--c-accent)' : 'var(--c-border)'}`, backgroundColor: format === key ? 'rgba(79,142,247,0.06)' : 'transparent', cursor: 'pointer' }}>
                                     <div style={{ width: '16px', height: '16px', borderRadius: '50%', border: `2px solid ${format === key ? 'var(--c-accent)' : 'var(--c-border)'}`, backgroundColor: format === key ? 'var(--c-accent)' : 'transparent', flexShrink: 0, marginTop: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                         {format === key && <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#fff' }} />}
@@ -286,7 +315,7 @@ export default function KMSExport() {
                     {/* 步驟三：匯出 */}
                     <div style={card}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                            <div style={{ backgroundColor: 'var(--c-accent)', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: '#fff', flexShrink: 0 }}>3</div>
+                            <div style={{ backgroundColor: 'var(--c-button-accent)', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: 'var(--c-on-accent)', flexShrink: 0 }}>3</div>
                             <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>確認並匯出</span>
                         </div>
                         <div style={{ backgroundColor: 'var(--c-bg)', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', fontSize: '13px', color: 'var(--c-muted)' }}>
@@ -318,14 +347,13 @@ export default function KMSExport() {
                         </button>
 
                         {/* NotebookLM 使用說明 */}
-                        <div style={{ marginTop: '16px', padding: '12px 14px', backgroundColor: 'rgba(0,200,150,0.06)', border: '1px solid rgba(0,200,150,0.2)', borderRadius: '8px', fontSize: '12px', color: 'var(--c-muted)', lineHeight: 1.7 }}>
-                            <p style={{ margin: '0 0 6px', color: 'var(--c-positive)', fontWeight: 600 }}>📚 如何上傳到 NotebookLM</p>
+                        <DisclosureNote summary="NotebookLM 上傳方式" style={{ marginTop: '16px' }}>
                             <p style={{ margin: 0 }}>1. 前往 <a href="https://notebooklm.google.com" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--c-accent)' }}>notebooklm.google.com</a></p>
                             <p style={{ margin: 0 }}>2. 建立新 Notebook 或開啟既有的</p>
                             <p style={{ margin: 0 }}>3. 點「新增來源」→「上傳檔案」</p>
                             <p style={{ margin: 0 }}>4. 選擇剛才匯出的 TXT 或 MD 檔案</p>
                             <p style={{ margin: 0 }}>5. 即可用 AI 對你的筆記內容進行問答！</p>
-                        </div>
+                        </DisclosureNote>
                     </div>
                 </div>
             )}

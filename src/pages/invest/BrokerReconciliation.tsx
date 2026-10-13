@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import DisclosureNote from '../../components/DisclosureNote'
 import { AlertTriangle, CheckCircle2, FileSearch, History, Image, Loader, Plus, RefreshCw, Save, ShieldCheck, Trash2, Upload } from 'lucide-react'
 import { fetchCashflow, fetchDividends, fetchTrades } from '../../lib/investData'
 import { calcAvailableCash, calcPositions, estimateMarginRepayment, type DividendRecord, type TradeRecord } from '../../lib/calc'
-import { countBrokerTradeCandidates, extractBrokerStatementPeriod, isYuantaMonthlyStatement, parseBrokerStatementText, reconcileBrokerTrades, reconciliationGroupKey, resolveBrokerTradeCodes, type BrokerTradeRow, type ReconciliationMode, type ReconciliationStatus } from '../../lib/brokerReconciliation'
-import { parseYuantaMonthlyDetails, reconcileMonthlyCash, reconcileMonthlyDividends, reconcileMonthlyHoldings, resolveBrokerDividendCodes, type BrokerMonthlyDetails, type MonthlyCheckStatus } from '../../lib/brokerMonthlyReconciliation'
+import { countBrokerTradeCandidates, extractBrokerStatementPeriod, isYuantaMonthlyStatement, parseBrokerStatementText, reconcileBrokerTrades, reconciliationGroupKey, resolveBrokerTradeCodes, verifyBrokerStatementTotals, type BrokerTradeRow, type ReconciliationMode, type ReconciliationStatus } from '../../lib/brokerReconciliation'
+import { combinedBrokerHoldings, parseYuantaMonthlyDetails, reconcileMonthlyCash, reconcileMonthlyDividends, reconcileMonthlyHoldings, resolveBrokerDividendCodes, type BrokerMonthlyDetails, type MonthlyCheckStatus } from '../../lib/brokerMonthlyReconciliation'
 import { fetchReconciliationReports, saveReconciliationReport, type ReconciliationSuggestion, type SavedReconciliationReport } from '../../lib/reconciliationStore'
 import { readBrokerDocuments } from '../../lib/brokerDocumentReader'
 import { useInvestSync } from '../../InvestSyncContext'
@@ -157,7 +158,7 @@ export default function BrokerReconciliation() {
     const scopedSystemRows = useMemo(
         () => systemRows.filter(row => row.date >= dateFrom && row.date <= dateTo).map(row => {
             if (!row.isMargin || row.type !== 'sell') return row
-            const estimate = estimateMarginRepayment(row, systemRows)
+            const estimate = estimateMarginRepayment(row, systemRows, dividends)
             const principal = row.marginPrincipal ?? estimate.principal
             return {
                 ...row,
@@ -167,7 +168,7 @@ export default function BrokerReconciliation() {
                 marginInterest: row.marginInterest ?? (row.marginRepay !== undefined ? row.marginRepay - principal : undefined),
             }
         }),
-        [systemRows, dateFrom, dateTo],
+        [systemRows, dividends, dateFrom, dateTo],
     )
     const scopedBrokerRows = useMemo(
         () => resolveBrokerTradeCodes(brokerRows.filter(row => row.date >= dateFrom && row.date <= dateTo), systemRows),
@@ -183,9 +184,8 @@ export default function BrokerReconciliation() {
     }, { matched: 0, mismatch: 0, 'missing-system': 0, 'missing-broker': 0, 'coverage-unknown': 0 }), [results])
 
     const datedSystemRows = useMemo(() => systemRows.filter(row => row.date <= dateTo), [systemRows, dateTo])
-    const datedDividends = useMemo(() => dividends.filter(row => row.date <= dateTo), [dividends, dateTo])
-    const systemHoldings = useMemo(() => calcPositions(datedSystemRows, datedDividends).holdings, [datedSystemRows, datedDividends])
-    const holdingChecks = useMemo(() => reconcileMonthlyHoldings(monthlyDetails.holdings, systemHoldings), [monthlyDetails.holdings, systemHoldings])
+    const systemHoldings = useMemo(() => calcPositions(datedSystemRows, dividends, { asOf: dateTo }).holdings, [datedSystemRows, dividends, dateTo])
+    const holdingChecks = useMemo(() => reconcileMonthlyHoldings(combinedBrokerHoldings(monthlyDetails), systemHoldings), [monthlyDetails, systemHoldings])
     const resolvedBrokerDividends = useMemo(
         () => resolveBrokerDividendCodes(monthlyDetails.dividends, dividends, monthlyDetails.holdings),
         [monthlyDetails.dividends, monthlyDetails.holdings, dividends],
@@ -202,14 +202,21 @@ export default function BrokerReconciliation() {
     const systemProjectedCash = useMemo(() => calcAvailableCash(
         cashflows.filter(row => row.date <= dateTo),
         datedSystemRows,
-        datedDividends,
-    ), [cashflows, datedSystemRows, datedDividends, dateTo])
+        dividends,
+        dateTo,
+    ), [cashflows, datedSystemRows, dividends, dateTo])
     const cashCheck = useMemo(
         () => reconcileMonthlyCash(monthlyDetails.cashBalance, systemProjectedCash, dateTo, scopedBrokerRows),
         [monthlyDetails.cashBalance, systemProjectedCash, dateTo, scopedBrokerRows],
     )
     const suggestions = useMemo<ReconciliationSuggestion[]>(() => {
         const next: ReconciliationSuggestion[] = []
+        if (cashCheck.status === 'unavailable') next.push({ category: 'cash', severity: 'warning', message: '未讀取到 CMA 月底結餘，本月現金尚未完成核對。' })
+        if (!monthlyDetails.holdings.length) next.push({ category: 'holding', severity: 'warning', message: '未讀取到庫存明細，請確認完整 PDF；不能視為零庫存或核對完成。' })
+        if (monthlyDetails.lendingVerified === false) next.push({ category: 'holding', severity: 'warning', message: '出借庫存尚無法與出借市值相互驗證，需檢查有價證券借貸頁。' })
+        if (parseWarning) next.push({ category: 'trade', severity: 'warning', message: parseWarning })
+        const income = (monthlyDetails.cashEntries ?? []).filter(row => row.category === 'interest' || row.category === 'lending-income')
+        if (income.length) next.push({ category: 'cash', severity: 'warning', message: `CMA 有 ${income.length} 筆出借收入／存款利息，共 ${income.reduce((sum, row) => sum + row.amount, 0).toLocaleString()} 元。請核對收益是否已記錄；此類收入不屬於外部入金，請勿用補入金代替。` })
         results.filter(row => row.status !== 'matched' && row.status !== 'coverage-unknown').forEach(row => {
             const source = row.broker ?? row.system
             if (row.marginCorrection) {
@@ -222,7 +229,7 @@ export default function BrokerReconciliation() {
                 next.push({ category: 'trade', severity: 'danger', message: `${source?.date ?? ''} ${source?.code ?? ''} ${row.differences.join('；')}`.trim() })
             }
         })
-        if (cashCheck.status === 'mismatch') next.push({ category: 'cash', severity: 'danger', message: `CMA 月底餘額與系統交割口徑相差 ${Math.round(cashCheck.difference ?? 0).toLocaleString()} 元，請檢查出入金、股利或未交割款。` })
+        if (cashCheck.status === 'mismatch') next.push({ category: 'cash', severity: 'danger', message: `CMA 月底餘額與系統交割口徑相差 ${(cashCheck.difference ?? 0).toLocaleString('zh-TW', { maximumFractionDigits: 2 })} 元，請檢查出入金、股利或未交割款。` })
         holdingChecks.filter(row => row.status !== 'matched').forEach(row => next.push({
             category: 'holding', severity: 'warning',
             message: `${row.code} ${row.name}：券商 ${row.brokerShares?.toLocaleString() ?? '無'} 股／系統 ${row.systemShares?.toLocaleString() ?? '無'} 股${row.difference < 0 ? '；若有出借股票，請先確認是否屬於券商庫存未顯示。' : ''}`,
@@ -234,9 +241,16 @@ export default function BrokerReconciliation() {
                 : `${row.date} ${row.code || row.name}：券商股利 ${row.brokerAmount?.toLocaleString() ?? '無'} 元／系統 ${row.systemAmount?.toLocaleString() ?? '無'} 元。`,
         }))
         return next
-    }, [results, cashCheck, holdingChecks, dividendChecks])
+    }, [results, cashCheck, holdingChecks, dividendChecks, monthlyDetails, parseWarning])
 
     const parseText = (text = rawText) => {
+        if ((text.match(/對帳單期間\s*[:：]/g) ?? []).length > 1) {
+            setBrokerRows([])
+            setMonthlyDetails(emptyMonthlyDetails)
+            setParseWarning('一次請核對一份完整月份的 PDF；多份月結混合會使 CMA、庫存與期間無法正確對應。')
+            setSaveMessage('')
+            return
+        }
         const parsed = parseBrokerStatementText(text)
         const candidateCount = countBrokerTradeCandidates(text)
         const isMonthlyStatement = isYuantaMonthlyStatement(text)
@@ -253,7 +267,7 @@ export default function BrokerReconciliation() {
             ? isMonthlyStatement
                 ? `交易明細共有 ${candidateCount} 筆，目前完整解析 ${parsed.length} 筆；另有 ${candidateCount - parsed.length} 筆格式需要人工確認，請查看下方辨識文字。`
                 : `偵測到 ${candidateCount} 個可能的交易區塊，但只完整解析 ${parsed.length} 筆。可能有 ${candidateCount - parsed.length} 筆被畫面底部截斷，請再補一張向下滾動後的截圖。`
-            : '')
+            : isMonthlyStatement ? verifyBrokerStatementTotals(text, parsed).join('；') : '')
         if (parsed.length === 0) {
             setError('找不到可確認的成交列。請檢查截圖是否包含日期、買賣、代號、價格及股數，或直接修正下方辨識文字。')
         } else {
@@ -311,6 +325,11 @@ export default function BrokerReconciliation() {
 
     const handleSaveReport = async () => {
         if (mode !== 'monthly' || brokerRows.length === 0) return
+        const statementPeriod = extractBrokerStatementPeriod(rawText)
+        if (parseWarning || !statementPeriod || statementPeriod.from !== dateFrom || statementPeriod.to !== dateTo) {
+            setSaveMessage('保存失敗：請先完整解析單月對帳單，並使用該對帳單的原始起迄日期。')
+            return
+        }
         setSavingReport(true)
         setSaveMessage('')
         try {
@@ -342,7 +361,7 @@ export default function BrokerReconciliation() {
         <div style={{ padding: 'clamp(14px, 3vw, 24px)', maxWidth: '1280px', margin: '0 auto' }}>
             <div style={{ marginBottom: '20px' }}>
                 <h1 style={{ margin: 0, fontSize: '24px', display: 'flex', alignItems: 'center', gap: '10px' }}><FileSearch size={24} />對帳核對</h1>
-                <p style={{ color: 'var(--c-muted)', fontSize: '14px', margin: '8px 0 0' }}>月中可用截圖暫時核對，月底再用 PDF 完成正式月結。本頁只找出差異，不會修改任何買賣紀錄。</p>
+                
             </div>
 
             <section style={{ ...card, marginBottom: '16px' }}>
@@ -402,7 +421,7 @@ export default function BrokerReconciliation() {
                 {error && <div role="alert" style={{ marginTop: '12px', color: 'var(--c-negative)', fontSize: '13px', display: 'flex', gap: '7px' }}><AlertTriangle size={16} />{error}</div>}
                 {parseWarning && <div role="status" style={{ marginTop: '12px', color: 'var(--c-warning)', fontSize: '13px', display: 'flex', gap: '7px' }}><AlertTriangle size={16} style={{ flexShrink: 0 }} />{parseWarning}</div>}
                 <div style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '8px', background: 'color-mix(in srgb, var(--c-accent) 8%, transparent)', color: 'var(--c-muted)', fontSize: '12px', display: 'flex', gap: '8px' }}>
-                    <ShieldCheck size={16} style={{ flexShrink: 0 }} />檔案只在這台裝置的瀏覽器內解析。第一次使用 OCR 需下載辨識模型，可能需要等待一段時間，對帳檔本身不會上傳。
+                    <ShieldCheck size={16} style={{ flexShrink: 0 }} />檔案在本機解析，不上傳。
                 </div>
             </section>
 
@@ -458,18 +477,18 @@ export default function BrokerReconciliation() {
                     {cashCheck.status === 'unavailable' ? <div style={{ color: 'var(--c-warning)', fontSize: '13px' }}>這份文件沒有讀到「月底結餘」，請確認 PDF 是否包含 CMA 交易明細頁。</div> : cashCheck.status === 'matched' ? <div style={{ color: 'var(--c-positive)', display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px' }}><CheckCircle2 size={16} />CMA 月底餘額與系統換算後的交割日餘額一致。</div> : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
                         {[
                             ['券商 CMA 月底餘額', cashCheck.brokerBalance],
-                            ['系統交易日可用現金', cashCheck.systemProjectedCash],
+                            ['系統成交日帳面現金', cashCheck.systemProjectedCash],
                             ['月底後待交割淨額', cashCheck.unsettledNet],
                             ['系統換算交割日餘額', cashCheck.systemExpectedSettledCash],
-                        ].map(([label, value]) => <div key={String(label)} style={{ border: '1px solid var(--c-border)', borderRadius: '9px', padding: '12px' }}><div style={{ color: 'var(--c-muted)', fontSize: '12px' }}>{label}</div><div style={{ fontWeight: 700, marginTop: '5px' }}>{Math.round(Number(value)).toLocaleString()} 元</div></div>)}
-                        <div style={{ border: '1px solid var(--c-negative)', borderRadius: '9px', padding: '12px' }}><div style={{ color: 'var(--c-muted)', fontSize: '12px' }}>交割口徑差額</div><div style={{ fontWeight: 700, marginTop: '5px', color: 'var(--c-negative)' }}>{Math.round(cashCheck.difference ?? 0).toLocaleString()} 元・需要確認</div></div>
+                        ].map(([label, value]) => <div key={String(label)} style={{ border: '1px solid var(--c-border)', borderRadius: '9px', padding: '12px' }}><div style={{ color: 'var(--c-muted)', fontSize: '12px' }}>{label}</div><div style={{ fontWeight: 700, marginTop: '5px' }}>{Number(value).toLocaleString('zh-TW', { maximumFractionDigits: 2 })} 元</div></div>)}
+                        <div style={{ border: '1px solid var(--c-negative)', borderRadius: '9px', padding: '12px' }}><div style={{ color: 'var(--c-muted)', fontSize: '12px' }}>交割口徑差額</div><div style={{ fontWeight: 700, marginTop: '5px', color: 'var(--c-negative)' }}>{(cashCheck.difference ?? 0).toLocaleString('zh-TW', { maximumFractionDigits: 2 })} 元・需要確認</div></div>
                     </div>}
-                    {cashCheck.status === 'mismatch' && <div style={{ color: 'var(--c-muted)', fontSize: '12px', marginTop: '10px' }}>系統仍以成交日立即影響可用現金；此處只把月底尚未交割的款項加回／扣回，用相同交割日口徑與 CMA 比較。</div>}
+                    {cashCheck.status === 'mismatch' && <DisclosureNote summary="以交割日口徑核對 CMA。" style={{ marginTop: '10px' }}>系統仍以成交日計算帳面現金；此處只把月底尚未交割的款項加回／扣回，用相同交割日口徑與 CMA 比較。</DisclosureNote>}
                 </section>
 
                 <section style={{ ...card, marginBottom: '16px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', marginBottom: '12px' }}><div><div style={{ fontWeight: 700, fontSize: '16px' }}>月底庫存核對</div><div style={{ color: 'var(--c-muted)', fontSize: '12px', marginTop: '3px' }}>比較總持有股數；不會從系統排除借出的股票。</div></div>{holdingIssues.length > 0 && <span style={{ color: 'var(--c-warning)', fontSize: '12px' }}>{holdingIssues.length} 項待確認</span>}</div>
-                    {holdingIssues.length === 0 ? <div style={{ color: 'var(--c-positive)', display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px' }}><CheckCircle2 size={16} />{holdingChecks.length} 檔月底庫存全部一致。</div> : <div style={{ display: 'grid', gap: '8px' }}>{holdingIssues.map(row => {
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', marginBottom: '12px' }}><div><div style={{ fontWeight: 700, fontSize: '16px' }}>月底庫存核對</div><div style={{ color: 'var(--c-muted)', fontSize: '12px', marginTop: '3px' }}>比較集保、信用及已驗證的出借庫存。已辨識出借 {(monthlyDetails.lentHoldings ?? []).reduce((sum, row) => sum + row.shares, 0).toLocaleString()} 股。</div></div>{holdingIssues.length > 0 && <span style={{ color: 'var(--c-warning)', fontSize: '12px' }}>{holdingIssues.length} 項待確認</span>}</div>
+                    {!monthlyDetails.holdings.length || monthlyDetails.lendingVerified === false ? <div style={{ color: 'var(--c-warning)' }}>庫存資料尚未完整驗證，請檢查 PDF 庫存及出借明細。</div> : holdingIssues.length === 0 ? <div style={{ color: 'var(--c-positive)', display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px' }}><CheckCircle2 size={16} />{holdingChecks.length} 檔月底庫存全部一致。</div> : <div style={{ display: 'grid', gap: '8px' }}>{holdingIssues.map(row => {
                         const meta = monthlyStatusMeta[row.status]
                         return <div key={row.key} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', border: '1px solid var(--c-border)', borderRadius: '9px', padding: '10px 12px', fontSize: '13px' }}><div style={{ color: meta.color, fontWeight: 700 }}>{meta.label}</div><div><strong>{row.code}</strong> {row.name}</div><div>券商 {row.brokerShares?.toLocaleString() ?? '—'} 股</div><div>系統 {row.systemShares?.toLocaleString() ?? '—'} 股</div><div>差額 {row.difference.toLocaleString()} 股</div></div>
                     })}</div>}

@@ -1,13 +1,20 @@
+import DialogHost from './components/DialogHost'
+import AiAssistantHost from './components/AiAssistantHost'
+import { MessageCircle } from 'lucide-react'
+import './ui/ai.css'
+import { APP_VERSION } from './lib/appVersion'
+import AppErrorBoundary from './components/AppErrorBoundary'
+import { useMobileLayout } from './lib/useMobileLayout'
 import { useState, useEffect, lazy, Suspense, memo, useRef } from 'react'
-import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
+import { Routes, Route, NavLink, useLocation, useNavigate, Navigate } from 'react-router-dom'
 import { LayoutDashboard, ArrowLeftRight, TrendingUp, TrendingDown, History, DollarSign, Scissors, BarChart2, Settings, BookOpen, Network, Menu, X, ChevronRight, ChevronDown, Tag, Trash2, LogOut, Download, Calendar, List, CheckSquare, Newspaper, CreditCard, Folder, Wrench, Target, Map, Users, Loader, PieChart, FileSearch } from 'lucide-react'
-import { getDoc, onSnapshot } from 'firebase/firestore'
+import { onSnapshot } from 'firebase/firestore'
 import { investDB, kmsDB } from './lib/firebase'
 import { userDocNested } from './lib/userDB'
 import { buildKmsTagStatsFromSummaries, fetchKmsNoteSummaries, fetchKmsTagOrder, fetchKmsTagStats, hasUsableKmsTagStats, KMS_UNTAGGED_KEY } from './lib/kmsData'
 import { signOutAll, switchAccount, investAuth } from './lib/auth'
 import { ACCOUNT_STORE_CHANGED_EVENT, loadAccounts, removeAccount, updateAccountDisplayName, type SavedAccount } from './lib/accountStore'
-import { PriceProvider } from './PriceContext'
+import { PriceProvider, PriceRefreshStatus } from './PriceContext'
 import { MarketCapProvider } from './MarketCapContext'
 import { InvestSyncProvider, InvestSyncStatus } from './InvestSyncContext'
 
@@ -249,8 +256,8 @@ function AccountSwitcherInline({ displayName }: { displayName: string }) {
         try {
             await switchAccount(email)
             setOpen(false)
-        } catch (err: any) {
-            setError(err.message ?? '切換失敗')
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : '切換失敗')
         } finally {
             setSwitching(null)
         }
@@ -282,7 +289,7 @@ function AccountSwitcherInline({ displayName }: { displayName: string }) {
                 <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0, backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '10px', padding: '6px', zIndex: 200, boxShadow: '0 4px 20px rgba(0,0,0,0.3)', minWidth: '160px' }}>
                     {/* 目前帳號 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', borderRadius: '6px', backgroundColor: 'color-mix(in srgb, var(--c-accent) 8%, transparent)', marginBottom: otherAccounts.length > 0 ? '4px' : 0 }}>
-                        <div style={{ width: '18px', height: '18px', borderRadius: '50%', backgroundColor: 'var(--c-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                        <div style={{ width: '18px', height: '18px', borderRadius: '50%', backgroundColor: 'var(--c-button-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 700, color: 'var(--c-on-accent)', flexShrink: 0 }}>
                             {label.charAt(0).toUpperCase()}
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -361,7 +368,7 @@ const Sidebar = memo(({
                         <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginTop: '3px' }}>使用者：{displayName}</div>
                     )}
                 </div>
-                {isMobile && <button onClick={() => setSidebarOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={20} /></button>}
+                {isMobile && <button aria-label="關閉功能選單" onClick={() => setSidebarOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--c-muted)', cursor: 'pointer' }}><X size={20} /></button>}
             </div>
 
             {/* 三系統切換 */}
@@ -371,7 +378,7 @@ const Sidebar = memo(({
                     { to: '/kms', label: '知識', key: 'kms' },
                     { to: '/calendar', label: '行事曆', key: 'calendar' },
                 ].map(({ to, label, key }) => (
-                    <NavLink key={key} to={to} style={{ flex: 1, textAlign: 'center', fontSize: '11px', padding: '6px 4px', borderRadius: '6px', textDecoration: 'none', backgroundColor: currentSystem === key ? 'var(--c-accent)' : 'transparent', color: currentSystem === key ? '#fff' : 'var(--c-muted)', fontWeight: currentSystem === key ? 600 : 400 }}>
+                    <NavLink key={key} to={to} style={{ flex: 1, textAlign: 'center', fontSize: '11px', padding: '6px 4px', borderRadius: '6px', textDecoration: 'none', backgroundColor: currentSystem === key ? 'var(--c-button-accent)' : 'transparent', color: currentSystem === key ? 'var(--c-on-accent)' : 'var(--c-muted)', fontWeight: currentSystem === key ? 600 : 400 }}>
                         {label}
                     </NavLink>
                 ))}
@@ -482,7 +489,7 @@ const Sidebar = memo(({
 
                 {/* ── 版本代號 ── */}
                 <div style={{ textAlign: 'center' }}>
-                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>v26.7.31</span>
+                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>{APP_VERSION}</span>
                 </div>
             </div>
         </aside>
@@ -538,15 +545,27 @@ function MobileBottomNav({
 
 export default function App() {
     const location = useLocation()
+    const navigate = useNavigate()
     const isKMS = location.pathname.startsWith('/kms')
     const isKMSHome = location.pathname === '/kms'
     const isCalendar = location.pathname.startsWith('/calendar')
     const [sidebarOpen, setSidebarOpen] = useState(false)
-    const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+    const isMobile = useMobileLayout()
     const [tagTree, setTagTree] = useState<Record<string, TreeNode>>({})
     const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
     const [selectedTag, setSelectedTag] = useState('')
-    const [kmsExpanded, setKmsExpanded] = useState(false)
+    const [kmsExpanded, setKmsExpanded] = useState(isKMSHome)
+    const [previousPath, setPreviousPath] = useState(location.pathname)
+    const [previousKMSHome, setPreviousKMSHome] = useState(isKMSHome)
+    if (previousPath !== location.pathname) {
+        setPreviousPath(location.pathname)
+        setSidebarOpen(false)
+    }
+    if (previousKMSHome !== isKMSHome) {
+        setPreviousKMSHome(isKMSHome)
+        setKmsExpanded(isKMSHome)
+        if (!isKMSHome) setSelectedTag('')
+    }
     const [untaggedCount, setUntaggedCount] = useState(0)
     const [kmsDataVersion, setKmsDataVersion] = useState(0)
 
@@ -576,18 +595,6 @@ export default function App() {
         },
         () => setDisplayName(''),
     ), [])
-
-    useEffect(() => {
-        const handle = () => setIsMobile(window.innerWidth < 768)
-        window.addEventListener('resize', handle)
-        return () => window.removeEventListener('resize', handle)
-    }, [])
-
-    useEffect(() => { setSidebarOpen(false) }, [location.pathname])
-
-    useEffect(() => {
-        if (isKMSHome) { setKmsExpanded(true) } else { setKmsExpanded(false); setSelectedTag('') }
-    }, [isKMSHome])
 
     useEffect(() => {
         if (!isKMS) return
@@ -644,7 +651,11 @@ export default function App() {
         kmsExpanded,
         setKmsExpanded,
         selectedTag,
-        setSelectedTag,
+        setSelectedTag: tag => {
+            setSelectedTag(tag)
+            if (!isKMSHome) navigate('/kms')
+            if (isMobile) setSidebarOpen(false)
+        },
         untaggedCount,
         expandedNodes,
         toggleNode,
@@ -653,6 +664,7 @@ export default function App() {
 
     return (
         <PriceProvider>
+            <DialogHost scope={location.pathname} />
             <InvestSyncProvider>
               <MarketCapProvider>
                 <div className="app-shell" style={{ display: 'flex', backgroundColor: 'var(--c-bg)', overflow: 'hidden' }}>
@@ -668,45 +680,51 @@ export default function App() {
                             <header className="mobile-header">
                                 <button className="mobile-menu-button" onClick={() => setSidebarOpen(true)} aria-label="開啟全部功能"><Menu size={22} /></button>
                                 <span className="mobile-header-title">{mobileTitle}</span>
+                                <button className="mobile-menu-button" aria-label="開啟 AI" onClick={() => window.dispatchEvent(new Event('symbiosis:open-ai'))}><MessageCircle size={21} /></button>
                             </header>
                         )}
                         <main className="app-main" style={{ flex: 1, overflowY: 'auto', color: 'var(--c-text)' }}>
                             {currentSystem === 'invest' && <InvestSyncStatus />}
-                            <Suspense fallback={<PageLoader />}>
-                                <Routes>
-                                    <Route path="/" element={<Navigate to="/invest" replace />} />
-                                    <Route path="/invest" element={<Dashboard />} />
-                                    <Route path="/invest/trades" element={<Trades />} />
-                                    <Route path="/invest/holdings" element={<Holdings />} />
-                                    <Route path="/invest/watchlist" element={<Watchlist />} />
-                                    <Route path="/invest/history" element={<HistoryPnL />} />
-                                    <Route path="/invest/cashflow" element={<CashFlow />} />
-                                    <Route path="/invest/dividend" element={<Dividend />} />
-                                    <Route path="/invest/trend" element={<AssetTrend />} />
-                                    <Route path="/invest/review" element={<YearReview />} />
-                                    <Route path="/invest/brief" element={<DailyBrief />} />
-                                    <Route path="/invest/margin" element={<MarginManager />} />
-                                    <Route path="/invest/portfolio-planner" element={<PortfolioPlanner />} />
-                                    <Route path="/invest/sentiment" element={<SentimentTracker />} />
-                                    <Route path="/invest/industry" element={<IndustryMap />} />
-                                    <Route path="/invest/sold-tracker" element={<SoldTracker />} />
-                                    <Route path="/invest/settings" element={<InvestSettings />} />
-                                    <Route path="/invest/reconciliation" element={<BrokerReconciliation />} />
-                                    <Route path="/kms" element={<KMSHome selectedTag={selectedTag} setSelectedTag={setSelectedTag} onNotesChanged={() => setKmsDataVersion(v => v + 1)} />} />
-                                    <Route path="/kms/tags" element={<KMSTags />} />
-                                    <Route path="/kms/export" element={<KMSExport />} />
-                                    <Route path="/kms/graph" element={<KMSGraph />} />
-                                    <Route path="/kms/trash" element={<KMSTrash />} />
-                                    <Route path="/calendar" element={<CalendarHome />} />
-                                    <Route path="/calendar/tasks" element={<TaskManager />} />
-                                    <Route path="/calendar/settings" element={<CalendarSettings />} />
-                                </Routes>
-                            </Suspense>
+                            <PriceRefreshStatus />
+                            <AppErrorBoundary key={location.pathname} scope="page">
+                                <Suspense fallback={<PageLoader />}>
+                                    <Routes>
+                                        <Route path="/ai" element={<Navigate to="/invest" replace />} />
+                                        <Route path="/" element={<Navigate to="/invest" replace />} />
+                                        <Route path="/invest" element={<Dashboard />} />
+                                        <Route path="/invest/trades" element={<Trades />} />
+                                        <Route path="/invest/holdings" element={<Holdings />} />
+                                        <Route path="/invest/watchlist" element={<Watchlist />} />
+                                        <Route path="/invest/history" element={<HistoryPnL />} />
+                                        <Route path="/invest/cashflow" element={<CashFlow />} />
+                                        <Route path="/invest/dividend" element={<Dividend />} />
+                                        <Route path="/invest/trend" element={<AssetTrend />} />
+                                        <Route path="/invest/review" element={<YearReview />} />
+                                        <Route path="/invest/brief" element={<DailyBrief />} />
+                                        <Route path="/invest/margin" element={<MarginManager />} />
+                                        <Route path="/invest/portfolio-planner" element={<PortfolioPlanner />} />
+                                        <Route path="/invest/sentiment" element={<SentimentTracker />} />
+                                        <Route path="/invest/industry" element={<IndustryMap />} />
+                                        <Route path="/invest/sold-tracker" element={<SoldTracker />} />
+                                        <Route path="/invest/settings" element={<InvestSettings />} />
+                                        <Route path="/invest/reconciliation" element={<BrokerReconciliation />} />
+                                        <Route path="/kms" element={<KMSHome selectedTag={selectedTag} setSelectedTag={setSelectedTag} onNotesChanged={() => setKmsDataVersion(v => v + 1)} />} />
+                                        <Route path="/kms/tags" element={<KMSTags />} />
+                                        <Route path="/kms/export" element={<KMSExport />} />
+                                        <Route path="/kms/graph" element={<KMSGraph />} />
+                                        <Route path="/kms/trash" element={<KMSTrash />} />
+                                        <Route path="/calendar" element={<CalendarHome />} />
+                                        <Route path="/calendar/tasks" element={<TaskManager />} />
+                                        <Route path="/calendar/settings" element={<CalendarSettings />} />
+                                    </Routes>
+                                </Suspense>
+                            </AppErrorBoundary>
                         </main>
                         {isMobile && <MobileBottomNav currentSystem={currentSystem} openMenu={() => setSidebarOpen(true)} />}
                     </div>
                 </div>
               </MarketCapProvider>
+              <AiAssistantHost />
             </InvestSyncProvider>
         </PriceProvider>
     )

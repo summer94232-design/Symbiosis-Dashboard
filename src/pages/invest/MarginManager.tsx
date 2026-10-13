@@ -1,13 +1,16 @@
+import LoadingState from '../../components/LoadingState'
 import { useState, useEffect } from 'react'
+import DisclosureNote from '../../components/DisclosureNote'
 import { simulateMarginBuy, calcMarginStress } from '../../lib/calc'
 import { loadPortfolioSnapshot } from '../../lib/portfolioSnapshot'
 import { useInvestSync } from '../../InvestSyncContext'
+import { usePrices } from '../../PriceContext'
 import { TrendingDown, Plus, Trash2, Calculator, AlertTriangle, Flame } from 'lucide-react'
 import { DEFAULT_MARGIN_RULES, loadMarginRules } from '../../lib/marginSettings'
 import MarginRulesPanel from '../../components/MarginRulesPanel'
 
 const card: React.CSSProperties = {
-    backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px'
+    backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: 'var(--ui-card-padding, 20px)'
 }
 
 interface MarginPosition {
@@ -29,8 +32,12 @@ interface SimRow {
 
 export default function MarginManager() {
     const { version: syncVersion } = useInvestSync()
-    const [positions, setPositions] = useState<MarginPosition[]>([])
+    const { prices } = usePrices()
+    const [storedPositions, setPositions] = useState<MarginPosition[]>([])
+    const positions = storedPositions.map(position => Object.hasOwn(prices, position.code)
+        ? { ...position, currentPrice: prices[position.code] } : position)
     const [loading, setLoading] = useState(true)
+    const [hasLoaded, setHasLoaded] = useState(false)
     const [marginRules, setMarginRules] = useState(DEFAULT_MARGIN_RULES)
     const ratioColor = (v: number) => v >= marginRules.safeRatio ? 'var(--c-positive)' : v >= marginRules.maintenanceRatio ? 'var(--c-warning)' : 'var(--c-danger)'
     const ratioLabel = (v: number) => v >= marginRules.safeRatio ? '✓ 安全' : v >= marginRules.maintenanceRatio ? '⚠ 留意' : '⚠ 危險'
@@ -63,6 +70,7 @@ export default function MarginManager() {
                     return { ...m, currentPrice: typeof raw === 'number' && raw > 0 ? raw : null }
                 })
                 setPositions(active)
+            setHasLoaded(true)
             } catch (err) { console.error(err) }
             finally { setLoading(false) }
         }
@@ -133,25 +141,32 @@ export default function MarginManager() {
     return (
         <>
             <style>{`
-        .mm-grid { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
-        @media (max-width: 800px) { .mm-grid { grid-template-columns: 1fr; } }
+        .mm-grid { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        @media (max-width: 800px) { .mm-grid { grid-template-columns: minmax(0, 1fr); } }
         .mm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
         .mm-table th { padding: 8px 10px; text-align: left; color: var(--c-muted); font-weight: 500; border-bottom: 1px solid var(--c-border); white-space: nowrap; }
         .mm-table td { padding: 10px; border-bottom: 1px solid var(--c-border); color: var(--c-text); white-space: nowrap; }
         .sim-input { width: 90px; padding: 6px 8px; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 6px; color: var(--c-text); font-size: 13px; outline: none; }
         .sim-input:focus { border-color: var(--c-accent); }
+        .mm-sim-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+        .mm-sim-field { display: grid; gap: 4px; min-width: 0; font-size: 11px; color: var(--c-muted); }
+        .mm-sim-field .sim-input { width: 100%; min-width: 0; }
+        .mm-sim-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-height: 28px; }
+        .mm-sim-row + .mm-sim-row { padding-top: 8px; border-top: 1px solid var(--c-border); }
+        @media (max-width: 480px) { .mm-sim-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
       `}</style>
 
-            <div style={{ padding: 'clamp(16px, 3vw, 32px)', maxWidth: '1200px', margin: '0 auto' }}>
-                <div style={{ marginBottom: '24px' }}>
+            <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1200px', margin: '0 auto' }}>
+                <div style={{ marginBottom: '16px' }}>
                     <h1 style={{ fontSize: 'clamp(18px, 2.5vw, 22px)', fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>融資管理</h1>
-                    <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '4px 0 0' }}>整戶融資維持率監控 · 加碼試算</p>
+                    
                 </div>
 
                 <MarginRulesPanel rules={marginRules} onSaved={setMarginRules} />
 
-                {loading ? (
-                    <div style={{ textAlign: 'center', padding: '80px', color: 'var(--c-muted)' }}>載入中...</div>
+                {loading && hasLoaded && <p className="ui-refresh-status" role="status">資料更新中…</p>}
+                {loading && !hasLoaded ? (
+                    <LoadingState />
                 ) : (
                     <>
                         {/* ── 整戶維持率總覽 ── */}
@@ -308,7 +323,7 @@ export default function MarginManager() {
 
                             {/* 加碼試算 */}
                             <div style={card}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                         <Calculator size={15} color="var(--c-accent)" />
                                         <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>加碼試算</span>
@@ -321,30 +336,27 @@ export default function MarginManager() {
                                     </div>
                                 </div>
 
-                                <div style={{ display: 'flex', gap: '6px', fontSize: '11px', color: 'var(--c-muted)', marginBottom: '8px', paddingBottom: '6px', borderBottom: '1px solid var(--c-border)' }}>
-                                    <span style={{ width: '70px' }}>代號</span>
-                                    <span style={{ width: '90px' }}>買入價</span>
-                                    <span style={{ width: '80px' }}>股數</span>
-                                    <span style={{ width: '70px' }}>融資成數</span>
-                                </div>
-
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
                                     {simRows.map((row, idx) => (
-                                        <div key={row.id} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                                            <input className="sim-input" style={{ width: '70px' }} placeholder="代號" value={row.code} onChange={e => updateRow(row.id, 'code', e.target.value)} />
-                                            <input className="sim-input" type="number" placeholder="價格" value={row.price} onChange={e => updateRow(row.id, 'price', e.target.value)} />
-                                            <input className="sim-input" style={{ width: '80px' }} type="number" placeholder="股數" value={row.shares} onChange={e => updateRow(row.id, 'shares', e.target.value)} />
-                                            <input className="sim-input" style={{ width: '70px' }} type="number" placeholder="0.6" value={row.ratio} onChange={e => updateRow(row.id, 'ratio', e.target.value)} />
-                                            {rowResults[idx] && (
+                                        <div className="mm-sim-row" key={row.id}>
+                                            <div className="mm-sim-fields">
+                                                <label className="mm-sim-field">代號<input className="sim-input" placeholder="代號" value={row.code} onChange={e => updateRow(row.id, 'code', e.target.value)} /></label>
+                                                <label className="mm-sim-field">買入價<input className="sim-input" type="number" placeholder="價格" value={row.price} onChange={e => updateRow(row.id, 'price', e.target.value)} /></label>
+                                                <label className="mm-sim-field">股數<input className="sim-input" type="number" placeholder="股數" value={row.shares} onChange={e => updateRow(row.id, 'shares', e.target.value)} /></label>
+                                                <label className="mm-sim-field">融資成數<input className="sim-input" type="number" placeholder="0.6" value={row.ratio} onChange={e => updateRow(row.id, 'ratio', e.target.value)} /></label>
+                                            </div>
+                                            {(rowResults[idx] || simRows.length > 1) && <div className="mm-sim-footer">
+                                                {rowResults[idx] && (
                                                 <span style={{ fontSize: '13px', fontWeight: 700, color: ratioColor(rowResults[idx]!.newMarginRatio), minWidth: '55px' }}>
                                                     {rowResults[idx]!.newMarginRatio.toFixed(1)}%
                                                 </span>
-                                            )}
-                                            {simRows.length > 1 && (
-                                                <button onClick={() => removeRow(row.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-danger)', padding: '2px' }}>
+                                                )}
+                                                {simRows.length > 1 && (
+                                                <button aria-label={`移除第 ${idx + 1} 筆試算`} onClick={() => removeRow(row.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-danger)', padding: '2px' }}>
                                                     <Trash2 size={13} />
                                                 </button>
-                                            )}
+                                                )}
+                                            </div>}
                                         </div>
                                     ))}
                                 </div>
@@ -411,7 +423,7 @@ export default function MarginManager() {
                                 )}
 
                                 <div style={{ marginTop: '14px', padding: '10px 12px', backgroundColor: 'color-mix(in srgb, var(--c-accent) 6%, transparent)', borderRadius: '8px', fontSize: '11px', color: 'var(--c-muted)', lineHeight: 1.6 }}>
-                                    💡 支援多筆同時試算，維持率逐筆累計計算。融資成數預設 0.6（六成）。
+                                    多筆累計試算，預設融資六成。
                                 </div>
                             </div>
                         </div>
@@ -423,7 +435,7 @@ export default function MarginManager() {
                                     <AlertTriangle size={15} color="var(--c-warning)" />
                                     <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)' }}>整體下跌壓力測試</span>
                                 </div>
-                                <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '16px' }}>假設所有融資持股一起跌同一幅度，維持率會掉到哪、距追繳線還有多遠。單一個股暴跌的觸線點見上方明細的「單檔觸追繳」。</div>
+                                <DisclosureNote summary="假設全部融資持股同幅下跌。" style={{ margin: '0 0 12px' }}>查看維持率與追繳線的距離；單一個股暴跌的觸線點見上方明細的「單檔觸追繳」。</DisclosureNote>
 
                                 <div className="mm-grid">
                                     {/* 固定情境表 */}

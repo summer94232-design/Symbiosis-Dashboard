@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>圖示與文字對齊本機檢查</title>
+<style>
+body{margin:0;padding:16px;font:14px system-ui;background:#e7e9f0;color:#222;overflow:auto}
+h1{font-size:18px}nav{display:flex;gap:8px;margin-bottom:12px}button{padding:6px 12px}
+.previews{display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap}
+iframe{border:1px solid #aaa;border-radius:12px;background:#121322;display:block}
+figure{margin:0}figcaption{margin:0 0 8px}
+</style>
+<h1>本機版面檢查（隔離資料）</h1>
+<nav><button onclick="switchPage('dashboard')">儀表板</button><button onclick="switchPage('cash')">出入金</button><button onclick="switchPage('export')">知識庫</button><button onclick="switchPage('planner')">配置試算</button></nav>
+<div class="previews">
+<figure><figcaption>手機直向 393 × 852</figcaption><iframe title="手機直向" width="393" height="852" src="ui-text.html?page=dashboard"></iframe></figure>
+<figure><figcaption>窄螢幕 320 × 640</figcaption><iframe title="窄螢幕" width="320" height="640" src="ui-text.html?page=dashboard"></iframe></figure>
+<figure><figcaption>手機橫向 844 × 390</figcaption><iframe title="手機橫向" width="844" height="390" src="ui-text.html?page=dashboard"></iframe></figure>
+<figure><figcaption>桌面 1280 × 800</figcaption><iframe title="桌面" width="1280" height="800" src="ui-text.html?page=dashboard"></iframe></figure>
+</div>
+<script>function switchPage(page){document.querySelectorAll('iframe').forEach(frame=>frame.src='ui-text.html?page='+page)}</script>
+</html>

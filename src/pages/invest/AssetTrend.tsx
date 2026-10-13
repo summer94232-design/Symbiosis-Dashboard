@@ -1,7 +1,13 @@
-import { useState, useEffect, useMemo } from 'react'
+import { getHistoricalCandles } from '../../lib/fugle'
+import LoadingState from '../../components/LoadingState'
+import { card, inp, lbl, btn } from '../../ui/styles'
+import { confirmAction } from '../../ui/dialogs'
+import { buildTimeWeightedReturns, buildRestartedTimeWeightedReturns } from '../../lib/performanceReturns'
+import { buildTodaySnapshot, saveValuationSnapshot } from '../../lib/snapshot'
+import { useState, useEffect, useMemo, useEffectEvent, useRef } from 'react'
 import { setDoc, deleteDoc, getDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
-import { userDoc, userDocNested } from '../../lib/userDB'
+import { captureUserSession, userDoc, userDocNested } from '../../lib/userDB'
 import { fetchCashflow, fetchAssetSnapshots, fetchDividends, fetchTrades, invalidateAssetSnapshots } from '../../lib/investData'
 import { loadPortfolioSnapshot } from '../../lib/portfolioSnapshot'
 import { reconcileSnapshotBreakdowns, type DividendRecord, type TradeRecord } from '../../lib/calc'
@@ -15,12 +21,16 @@ import { calculateReturnGap } from '../../lib/returnComparison'
 // ── 型別 ──────────────────────────────────────────────────────────────────
 
 interface SnapshotRecord {
+    valuationQuality?: 'closing' | 'intraday' | 'manual-unverified'
+    valuationAt?: string
     date: string
     totalAssets: number
     marketValue: number
     cash: number
     marginDebt?: number  // 融資借款（負債），記錄用，總資產已扣除
     auto?: boolean       // ✅ 5-1：由自動快照寫入時為 true
+    cashflowBasis?: string
+    cashflowNetAtCapture?: number
 }
 
 const emptySnap: SnapshotRecord = {
@@ -30,10 +40,6 @@ const emptySnap: SnapshotRecord = {
 
 // ── 樣式常數 ──────────────────────────────────────────────────────────────
 
-const card: React.CSSProperties = { backgroundColor: 'var(--c-sidebar)', border: '1px solid var(--c-border)', borderRadius: '12px', padding: '20px' }
-const inp: React.CSSProperties = { backgroundColor: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--c-text)', fontSize: '14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-const lbl: React.CSSProperties = { fontSize: '12px', color: 'var(--c-muted)', display: 'block', marginBottom: '4px' }
-const btn = (color: string): React.CSSProperties => ({ backgroundColor: color, border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' })
 
 // ── Tooltip：金額模式 ──────────────────────────────────────────────────────
 
@@ -111,8 +117,10 @@ const ReturnTooltip = ({ active, payload, label }: ReturnTooltipProps) => {
 
 export default function AssetTrend() {
     const { version: syncVersion } = useInvestSync()
+    const snapshotRequest = useRef(0)
     const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([])
     const [loading, setLoading] = useState(true)
+    const [hasLoaded, setHasLoaded] = useState(false)
     const [saving, setSaving] = useState(false)
     const [autoLoading, setAutoLoading] = useState(false)
     const [range, setRange] = useState<'1M' | '3M' | '6M' | '1Y' | 'ALL'>('3M')
@@ -126,6 +134,7 @@ export default function AssetTrend() {
     // ── Benchmark 相關 state ──────────────────────────────────────────────
     // chartMode: 'absolute' = 金額模式；'return' = 報酬率對比模式
     const [chartMode, setChartMode] = useState<'absolute' | 'return'>('absolute')
+    const [restartIncomplete, setRestartIncomplete] = useState(false)
     const [showBenchmark, setShowBenchmark] = useState(true)
     // taiexData: date (YYYY-MM-DD) → 收盤指數點數
     // 純前端 state，不寫入 Firebase，重新整理後重抓
@@ -140,38 +149,33 @@ export default function AssetTrend() {
     // ── 載入快照 ──────────────────────────────────────────────────────────
 
     const loadSnapshots = async () => {
+        const request = ++snapshotRequest.current
+        const session = captureUserSession()
         setLoading(true)
-        const [storedSnapshots, trades, dividends, cashRecords] = await Promise.all([
-            fetchAssetSnapshots<SnapshotRecord>('asc'),
-            fetchTrades<TradeRecord>('asc'),
-            fetchDividends<DividendRecord>('asc'),
-            fetchCashflow<{ date: string; type: 'in' | 'out'; amount: number }>('asc'),
-        ])
-        setSnapshots(reconcileSnapshotBreakdowns(storedSnapshots, trades, dividends, cashRecords))
-        setLoading(false)
+        try {
+            const [storedSnapshots, trades, dividends, cashRecords] = await Promise.all([
+                fetchAssetSnapshots<SnapshotRecord>('asc'),
+                fetchTrades<TradeRecord>('asc'),
+                fetchDividends<DividendRecord>('asc'),
+                fetchCashflow<{ date: string; type: 'in' | 'out'; amount: number }>('asc'),
+            ])
+            session.assertActive()
+            if (request !== snapshotRequest.current) return
+            setSnapshots(reconcileSnapshotBreakdowns(storedSnapshots, trades, dividends, cashRecords))
+            setCashflows(cashRecords.map(c => ({ date: c.date, amount: c.type === 'in' ? c.amount : -c.amount })))
+            setHasLoaded(true)
+        } catch (error) {
+            if (request !== snapshotRequest.current) return
+            // Preserve the last successful values while showing the read error.
+            setFormError(error instanceof Error ? error.message : '快照與出入金讀取失敗，請重新整理')
+        } finally {
+            if (request === snapshotRequest.current) setLoading(false)
+        }
     }
-
-    useEffect(() => { void loadSnapshots() }, [syncVersion])
-
-    // ✅ 新增：載入出入金紀錄（只需一次）
-    //
-    // ┌─────────────────────────────────────────────────────────────────┐
-    // │ 正負號約定（本檔 = TWR 口徑，入金記「正」）                          │
-    // │   入金 'in'  → amount 為正（資金流入帳戶）                          │
-    // │   出金 'out' → amount 為負                                         │
-    // │ 用途：TWR 段報酬 (本期末淨值 − 本期淨流入) / 上期末淨值，            │
-    // │       把「正的入金」扣掉，剩下才是投資操作造成的漲跌。               │
-    // │ ⚠️ 注意：YearReview.tsx 的 XIRR 口徑正負號「相反」(入金記負)，       │
-    // │   那是 XIRR 期初流出需為負的緣故，兩邊各自正確，請勿改成一致。       │
-    // └─────────────────────────────────────────────────────────────────┘
     useEffect(() => {
-        // ✅ 1-1：改走共用快取層（lib/investData）
-        fetchCashflow<{ date: string; type: 'in' | 'out'; amount: number }>('asc')
-            .then(records => {
-                // 入金為帳戶資金流入(正)，出金為流出(負)
-                setCashflows(records.map(c => ({ date: c.date, amount: c.type === 'in' ? c.amount : -c.amount })))
-            })
-            .catch(err => console.error('[cashflow] load failed:', err))
+        const requests = snapshotRequest
+        void loadSnapshots()
+        return () => { requests.current++ }
     }, [syncVersion])
 
     // ── 抓取加權指數歷史資料（Fugle API）─────────────────────────────────
@@ -189,14 +193,7 @@ export default function AssetTrend() {
         setTaiexError(null)
         try {
             const today = toLocalDateString()
-            const apiKey = import.meta.env.VITE_FUGLE_API_KEY
-            const url = `https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/IX0001?from=${fromDate}&to=${today}&fields=close&sort=asc`
-            const res = await fetch(url, { headers: { 'X-API-KEY': apiKey } })
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}))
-                throw new Error(`HTTP ${res.status}: ${err?.message ?? res.statusText}`)
-            }
-            const raw = await res.json()
+            const raw = await getHistoricalCandles('IX0001', fromDate, today)
             if (!raw.data || raw.data.length === 0) throw new Error('回傳資料為空')
 
             const map: Record<string, number> = {}
@@ -223,11 +220,13 @@ export default function AssetTrend() {
     }
 
     // 切換到報酬率模式且 benchmark 開啟時，若尚無資料則自動抓取
-    useEffect(() => {
+    const ensureBenchmark = useEffectEvent(() => {
         if (chartMode === 'return' && showBenchmark && Object.keys(taiexData).length === 0 && !taiexLoading) {
             handleRefreshTAIEX()
         }
-    }, [chartMode, showBenchmark])
+    })
+    // Trigger only when the user enables this view, not on every loading/error change.
+    useEffect(() => { ensureBenchmark() }, [chartMode, showBenchmark])
 
     // ── 市值計算 ──────────────────────────────────────────────────────────
     // ✅ 5-1：calcMarketValue 抽至 lib/snapshot.ts，手動快照與自動快照共用同一口徑
@@ -244,6 +243,7 @@ export default function AssetTrend() {
 
             setForm(f => ({
                 ...f,
+                valuationQuality: 'manual-unverified',
                 totalAssets: Math.round(snapshot.netAssets),
                 marketValue: Math.round(snapshot.marketValue),
                 cash: Math.round(snapshot.cash),
@@ -277,28 +277,28 @@ export default function AssetTrend() {
     // ── 儲存今日快照（含扣除融資借款）───────────────────────────────────
 
     const saveToday = async () => {
+        const session = captureUserSession()
         setSaving(true)
         setMissingPriceCodes([])
         try {
-            // ✅ 1-1：改走共用快取層（lib/investData）
-            const snapshot = await loadPortfolioSnapshot()
-            setMissingPriceCodes(snapshot.missingPriceCodes)
-            const today = toLocalDateString()
-            const payload = {
-                date: today,
-                totalAssets: Math.round(snapshot.netAssets),
-                marketValue: Math.round(snapshot.marketValue),
-                cash: Math.round(snapshot.cash),
-                marginDebt: Math.round(snapshot.marginDebt),
-                dividendAdjusted: true,  // 新口徑快照（cash 已含股利），遷移時略過
+            const { snapshot: payload, missing, stale } = await buildTodaySnapshot()
+            const blocked = [...new Set([...missing, ...stale])]
+            setMissingPriceCodes(blocked)
+            if (blocked.length) {
+                setFormError('今日快照未儲存：請先更新這些持股的有效現價：' + blocked.join('、'))
+                return
             }
+            setFormError('')
             const validation = validateSnapshotForWrite(payload)
             if (!validation.valid) throw new Error(validation.errors.join('；'))
-            await setDoc(userDoc(investDB, 'assetSnapshots', today), payload)
+            session.assertActive()
+            await saveValuationSnapshot(payload, session)
             invalidateAssetSnapshots()
             await loadSnapshots()
-        } catch (err) { console.error(err) }
-        setSaving(false)
+        } catch (err) {
+            console.error(err)
+            setFormError(err instanceof Error ? err.message : '今日快照儲存失敗')
+        } finally { setSaving(false) }
     }
 
     const handleSave = async () => {
@@ -306,16 +306,25 @@ export default function AssetTrend() {
         if (!validation.valid) { setFormError(validation.errors.join('；')); return }
         setFormError('')
         setFormLoading(true)
-        await setDoc(userDoc(investDB, 'assetSnapshots', form.date), { ...form })
+        // Manual values may describe a different valuation boundary: do not retain an automatic basis.
+        const session = captureUserSession()
+        const payload = { ...form, auto: false, valuationQuality: 'manual-unverified' as const, valuationAt: new Date().toISOString() }
+        delete payload.cashflowBasis
+        delete payload.cashflowNetAtCapture
+        try {
+        session.assertActive()
+        await setDoc(session.doc(investDB, 'assetSnapshots', form.date), payload)
         invalidateAssetSnapshots()
         setShowForm(false); setEditingDate(null); setForm(emptySnap)
         setMissingPriceCodes([])
-        setFormLoading(false); loadSnapshots()
+        await loadSnapshots()
+        } catch (error) { setFormError(error instanceof Error ? error.message : '快照儲存失敗') }
+        finally { setFormLoading(false) }
     }
 
     const handleEdit = (s: SnapshotRecord) => { setForm({ ...s }); setEditingDate(s.date); setShowForm(true); setFormError('') }
     const handleDelete = async (date: string) => {
-        if (!confirm(`確定要刪除 ${date} 的紀錄？`)) return
+        if (!await confirmAction(`確定要刪除 ${date} 的紀錄？`)) return
         await deleteDoc(userDoc(investDB, 'assetSnapshots', date)); invalidateAssetSnapshots(); loadSnapshots()
     }
     const handleCancel = () => { setShowForm(false); setEditingDate(null); setForm(emptySnap); setMissingPriceCodes([]); setFormError('') }
@@ -349,20 +358,15 @@ export default function AssetTrend() {
         ]
     }, [filtered])
 
-    // ── 報酬率對比資料（報酬率模式）──────────────────────────────────────
-    //
-    // ✅ 修正：資產報酬用 TWR（時間加權報酬率），排除出入金影響。
-    //   重點防呆（解決「有出入金時 TAIEX 不顯示」的問題）：
-    //   1. 段報酬一旦算出非正數或非有限值，該段以 1（= 0% 變動）帶過，
-    //      避免 twrIndex 被污染成負數 / NaN，連帶讓整張圖 Y 軸崩潰、TAIEX 消失。
-    //   2. assetReturn 永遠輸出有限數值（保底 0），不會是 NaN。
-    //   3. 出入金正負號不再依賴外部約定：以「入金 = 流入帳戶（正值）」為準，
-    //      段報酬把它扣掉 → (本期末淨值 − 本期淨流入) / 上期末淨值。
-    //
-    //   TAIEX 與資產線各自獨立計算，互不影響；TAIEX 只要有對應收盤就一定畫得出來。
+    const originalReturnPoints = useMemo(() => buildTimeWeightedReturns(filtered, cashflows, true, true), [filtered, cashflows])
+    const restartCandidate = useMemo(() => buildRestartedTimeWeightedReturns(filtered, cashflows, true), [filtered, cashflows])
+    const activeReturnPoints = restartIncomplete ? restartCandidate.points : originalReturnPoints
+    const originalReturnIssue = originalReturnPoints.find(point => point.issue)
 
+    // Snapshot TWR approximation: zero factors are preserved; undefined segments
+    // break the asset line while the independently computed benchmark remains visible.
     const returnChartData = useMemo(() => {
-        if (filtered.length < 2) return []
+        if (activeReturnPoints.length < 2) return []
 
         const sortedDates = Object.keys(taiexData).sort()
         const getClosestTAIEX = (date: string): number | null => {
@@ -371,49 +375,24 @@ export default function AssetTrend() {
             return taiexData[before[before.length - 1]]
         }
 
-        const baseTAIEX = getClosestTAIEX(filtered[0].date)
+        const points = activeReturnPoints
+        const baseTAIEX = getClosestTAIEX(points[0].date)
 
-        // TWR 累積報酬指數：起點 1（= 0%）
-        let twrIndex = 1
-        let prevAsset = filtered[0].totalAssets
-
-        return filtered.map((d, i) => {
-            if (i > 0) {
-                // (前一快照日, 當前快照日] 區間內的淨流入（入金為正、出金為負）
-                // 不論 cashflows 來源正負號如何，這裡統一視「入金 = 正」處理
-                const flowInPeriod = cashflows
-                    .filter(cf => cf.date > filtered[i - 1].date && cf.date <= d.date)
-                    .reduce((s, cf) => s + cf.amount, 0)
-
-                // 段報酬 = (本期末淨值 − 本期淨流入) / 上期末淨值
-                const denom = prevAsset
-                const numer = d.totalAssets - flowInPeriod
-                const segReturn = denom > 0 ? numer / denom : 1
-
-                // ✅ 防呆：段報酬必須是有限正數，否則以 1 帶過（視為當天無變動）
-                //   這避免入金日造成的極端值 / 負值 / NaN 把整條線打爆。
-                if (Number.isFinite(segReturn) && segReturn > 0) {
-                    twrIndex *= segReturn
-                }
-                prevAsset = d.totalAssets
-            }
-
+        return points.map(d => {
             const taiexClose = getClosestTAIEX(d.date)
-            // ✅ assetReturn 保底為有限數，永遠不會是 NaN
-            const assetReturn = Number.isFinite(twrIndex)
-                ? parseFloat(((twrIndex - 1) * 100).toFixed(2))
-                : 0
-
             return {
                 date: d.date,
-                assetReturn,
+                assetReturn: d.assetReturn,
+                issue: d.issue,
                 // TAIEX 獨立計算，只要有對應收盤就畫得出來，不受資產線影響
-                taiexReturn: baseTAIEX != null && taiexClose != null
+                taiexReturn: baseTAIEX != null && baseTAIEX > 0 && Number.isFinite(baseTAIEX) && taiexClose != null && taiexClose > 0 && Number.isFinite(taiexClose)
                     ? parseFloat(((taiexClose - baseTAIEX) / baseTAIEX * 100).toFixed(2))
                     : null,
             }
         })
-    }, [filtered, taiexData, cashflows])
+    }, [activeReturnPoints, taiexData])
+
+    const returnIssue = returnChartData.find(point => point.issue)
 
     // ── 超額報酬（最後一筆）──────────────────────────────────────────────
 
@@ -423,14 +402,6 @@ export default function AssetTrend() {
         if (last.taiexReturn == null) return null
         return calculateReturnGap(last.assetReturn, last.taiexReturn)
     }, [returnChartData])
-
-    // ✅ 區間內是否有出入金（用於提示文案）
-    const hasCashflowInRange = useMemo(() => {
-        if (filtered.length < 2) return false
-        const start = filtered[0].date
-        const end = filtered[filtered.length - 1].date
-        return cashflows.some(cf => cf.date > start && cf.date <= end)
-    }, [filtered, cashflows])
 
     // ── 渲染 ──────────────────────────────────────────────────────────────
 
@@ -468,6 +439,8 @@ export default function AssetTrend() {
                         </button>
                     </div>
                 </div>
+
+                {!showForm && formError && <div role="alert" style={{ color: 'var(--c-danger)', marginBottom: '16px' }}>{formError}</div>}
 
                 {/* ── 最新數字摘要 ── */}
                 {latest && (
@@ -544,22 +517,42 @@ export default function AssetTrend() {
                         </div>
 
                         {/* 時間範圍 */}
-                        <div style={{ display: 'flex', gap: '6px' }}>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
                             {(['1M', '3M', '6M', '1Y', 'ALL'] as const).map(r => (
                                 <button
                                     key={r}
-                                    onClick={() => setRange(r)}
+                                    onClick={() => { setRange(r); setRestartIncomplete(false) }}
                                     style={{
-                                        backgroundColor: range === r ? 'var(--c-accent)' : 'var(--c-card)',
-                                        border: '1px solid', borderColor: range === r ? 'var(--c-accent)' : 'var(--c-border)',
+                                        backgroundColor: range === r ? 'var(--c-button-accent)' : 'var(--c-card)',
+                                        border: '1px solid', borderColor: range === r ? 'var(--c-button-accent)' : 'var(--c-border)',
                                         borderRadius: '6px', padding: '4px 12px',
-                                        color: range === r ? '#fff' : 'var(--c-muted)',
+                                        color: range === r ? 'var(--c-on-accent)' : 'var(--c-muted)',
                                         fontSize: '13px', cursor: 'pointer'
                                     }}
                                 >
                                     {r}
                                 </button>
                             ))}
+                            {chartMode === 'return' && (originalReturnIssue || restartIncomplete) && (
+                                <button
+                                    type="button"
+                                    aria-label={restartIncomplete ? '恢復原區間起點' : '從資料完整日期重新起算'}
+                                    aria-pressed={restartIncomplete}
+                                    title={restartIncomplete ? '恢復原區間起點' : restartCandidate.startDate ? `從 ${restartCandidate.startDate} 重新起算` : restartCandidate.unavailableReason ?? undefined}
+                                    disabled={!restartIncomplete && !restartCandidate.startDate}
+                                    onClick={() => setRestartIncomplete(current => !current)}
+                                    style={{
+                                        backgroundColor: restartIncomplete ? 'color-mix(in srgb, var(--c-accent) 12%, transparent)' : 'transparent',
+                                        border: '1px solid', borderColor: restartIncomplete ? 'var(--c-accent)' : 'var(--c-border)',
+                                        borderRadius: '6px', padding: '4px 8px', fontSize: '11px', whiteSpace: 'nowrap',
+                                        color: restartIncomplete ? 'var(--c-accent)' : 'var(--c-muted)',
+                                        cursor: !restartIncomplete && !restartCandidate.startDate ? 'not-allowed' : 'pointer',
+                                        opacity: !restartIncomplete && !restartCandidate.startDate ? 0.5 : 1,
+                                    }}
+                                >
+                                    {restartIncomplete ? '恢復起點' : '重新起算'}
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -584,22 +577,18 @@ export default function AssetTrend() {
                             <span style={{ fontWeight: 700, color: excessReturn >= 0 ? 'var(--c-positive)' : 'var(--c-danger)' }}>
                                 {excessReturn >= 0 ? '+' : ''}{excessReturn}%
                             </span>
-                            <span style={{ fontSize: '11px', color: '#4a5568' }}>（以首筆快照 {filtered[0]?.date} 為基準・TWR 時間加權）</span>
+                            <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>（以 {activeReturnPoints[0]?.date} 為共同起點・近似 TWR）</span>
                         </div>
                     )}
 
-                    {/* ✅ 區間內有出入金時的提示：說明報酬率已用 TWR 排除 */}
-                    {chartMode === 'return' && hasCashflowInRange && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'color-mix(in srgb, var(--c-accent) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--c-accent) 30%, transparent)', borderRadius: '8px', padding: '8px 14px', marginBottom: '12px', fontSize: '12px', color: 'var(--c-accent)' }}>
-                            <TrendingUp size={13} style={{ flexShrink: 0 }} />
-                            此區間有出入金，報酬率已採 TWR（時間加權）排除出入金影響，僅反映投資操作績效。
-                        </div>
-                    )}
-
+                    {chartMode === 'return' && returnIssue && <div role="status" style={{ color: 'var(--c-warning)', fontSize: '13px', marginBottom: '12px' }}>
+                        {returnIssue.date} 起：{returnIssue.issue}。此後資產報酬不顯示，金額與加權指數仍可查看。
+                    </div>}
                     {/* 圖表本體 */}
-                    {loading ? (
-                        <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>載入中...</div>
-                    ) : filtered.length < 2 ? (
+                    {loading && hasLoaded && <p className="ui-refresh-status" role="status">資料更新中…</p>}
+                {loading && !hasLoaded ? (
+                        <LoadingState />
+                    ) : filtered.length < 2 || (chartMode === 'return' && activeReturnPoints.length < 2) ? (
                         <div style={{ textAlign: 'center', padding: '48px', color: 'var(--c-muted)' }}>
                             <p style={{ fontSize: '15px' }}>資料不足，無法顯示趨勢圖</p>
                             <p style={{ fontSize: '13px', marginTop: '8px' }}>請累積至少 2 筆資料</p>
@@ -651,12 +640,12 @@ export default function AssetTrend() {
                                 <Line
                                     type="monotone"
                                     dataKey="assetReturn"
-                                    name="我的資產（TWR）"
+                                    name="我的資產（近似 TWR）"
                                     stroke="var(--c-accent)"
                                     strokeWidth={2.5}
                                     dot={false}
                                     activeDot={{ r: 5, fill: 'var(--c-accent)' }}
-                                    connectNulls
+                                    connectNulls={false}
                                 />
                                 {showBenchmark && (
                                     <Line
@@ -675,12 +664,6 @@ export default function AssetTrend() {
                         </ResponsiveContainer>
                     )}
 
-                    {/* 說明文字 */}
-                    {chartMode === 'return' && filtered.length >= 2 && (
-                        <p style={{ fontSize: '11px', color: '#4a5568', margin: '10px 0 0', textAlign: 'right' }}>
-                            資料來源：Fugle MarketData｜資產線採 TWR 時間加權（排除出入金），以首筆快照為基準點（0%）正規化對比
-                        </p>
-                    )}
                 </div>
 
                 {/* ── 新增 / 編輯表單 ── */}
@@ -700,9 +683,6 @@ export default function AssetTrend() {
                                 </button>
                             </div>
                         </div>
-                        <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '0 0 16px' }}>
-                            點「自動帶入」會從 Firebase 計算目前持倉市值與現金，並自動扣除融資借款
-                        </p>
 
                         {missingPriceCodes.length > 0 && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'rgba(245,166,35,0.1)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: 'var(--c-warning)' }}>
@@ -714,19 +694,19 @@ export default function AssetTrend() {
                         <div className="snap-form-grid">
                             <div>
                                 <label style={lbl}>日期</label>
-                                <input type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
+                                <input type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, valuationQuality: 'manual-unverified', date: e.target.value }))} />
                             </div>
                             <div>
                                 <label style={lbl}>總淨值（已扣融資）</label>
-                                <input type="number" style={inp} placeholder="0" value={form.totalAssets || ''} onChange={e => setForm(f => ({ ...f, totalAssets: parseFloat(e.target.value) || 0 }))} />
+                                <input type="number" style={inp} placeholder="0" value={form.totalAssets || ''} onChange={e => setForm(f => ({ ...f, valuationQuality: 'manual-unverified', totalAssets: parseFloat(e.target.value) || 0 }))} />
                             </div>
                             <div>
                                 <label style={lbl}>股票市值</label>
-                                <input type="number" style={inp} placeholder="0" value={form.marketValue || ''} onChange={e => setForm(f => ({ ...f, marketValue: parseFloat(e.target.value) || 0 }))} />
+                                <input type="number" style={inp} placeholder="0" value={form.marketValue || ''} onChange={e => setForm(f => ({ ...f, valuationQuality: 'manual-unverified', marketValue: parseFloat(e.target.value) || 0 }))} />
                             </div>
                             <div>
                                 <label style={lbl}>現金</label>
-                                <input type="number" style={inp} placeholder="0" value={form.cash || ''} onChange={e => setForm(f => ({ ...f, cash: parseFloat(e.target.value) || 0 }))} />
+                                <input type="number" style={inp} placeholder="0" value={form.cash || ''} onChange={e => setForm(f => ({ ...f, valuationQuality: 'manual-unverified', cash: parseFloat(e.target.value) || 0 }))} />
                             </div>
                             <div>
                                 <label style={lbl}>融資借款（負債）</label>
@@ -739,7 +719,7 @@ export default function AssetTrend() {
                                         const debt = parseFloat(e.target.value) || 0
                                         setForm(f => ({
                                             ...f,
-                                            marginDebt: debt,
+                                            valuationQuality: 'manual-unverified', marginDebt: debt,
                                             totalAssets: Math.round(f.marketValue + f.cash - debt),
                                         }))
                                     }}

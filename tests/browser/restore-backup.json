@@ -1,0 +1,16 @@
+{
+  "format": "symbiosis-full-backup",
+  "version": 2,
+  "uid": "fixture-source-account",
+  "exportedAt": "2026-09-30T00:00:00Z",
+  "invest": {
+    "cashflow": [
+      { "id": "cash", "data": { "date": "2026-09-01", "type": "in", "amount": 100000 } },
+      { "id": "new", "data": { "date": "2026-09-04", "type": "out", "amount": 5000 } }
+    ],
+    "watchlist": [{ "id": "same", "data": { "code": "2330", "name": "測試股票" } }]
+  },
+  "kms": {
+    "notes": [{ "id": "n", "data": { "title": "舊版測試筆記", "content": "備份正文" } }]
+  }
+}

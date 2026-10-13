@@ -1,0 +1,200 @@
+[
+  {
+    "page": "dashboard",
+    "viewport": 1280,
+    "iconButtons": 5,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1274,
+    "width": 1274
+  },
+  {
+    "page": "settings",
+    "viewport": 1280,
+    "iconButtons": 10,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1274,
+    "width": 1274
+  },
+  {
+    "page": "review",
+    "viewport": 1280,
+    "iconButtons": 0,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1274,
+    "width": 1274
+  },
+  {
+    "page": "planner",
+    "viewport": 1280,
+    "iconButtons": 7,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1274,
+    "width": 1274
+  },
+  {
+    "page": "industry",
+    "viewport": 1280,
+    "iconButtons": 0,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "export",
+    "viewport": 1280,
+    "iconButtons": 3,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1274,
+    "width": 1274
+  },
+  {
+    "page": "graph",
+    "viewport": 1280,
+    "iconButtons": 0,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "broker",
+    "viewport": 1280,
+    "iconButtons": 2,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "cash",
+    "viewport": 1280,
+    "iconButtons": 3,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "page": "margin",
+    "viewport": 1280,
+    "iconButtons": 2,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1274,
+    "width": 1274
+  },
+  {
+    "page": "dividend",
+    "viewport": 1280,
+    "iconButtons": 1,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1274,
+    "width": 1274
+  },
+  {
+    "page": "dashboard",
+    "viewport": 1920,
+    "iconButtons": 5,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1914,
+    "width": 1914
+  },
+  {
+    "page": "settings",
+    "viewport": 1920,
+    "iconButtons": 10,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1914,
+    "width": 1914
+  },
+  {
+    "page": "review",
+    "viewport": 1920,
+    "iconButtons": 0,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1914,
+    "width": 1914
+  },
+  {
+    "page": "planner",
+    "viewport": 1920,
+    "iconButtons": 7,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1914,
+    "width": 1914
+  },
+  {
+    "page": "industry",
+    "viewport": 1920,
+    "iconButtons": 0,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1920,
+    "width": 1920
+  },
+  {
+    "page": "export",
+    "viewport": 1920,
+    "iconButtons": 3,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1920,
+    "width": 1920
+  },
+  {
+    "page": "graph",
+    "viewport": 1920,
+    "iconButtons": 0,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1920,
+    "width": 1920
+  },
+  {
+    "page": "broker",
+    "viewport": 1920,
+    "iconButtons": 2,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1920,
+    "width": 1920
+  },
+  {
+    "page": "cash",
+    "viewport": 1920,
+    "iconButtons": 3,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1920,
+    "width": 1920
+  },
+  {
+    "page": "margin",
+    "viewport": 1920,
+    "iconButtons": 2,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1914,
+    "width": 1914
+  },
+  {
+    "page": "dividend",
+    "viewport": 1920,
+    "iconButtons": 1,
+    "misalignedButtons": [],
+    "misalignedDisclosures": [],
+    "scrollWidth": 1920,
+    "width": 1920
+  }
+]

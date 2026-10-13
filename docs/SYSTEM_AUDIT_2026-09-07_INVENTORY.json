@@ -1,0 +1,1534 @@
+{
+  "sourceFiles": 124,
+  "sourceLines": 30958,
+  "routes": [
+    "/",
+    "/invest",
+    "/invest/trades",
+    "/invest/holdings",
+    "/invest/watchlist",
+    "/invest/history",
+    "/invest/cashflow",
+    "/invest/dividend",
+    "/invest/trend",
+    "/invest/review",
+    "/invest/brief",
+    "/invest/margin",
+    "/invest/portfolio-planner",
+    "/invest/sentiment",
+    "/invest/industry",
+    "/invest/sold-tracker",
+    "/invest/settings",
+    "/invest/reconciliation",
+    "/kms",
+    "/kms/tags",
+    "/kms/export",
+    "/kms/graph",
+    "/kms/trash",
+    "/calendar",
+    "/calendar/tasks",
+    "/calendar/settings"
+  ],
+  "files": [
+    {
+      "path": "eslint.config.js",
+      "lines": 24,
+      "imports": [
+        "@eslint/js",
+        "globals",
+        "eslint-plugin-react-hooks",
+        "eslint-plugin-react-refresh",
+        "typescript-eslint",
+        "eslint/config"
+      ],
+      "collections": []
+    },
+    {
+      "path": "firebase-functions/index.js",
+      "lines": 138,
+      "imports": [
+        "firebase-admin/app",
+        "firebase-admin/firestore",
+        "firebase-admin/storage",
+        "firebase-functions/v2/firestore",
+        "firebase-functions/params",
+        "firebase-functions/v2/scheduler"
+      ],
+      "collections": []
+    },
+    {
+      "path": "netlify/functions/foreign-quote.js",
+      "lines": 59,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "netlify/functions/google-calendar-auth.js",
+      "lines": 90,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "netlify/functions/google-calendar-ensure.js",
+      "lines": 143,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "netlify/functions/google-calendar-pull.js",
+      "lines": 105,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "netlify/functions/google-calendar-sync.js",
+      "lines": 194,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "netlify/functions/market-cap-proxy.js",
+      "lines": 154,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "netlify/functions/mops-proxy.js",
+      "lines": 296,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "netlify/functions/news-proxy.js",
+      "lines": 182,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "netlify/functions/yahoo-calendar-proxy.js",
+      "lines": 144,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "scripts/audit-kms-images-live.mjs",
+      "lines": 94,
+      "imports": [
+        "node:path",
+        "node:fs/promises",
+        "firebase-admin/app",
+        "firebase-admin/firestore",
+        "firebase-admin/storage",
+        "sharp"
+      ],
+      "collections": []
+    },
+    {
+      "path": "scripts/audit-kms-live.mjs",
+      "lines": 92,
+      "imports": [
+        "node:fs/promises",
+        "firebase-admin/app",
+        "firebase-admin/firestore",
+        "firebase-admin/storage"
+      ],
+      "collections": []
+    },
+    {
+      "path": "scripts/backup-kms-production.mjs",
+      "lines": 149,
+      "imports": [
+        "node:crypto",
+        "node:fs/promises",
+        "node:path",
+        "firebase-admin/app",
+        "firebase-admin/auth",
+        "firebase-admin/firestore",
+        "firebase-admin/storage"
+      ],
+      "collections": []
+    },
+    {
+      "path": "scripts/cleanup-kms-legacy-storage.mjs",
+      "lines": 66,
+      "imports": [
+        "node:fs/promises",
+        "node:path",
+        "firebase-admin/app",
+        "firebase-admin/storage"
+      ],
+      "collections": []
+    },
+    {
+      "path": "scripts/configure-kms-uid-mappings.mjs",
+      "lines": 72,
+      "imports": [
+        "node:fs/promises",
+        "firebase-admin/app",
+        "firebase-admin/auth",
+        "firebase-admin/firestore"
+      ],
+      "collections": []
+    },
+    {
+      "path": "scripts/export-kms-emulator-fixture.mjs",
+      "lines": 49,
+      "imports": [
+        "node:fs/promises",
+        "node:path",
+        "firebase-admin/app",
+        "firebase-admin/firestore"
+      ],
+      "collections": []
+    },
+    {
+      "path": "scripts/generate-icons.cjs",
+      "lines": 12,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "scripts/generate-icons.js",
+      "lines": 13,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "scripts/kms-emulator-fixture.mjs",
+      "lines": 100,
+      "imports": [
+        "node:fs/promises",
+        "node:path",
+        "firebase-admin/app",
+        "firebase-admin/firestore"
+      ],
+      "collections": []
+    },
+    {
+      "path": "scripts/migrate-kms-notes.mjs",
+      "lines": 297,
+      "imports": [
+        "node:crypto",
+        "node:fs/promises",
+        "node:path",
+        "firebase-admin/app",
+        "firebase-admin/auth",
+        "firebase-admin/firestore",
+        "firebase-admin/storage",
+        "sharp"
+      ],
+      "collections": []
+    },
+    {
+      "path": "scripts/pack-code.js",
+      "lines": 29,
+      "imports": [
+        "fs",
+        "path"
+      ],
+      "collections": []
+    },
+    {
+      "path": "scripts/rebuild-kms-metadata.mjs",
+      "lines": 89,
+      "imports": [
+        "firebase-admin/app",
+        "firebase-admin/firestore"
+      ],
+      "collections": []
+    },
+    {
+      "path": "scripts/run-kms-emulator-migration-test.mjs",
+      "lines": 27,
+      "imports": [
+        "node:child_process"
+      ],
+      "collections": []
+    },
+    {
+      "path": "scripts/sync_investor_meetings.py",
+      "lines": 109,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "scripts/verify-kms-client-access.mjs",
+      "lines": 55,
+      "imports": [
+        "node:fs/promises",
+        "firebase-admin/app",
+        "firebase-admin/auth",
+        "firebase/app",
+        "firebase/auth",
+        "firebase/firestore"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/App.migration-guide.ts",
+      "lines": 91,
+      "imports": [
+        "./components/ThemeToggle"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/App.tsx",
+      "lines": 714,
+      "imports": [
+        "react",
+        "react-router-dom",
+        "lucide-react",
+        "firebase/firestore",
+        "./lib/firebase",
+        "./lib/userDB",
+        "./lib/kmsData",
+        "./lib/auth",
+        "./lib/accountStore",
+        "./PriceContext",
+        "./MarketCapContext",
+        "./InvestSyncContext",
+        "./pages/invest/Dashboard",
+        "./pages/invest/Trades",
+        "./pages/invest/CashFlow",
+        "./pages/invest/Dividend",
+        "./pages/invest/Holdings",
+        "./pages/invest/AssetTrend",
+        "./pages/invest/YearReview",
+        "./pages/invest/HistoryPnL",
+        "./pages/invest/Watchlist",
+        "./pages/invest/MarginManager",
+        "./pages/invest/PortfolioPlanner",
+        "./pages/invest/InvestSettings",
+        "./pages/invest/BrokerReconciliation",
+        "./pages/invest/SentimentTracker",
+        "./pages/invest/IndustryMap",
+        "./pages/invest/SoldTracker",
+        "./pages/kms/KMSHome",
+        "./pages/kms/KMSGraph",
+        "./pages/kms/KMSTrash",
+        "./pages/kms/KMSTags",
+        "./pages/kms/KMSExport",
+        "./pages/calendar/CalendarHome",
+        "./pages/calendar/CalendarSettings",
+        "./pages/calendar/TaskManager",
+        "./pages/calendar/DailyBrief"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/InvestSyncContext.tsx",
+      "lines": 137,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "./lib/auth",
+        "./lib/firebase",
+        "./lib/userDB",
+        "./lib/investData"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/MarketCapContext.tsx",
+      "lines": 80,
+      "imports": [
+        "react",
+        "./lib/marketCap"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/PriceContext.tsx",
+      "lines": 172,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "./lib/firebase",
+        "./lib/userDB",
+        "./lib/fugle",
+        "./lib/snapshot",
+        "./lib/auth"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/ThemeContext.tsx",
+      "lines": 47,
+      "imports": [
+        "react",
+        "./theme"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/clean_investor_meetings.py",
+      "lines": 120,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/components/ActionNotice.tsx",
+      "lines": 29,
+      "imports": [
+        "lucide-react"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/components/DataHealthCenter.tsx",
+      "lines": 281,
+      "imports": [
+        "react",
+        "lucide-react",
+        "../lib/dataHealth",
+        "../lib/investData",
+        "../lib/kmsData",
+        "../lib/kmsConsistency",
+        "firebase/firestore",
+        "../lib/firebase",
+        "../lib/userDB",
+        "../lib/portfolioSnapshot",
+        "../lib/calc",
+        "../lib/portfolioSnapshot",
+        "../InvestSyncContext"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/components/DayTradePanel.tsx",
+      "lines": 119,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../lib/calc",
+        "../lib/firebase",
+        "../lib/userDB",
+        "../lib/investData",
+        "../ui/styles",
+        "../lib/dayTradePresentation"
+      ],
+      "collections": [
+        "trades"
+      ]
+    },
+    {
+      "path": "src/components/InfoHint.tsx",
+      "lines": 73,
+      "imports": [
+        "react"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/components/MarginRulesPanel.tsx",
+      "lines": 92,
+      "imports": [
+        "react",
+        "lucide-react",
+        "../lib/marginSettings"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/components/ThemeToggle.tsx",
+      "lines": 49,
+      "imports": [
+        "lucide-react",
+        "../ThemeContext",
+        "../ThemeToggle"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/components/TradeDayTradeBadge.tsx",
+      "lines": 12,
+      "imports": [
+        "../lib/tradeList"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/components/TradeDayTradeExceptions.tsx",
+      "lines": 45,
+      "imports": [
+        "react",
+        "lucide-react",
+        "../lib/calc"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/components/TradeMarginToggle.tsx",
+      "lines": 12,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/components/TradeSettlementDetails.tsx",
+      "lines": 53,
+      "imports": [
+        "react",
+        "lucide-react",
+        "../lib/calc",
+        "../ui/styles"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/components/kms/RichTextContent.tsx",
+      "lines": 71,
+      "imports": [
+        "react",
+        "@tiptap/react",
+        "../../lib/kmsImages"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/components/kms/RichTextEditor.tsx",
+      "lines": 253,
+      "imports": [
+        "react",
+        "@tiptap/react",
+        "@tiptap/starter-kit",
+        "@tiptap/extension-image",
+        "@tiptap/extension-placeholder",
+        "lucide-react",
+        "../../lib/kmsImages"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/accountStore.ts",
+      "lines": 141,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/auth.ts",
+      "lines": 120,
+      "imports": [
+        "firebase/auth",
+        "firebase/auth",
+        "./firebase",
+        "./accountStore",
+        "./cache"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/backup.ts",
+      "lines": 256,
+      "imports": [
+        "firebase/firestore",
+        "firebase/firestore",
+        "./firebase",
+        "./userDB",
+        "./investData"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/brokerDocumentReader.ts",
+      "lines": 116,
+      "imports": [
+        "pdfjs-dist/build/pdf.worker.min.mjs?url",
+        "tesseract.js",
+        "pdfjs-dist"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/brokerMonthlyReconciliation.ts",
+      "lines": 218,
+      "imports": [
+        "./calc",
+        "./brokerReconciliation"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/brokerReconciliation.ts",
+      "lines": 489,
+      "imports": [
+        "./calc"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/cache.ts",
+      "lines": 74,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/calc.ts",
+      "lines": 1125,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/calendarData.ts",
+      "lines": 83,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/csv.ts",
+      "lines": 38,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/dataHealth.ts",
+      "lines": 224,
+      "imports": [
+        "./calc"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/date.ts",
+      "lines": 13,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/dayTradeCsv.ts",
+      "lines": 46,
+      "imports": [
+        "./calc"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/dayTradePresentation.ts",
+      "lines": 12,
+      "imports": [
+        "./calc"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/firebase.ts",
+      "lines": 28,
+      "imports": [
+        "firebase/app",
+        "firebase/firestore",
+        "firebase/storage"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/foreignQuote.ts",
+      "lines": 34,
+      "imports": [
+        "../../lib/foreignQuote"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/fugle.ts",
+      "lines": 71,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/gemini.ts",
+      "lines": 218,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/googleCalendar.ts",
+      "lines": 551,
+      "imports": [
+        "firebase/firestore",
+        "./firebase",
+        "./userDB",
+        "./calc",
+        "./investData",
+        "./calendarData",
+        "./investorMeetings"
+      ],
+      "collections": [
+        "calendarWatchList"
+      ]
+    },
+    {
+      "path": "src/lib/investData.ts",
+      "lines": 95,
+      "imports": [
+        "firebase/firestore",
+        "./firebase",
+        "./userDB",
+        "./cache"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/investmentValidation.ts",
+      "lines": 122,
+      "imports": [
+        "./calc"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/investorMeetingMerge.ts",
+      "lines": 53,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/investorMeetings.ts",
+      "lines": 174,
+      "imports": [
+        "firebase/firestore",
+        "./firebase",
+        "./userDB",
+        "./investorMeetingMerge",
+        "./investorMeetingMerge"
+      ],
+      "collections": [
+        "investorMeetingOverrides"
+      ]
+    },
+    {
+      "path": "src/lib/kmsConsistency.ts",
+      "lines": 124,
+      "imports": [
+        "firebase/firestore",
+        "./firebase",
+        "./userDB",
+        "./kmsData"
+      ],
+      "collections": [
+        "notes",
+        "trash"
+      ]
+    },
+    {
+      "path": "src/lib/kmsData.ts",
+      "lines": 215,
+      "imports": [
+        "firebase/firestore",
+        "./firebase",
+        "./cache",
+        "./userDB",
+        "./kmsSearch"
+      ],
+      "collections": [
+        "notes",
+        "noteBodies",
+        "metadata",
+        "trash"
+      ]
+    },
+    {
+      "path": "src/lib/kmsImages.ts",
+      "lines": 369,
+      "imports": [
+        "firebase/storage",
+        "firebase/firestore",
+        "./auth",
+        "./firebase",
+        "./userDB",
+        "heic2any"
+      ],
+      "collections": [
+        "notes",
+        "trash"
+      ]
+    },
+    {
+      "path": "src/lib/kmsLegacyMigration.ts",
+      "lines": 145,
+      "imports": [
+        "@tiptap/react",
+        "firebase/firestore",
+        "firebase/storage",
+        "./firebase",
+        "./kmsImages",
+        "./userDB",
+        "./kmsSearch"
+      ],
+      "collections": [
+        "notes",
+        "noteBodies"
+      ]
+    },
+    {
+      "path": "src/lib/kmsSearch.ts",
+      "lines": 28,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/marginSettings.ts",
+      "lines": 68,
+      "imports": [
+        "firebase/firestore",
+        "./firebase",
+        "./userDB",
+        "./calc"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/marketCap.ts",
+      "lines": 61,
+      "imports": [
+        "../../lib/marketCap"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/plannerData.ts",
+      "lines": 25,
+      "imports": [
+        "firebase/firestore",
+        "./firebase",
+        "./cache",
+        "./userDB"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/portfolioSnapshot.ts",
+      "lines": 150,
+      "imports": [
+        "firebase/firestore",
+        "./firebase",
+        "./userDB",
+        "./investData",
+        "./calc"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/reconciliationStore.ts",
+      "lines": 40,
+      "imports": [
+        "firebase/firestore",
+        "./firebase",
+        "./userDB"
+      ],
+      "collections": [
+        "reconciliationReports"
+      ]
+    },
+    {
+      "path": "src/lib/returnComparison.ts",
+      "lines": 9,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/snapshot.ts",
+      "lines": 295,
+      "imports": [
+        "firebase/firestore",
+        "./firebase",
+        "./userDB",
+        "./calc",
+        "./investData",
+        "./date",
+        "./snapshotPolicy",
+        "./investmentValidation"
+      ],
+      "collections": [
+        "assetSnapshots"
+      ]
+    },
+    {
+      "path": "src/lib/snapshotPolicy.ts",
+      "lines": 15,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/stockDict.ts",
+      "lines": 160,
+      "imports": [
+        "firebase/firestore",
+        "./firebase",
+        "./userDB",
+        "./cache"
+      ],
+      "collections": [
+        "stockDict",
+        "stockDictFull"
+      ]
+    },
+    {
+      "path": "src/lib/taskOrder.ts",
+      "lines": 25,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/lib/tradeList.ts",
+      "lines": 43,
+      "imports": [
+        "./calc"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/lib/userDB.ts",
+      "lines": 48,
+      "imports": [
+        "firebase/firestore",
+        "./auth",
+        "firebase/firestore"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/main.tsx",
+      "lines": 42,
+      "imports": [
+        "react",
+        "react-dom/client",
+        "react-router-dom",
+        "./App.tsx",
+        "./pages/Login.tsx",
+        "./lib/auth.ts",
+        "firebase/auth"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/pages.migration-guide.ts",
+      "lines": 129,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/pages/Login.tsx",
+      "lines": 108,
+      "imports": [
+        "react",
+        "../lib/auth",
+        "lucide-react"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/pages/calendar/CalendarHome.tsx",
+      "lines": 789,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../lib/calc",
+        "../../lib/investData",
+        "../../lib/calendarData",
+        "lucide-react",
+        "../../lib/googleCalendar",
+        "../../lib/plannerData",
+        "../../lib/investorMeetings",
+        "xlsx"
+      ],
+      "collections": [
+        "calendarWatchList",
+        "calendarEvents",
+        "dividends"
+      ]
+    },
+    {
+      "path": "src/pages/calendar/CalendarSettings.tsx",
+      "lines": 231,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "lucide-react",
+        "../../lib/calendarData",
+        "../../lib/googleCalendar"
+      ],
+      "collections": [
+        "calendarWatchList",
+        "stockDict"
+      ]
+    },
+    {
+      "path": "src/pages/calendar/DailyBrief.tsx",
+      "lines": 360,
+      "imports": [
+        "react",
+        "../../lib/plannerData",
+        "../../lib/gemini",
+        "../../lib/calendarData",
+        "../../lib/date",
+        "lucide-react"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/pages/calendar/TaskManager.tsx",
+      "lines": 495,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "@dnd-kit/core",
+        "@dnd-kit/core",
+        "@dnd-kit/sortable",
+        "@dnd-kit/utilities",
+        "../../lib/date",
+        "../../lib/taskOrder",
+        "../../lib/plannerData",
+        "lucide-react"
+      ],
+      "collections": [
+        "tasks",
+        "taskProjects"
+      ]
+    },
+    {
+      "path": "src/pages/invest/AssetTrend.tsx",
+      "lines": 825,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../lib/investData",
+        "../../lib/portfolioSnapshot",
+        "../../lib/calc",
+        "../../lib/date",
+        "recharts",
+        "lucide-react",
+        "../../InvestSyncContext",
+        "../../lib/investmentValidation",
+        "../../lib/returnComparison"
+      ],
+      "collections": [
+        "assetSnapshots"
+      ]
+    },
+    {
+      "path": "src/pages/invest/BrokerReconciliation.tsx",
+      "lines": 503,
+      "imports": [
+        "react",
+        "lucide-react",
+        "../../lib/investData",
+        "../../lib/calc",
+        "../../lib/brokerReconciliation",
+        "../../lib/brokerMonthlyReconciliation",
+        "../../lib/reconciliationStore",
+        "../../lib/brokerDocumentReader",
+        "../../InvestSyncContext",
+        "../../ui/styles"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/pages/invest/CashFlow.tsx",
+      "lines": 157,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../lib/investData",
+        "../../lib/date",
+        "lucide-react",
+        "../../InvestSyncContext",
+        "../../lib/investmentValidation"
+      ],
+      "collections": [
+        "cashflow"
+      ]
+    },
+    {
+      "path": "src/pages/invest/Dashboard.tsx",
+      "lines": 1570,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../lib/calc",
+        "../../ui/styles",
+        "../../ui/format",
+        "lucide-react",
+        "recharts",
+        "react-router-dom",
+        "../../PriceContext",
+        "../../lib/portfolioSnapshot",
+        "../../InvestSyncContext",
+        "../../lib/snapshot",
+        "../../lib/date",
+        "../../components/InfoHint",
+        "../../components/ActionNotice",
+        "../../lib/plannerData",
+        "../../lib/investorMeetings",
+        "../../lib/marginSettings"
+      ],
+      "collections": [
+        "tasks"
+      ]
+    },
+    {
+      "path": "src/pages/invest/Dividend.tsx",
+      "lines": 186,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../lib/investData",
+        "../../lib/stockDict",
+        "../../lib/date",
+        "../../ui/styles",
+        "lucide-react",
+        "../../InvestSyncContext",
+        "../../lib/investmentValidation"
+      ],
+      "collections": [
+        "dividends"
+      ]
+    },
+    {
+      "path": "src/pages/invest/HistoryPnL.tsx",
+      "lines": 550,
+      "imports": [
+        "react",
+        "../../lib/calc",
+        "../../lib/investData",
+        "../../lib/date",
+        "../../components/InfoHint",
+        "../../ui/styles",
+        "../../ui/format",
+        "lucide-react",
+        "../../InvestSyncContext"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/pages/invest/Holdings.tsx",
+      "lines": 389,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../lib/portfolioSnapshot",
+        "../../components/InfoHint",
+        "../../components/ActionNotice",
+        "../../lib/calc",
+        "../../ui/styles",
+        "../../ui/format",
+        "../../lib/snapshot",
+        "lucide-react",
+        "../../PriceContext",
+        "../../InvestSyncContext"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/pages/invest/IndustryChainView.tsx",
+      "lines": 494,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "lucide-react",
+        "../../InvestSyncContext"
+      ],
+      "collections": [
+        "industryRelations"
+      ]
+    },
+    {
+      "path": "src/pages/invest/IndustryMap.tsx",
+      "lines": 815,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "lucide-react",
+        "./IndustryChainView",
+        "../../PriceContext",
+        "../../MarketCapContext",
+        "../../lib/marketCap",
+        "../../InvestSyncContext",
+        "../../lib/stockDict"
+      ],
+      "collections": [
+        "industryMap",
+        "industryRelations"
+      ]
+    },
+    {
+      "path": "src/pages/invest/InvestSettings.tsx",
+      "lines": 1089,
+      "imports": [
+        "../../lib/dayTradeCsv",
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/investData",
+        "../../lib/kmsData",
+        "../../lib/userDB",
+        "../../lib/backup",
+        "../../lib/calc",
+        "../../lib/csv",
+        "../../lib/date",
+        "lucide-react",
+        "xlsx",
+        "../../lib/cache",
+        "../../lib/investmentValidation",
+        "../../lib/accountStore",
+        "../../lib/auth"
+      ],
+      "collections": [
+        "stockDict",
+        "trades",
+        "dividends",
+        "cashflow",
+        "assetSnapshots"
+      ]
+    },
+    {
+      "path": "src/pages/invest/MarginManager.tsx",
+      "lines": 468,
+      "imports": [
+        "react",
+        "../../lib/calc",
+        "../../lib/portfolioSnapshot",
+        "../../InvestSyncContext",
+        "lucide-react",
+        "../../lib/marginSettings",
+        "../../components/MarginRulesPanel"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/pages/invest/PortfolioPlanner.tsx",
+      "lines": 533,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "lucide-react",
+        "../../lib/calc",
+        "../../lib/portfolioSnapshot",
+        "../../PriceContext",
+        "../../ui/styles",
+        "../../InvestSyncContext",
+        "../../lib/firebase",
+        "../../lib/userDB"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/pages/invest/SentimentTracker.tsx",
+      "lines": 678,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../PriceContext",
+        "../../InvestSyncContext",
+        "../../lib/date",
+        "lucide-react"
+      ],
+      "collections": [
+        "sentiments",
+        "stockDict"
+      ]
+    },
+    {
+      "path": "src/pages/invest/SoldTracker.tsx",
+      "lines": 854,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../lib/fugle",
+        "../../lib/investData",
+        "../../lib/date",
+        "../../PriceContext",
+        "../../InvestSyncContext",
+        "lucide-react"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/pages/invest/Trades.tsx",
+      "lines": 1245,
+      "imports": [
+        "../../components/TradeDayTradeExceptions",
+        "../../components/TradeMarginToggle",
+        "../../components/TradeDayTradeBadge",
+        "../../lib/tradeList",
+        "../../components/TradeSettlementDetails",
+        "../../lib/dayTradeCsv",
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../lib/calc",
+        "../../lib/investData",
+        "../../lib/csv",
+        "../../lib/date",
+        "../../lib/stockDict",
+        "../../ui/styles",
+        "lucide-react",
+        "../../components/ActionNotice",
+        "../../InvestSyncContext",
+        "../../lib/investmentValidation",
+        "../../lib/marginSettings",
+        "../../components/DayTradePanel",
+        "../../lib/calc"
+      ],
+      "collections": [
+        "trades",
+        "cashflow"
+      ]
+    },
+    {
+      "path": "src/pages/invest/Watchlist.tsx",
+      "lines": 925,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../lib/fugle",
+        "../../lib/foreignQuote",
+        "../../lib/marketCap",
+        "../../lib/date",
+        "../../MarketCapContext",
+        "lucide-react",
+        "../../PriceContext",
+        "../../InvestSyncContext"
+      ],
+      "collections": [
+        "watchlist",
+        "stockDict"
+      ]
+    },
+    {
+      "path": "src/pages/invest/YearReview.tsx",
+      "lines": 1205,
+      "imports": [
+        "react",
+        "../../InvestSyncContext",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "recharts",
+        "../../lib/calc",
+        "../../lib/investData",
+        "../../ui/styles",
+        "../../ui/format",
+        "../../lib/date"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/pages/kms/KMSExport.tsx",
+      "lines": 335,
+      "imports": [
+        "react",
+        "../../lib/kmsData",
+        "../../lib/date",
+        "lucide-react",
+        "@tiptap/react",
+        "../../lib/kmsImages"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/pages/kms/KMSGraph.tsx",
+      "lines": 747,
+      "imports": [
+        "react",
+        "react-router-dom",
+        "../../lib/kmsData",
+        "lucide-react"
+      ],
+      "collections": []
+    },
+    {
+      "path": "src/pages/kms/KMSHome.tsx",
+      "lines": 1554,
+      "imports": [
+        "react",
+        "react-router-dom",
+        "@tiptap/react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../lib/kmsData",
+        "../../lib/kmsSearch",
+        "../../lib/csv",
+        "../../lib/gemini",
+        "../../lib/fugle",
+        "../../lib/date",
+        "../../lib/kmsImages",
+        "../../lib/kmsLegacyMigration",
+        "../../components/kms/RichTextEditor",
+        "../../components/kms/RichTextContent",
+        "lucide-react",
+        "mammoth"
+      ],
+      "collections": [
+        "trades",
+        "notes",
+        "noteBodies",
+        "trash"
+      ]
+    },
+    {
+      "path": "src/pages/kms/KMSTags.tsx",
+      "lines": 387,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../lib/kmsData",
+        "lucide-react",
+        "../../lib/kmsSearch"
+      ],
+      "collections": [
+        "notes"
+      ]
+    },
+    {
+      "path": "src/pages/kms/KMSTrash.tsx",
+      "lines": 240,
+      "imports": [
+        "react",
+        "firebase/firestore",
+        "../../lib/firebase",
+        "../../lib/userDB",
+        "../../lib/kmsData",
+        "../../lib/kmsImages",
+        "lucide-react"
+      ],
+      "collections": [
+        "noteBodies",
+        "trash",
+        "notes"
+      ]
+    },
+    {
+      "path": "src/theme.ts",
+      "lines": 89,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/ui/format.ts",
+      "lines": 27,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "src/ui/styles.ts",
+      "lines": 53,
+      "imports": [],
+      "collections": []
+    },
+    {
+      "path": "tests/core-logic.test.mjs",
+      "lines": 712,
+      "imports": [
+        "node:test",
+        "node:assert/strict",
+        "node:fs",
+        "typescript",
+        "./calc",
+        "./calc",
+        "data:text/javascript;base64,${Buffer.from(calcOutput).toString(",
+        "./calc",
+        "${calcUrl}"
+      ],
+      "collections": []
+    },
+    {
+      "path": "tests/day-trade-panel.test.mjs",
+      "lines": 77,
+      "imports": [
+        "node:test",
+        "node:assert/strict",
+        "node:fs",
+        "react",
+        "react-dom/server",
+        "typescript"
+      ],
+      "collections": []
+    },
+    {
+      "path": "tests/day-trades.test.mjs",
+      "lines": 301,
+      "imports": [
+        "node:test",
+        "node:assert/strict",
+        "node:fs",
+        "typescript"
+      ],
+      "collections": []
+    },
+    {
+      "path": "tests/kms-rules.test.mjs",
+      "lines": 92,
+      "imports": [
+        "node:test",
+        "node:assert/strict",
+        "node:fs/promises",
+        "@firebase/rules-unit-testing"
+      ],
+      "collections": []
+    },
+    {
+      "path": "tests/trade-list.test.mjs",
+      "lines": 102,
+      "imports": [
+        "node:test",
+        "node:assert/strict",
+        "node:fs",
+        "react",
+        "react-dom/server",
+        "typescript"
+      ],
+      "collections": []
+    },
+    {
+      "path": "tests/trade-matrix.test.mjs",
+      "lines": 239,
+      "imports": [
+        "node:test",
+        "node:assert/strict",
+        "node:fs",
+        "typescript"
+      ],
+      "collections": []
+    },
+    {
+      "path": "vite.config.ts",
+      "lines": 10,
+      "imports": [
+        "vite",
+        "@vitejs/plugin-react",
+        "@tailwindcss/vite"
+      ],
+      "collections": []
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+[
+  {
+    "name": "cash-add",
+    "writes": [
+      "set users/fixture-A/cashflow/id-1"
+    ],
+    "alerts": []
+  },
+  {
+    "name": "task-add",
+    "writes": [
+      "set users/fixture-A/tasks/id-1"
+    ],
+    "alerts": []
+  },
+  {
+    "name": "project-add",
+    "writes": [
+      "set users/fixture-A/taskProjects/id-1"
+    ],
+    "alerts": []
+  },
+  {
+    "name": "calendar-add",
+    "writes": [
+      "set users/fixture-A/calendarEvents/id-1"
+    ],
+    "alerts": []
+  },
+  {
+    "name": "kms-add",
+    "writes": [
+      "set users/fixture-A/notes/id-1",
+      "set users/fixture-A/noteBodies/id-1"
+    ],
+    "alerts": []
+  },
+  {
+    "name": "tags-move",
+    "writes": [
+      "set users/fixture-A/settings/tagOrder"
+    ],
+    "alerts": []
+  },
+  {
+    "name": "watch-form-layout",
+    "vw": 390,
+    "vh": 844,
+    "main": {
+      "tag": "MAIN",
+      "cls": "app-main",
+      "text": "自選股追蹤\n\n卡片\n一覽表\n更新線圖\n更新 MA\n更新現價\n更新市值\n取消\n新增自選股\n市場\n台股 TW\n日股 JP\n美股 US\n",
+      "x": 0,
+      "y": 53,
+      "w": 390,
+      "h": 740,
+      "sw": 390,
+      "cw": 390,
+      "overflowX": "auto"
+    },
+    "title": "選股追蹤",
+    "body": "選股追蹤\n自選股追蹤\n\n卡片\n一覽表\n更新線圖\n更新 MA\n更新現價\n更新市值\n取消\n新增自選股\n市場\n台股 TW\n日股 JP\n美股 US\n股票代號 *（如：2330）\n股票名稱\n上標價（賣出參考）\n下標價（買入參考）\n族群標籤\n評估筆記\n取消\n新增\n未分類\n2 檔\nTW\n2317\n鴻海\n210.00\n筆記\nTW\n2330\n台積電\n1050.00\n筆記\n總覽\n交易\n持倉\n追蹤\n全部",
+    "overflow": [],
+    "scrolls": [],
+    "small": []
+  },
+  {
+    "name": "watch-add-form",
+    "writes": [],
+    "alerts": []
+  }
+]
