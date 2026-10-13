@@ -9,11 +9,11 @@ import { investDB } from '../../lib/firebase'
 import { userDoc, captureUserSession } from '../../lib/userDB'
 import { Plus, Trash2, Search, Link2, Unlink, CheckCircle2 } from 'lucide-react'
 import { EVENT_LABELS, EVENT_COLORS } from '../../lib/calendarData'
+import { GOOGLE_ACCOUNT_EMAIL, hasGoogleSheetsAuthorization, hasGoogleDriveSearchAuthorization, hasGoogleReportAuthorization } from '../../../netlify/lib/google-authorization.js'
 import {
     getGoogleCalendarAuthUrl,
     parseGoogleAuthRedirect,
     getGoogleCalendarAuth,
-    saveGoogleCalendarAuth,
     disconnectGoogleCalendar,
     setGoogleCalendarSyncTypes,
     type GoogleCalendarAuth,
@@ -21,16 +21,14 @@ import {
 } from '../../lib/googleCalendar'
 
 
-// Validate the original browser request and Firebase session before saving the callback.
+// Complete the server-verified grant only in the original Firebase browser session.
 async function initializeGoogleConnection() {
     const session = captureUserSession()
     const redirect = await parseGoogleAuthRedirect()
     session.assertActive()
-    if (redirect?.refreshToken) await saveGoogleCalendarAuth(redirect.refreshToken, session)
-    session.assertActive()
     const auth = await getGoogleCalendarAuth()
     session.assertActive()
-    return { auth, connected: Boolean(redirect?.refreshToken), error: redirect?.error }
+    return { auth, connected: Boolean(redirect?.connected), error: redirect?.error }
 }
 
 export default function CalendarSettings() {
@@ -56,7 +54,7 @@ export default function CalendarSettings() {
             if (!active) return
             setGcalAuth(auth)
             if (error) setGcalError(error)
-            if (connected) setGcalMessage('✅ Google 帳號連結成功')
+            if (connected) setGcalMessage('Google 帳號連結成功，已授權行事曆、試算表唯讀與報告檔案搜尋')
         }).catch(error => {
             if (active) setGcalError(error instanceof Error ? error.message : '讀取連結狀態失敗，請重試')
         }).finally(() => { if (active) setGcalLoading(false) })
@@ -75,9 +73,10 @@ export default function CalendarSettings() {
     }
 
     const handleDisconnectGoogle = async () => {
-        if (!await confirmAction('確定要取消連結 Google 帳號？下次要同步時需要重新授權。')) return
+        if (!await confirmAction('確定要取消共用 Google 連線？行事曆同步與報告來源讀取都會停止，下次使用時需要重新授權。')) return
         setGcalLoading(true)
         setGcalError(null)
+        setGcalMessage(null)
         try { await disconnectGoogleCalendar(); setGcalAuth(null) }
         catch { setGcalError('取消連結未完成，請確認登入帳號後重試。') }
         finally { setGcalLoading(false) }
@@ -145,9 +144,12 @@ export default function CalendarSettings() {
                 <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '4px 0 0' }}>設定要追蹤法說會的股票，行事曆會自動顯示相關法說會</p>
             </div>
 
-            {/* Google 行事曆連結 */}
+            {/* 共用 Google 連線：行事曆同步與試算表唯讀 */}
             <div style={{ ...card, marginBottom: '16px' }}>
-                <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '12px' }}>Google 行事曆同步</div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text)', marginBottom: '8px' }}>Google 帳號連線</div>
+                <p style={{ fontSize: '12px', color: 'var(--c-muted)', margin: '0 0 12px', overflowWrap: 'anywhere' }}>
+                    使用 {GOOGLE_ACCOUNT_EMAIL}，共用行事曆同步、試算表唯讀與報告檔案搜尋授權。
+                </p>
                 <AnnualDataNotice fomcRange={gcalAuth?.syncTypes.includes('fomc') ? googleSyncDateRange() : undefined} />
 
                 {gcalMessage && (
@@ -167,7 +169,7 @@ export default function CalendarSettings() {
                     <div style={{ fontSize: '13px', color: 'var(--c-muted)' }}>載入中…</div>
                 ) : !gcalAuth ? (
                     <div>
-                        <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '0 0 12px' }}>連結 Google 後，可手動同步未來半年行程。</p>
+                        <p style={{ fontSize: '13px', color: 'var(--c-muted)', margin: '0 0 12px' }}>連結後可手動同步未來半年行程，並授權系統讀取私人試算表。</p>
                         <button onClick={handleConnectGoogle} style={btn('#4285f4')}>
                             <Link2 size={14} />連結 Google 帳號
                         </button>
@@ -175,16 +177,25 @@ export default function CalendarSettings() {
                 ) : (
                     <div>
                         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
-                            <CheckCircle2 size={16} color="var(--c-positive)" />
-                            <span style={{ fontSize: '13px', color: 'var(--c-text)' }}>
-                                已連結（{new Date(gcalAuth.connectedAt).toLocaleDateString('zh-TW')}）
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', minWidth: 0, fontSize: '13px', color: 'var(--c-text)' }}>
+                                <CheckCircle2 size={16} color="var(--c-positive)" style={{ flexShrink: 0 }} />
+                                已連結（{new Date(gcalAuth.connectedAt).toLocaleDateString('zh-TW', { timeZone: 'Asia/Taipei' })}）
                             </span>
                             <button onClick={handleConnectGoogle} style={{ ...btn('#4285f4'), padding: '8px 10px', fontSize: '12px', marginLeft: 'auto' }}>
-                                <Link2 size={12} />重新授權
+                                <Link2 size={12} />{hasGoogleReportAuthorization(gcalAuth) ? '重新授權' : '補充報告授權'}
                             </button>
                             <button onClick={handleDisconnectGoogle} style={{ ...btn('var(--c-border)'), padding: '8px 10px', fontSize: '12px' }}>
                                 <Unlink size={12} />取消連結
                             </button>
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '12px', overflowWrap: 'anywhere' }}>
+                            <div style={{ marginBottom: '4px' }}>連結帳號：{gcalAuth.googleEmail || '尚未確認，請重新授權'}</div>
+                            <div style={{ color: hasGoogleSheetsAuthorization(gcalAuth) ? 'var(--c-positive)' : 'var(--c-warning)' }}>
+                                {hasGoogleSheetsAuthorization(gcalAuth) ? '試算表唯讀：已授權' : '試算表唯讀：尚未授權，請補充授權'}
+                            </div>
+                            <div style={{ marginTop: '4px', color: hasGoogleDriveSearchAuthorization(gcalAuth) ? 'var(--c-positive)' : 'var(--c-warning)' }}>
+                                {hasGoogleDriveSearchAuthorization(gcalAuth) ? '報告檔案搜尋：已授權' : '報告檔案搜尋：尚未授權，請補充授權'}
+                            </div>
                         </div>
 
                         <div style={{ fontSize: '12px', color: 'var(--c-muted)', marginBottom: '8px' }}>要同步的標籤：</div>

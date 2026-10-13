@@ -169,20 +169,8 @@ test('meetings and Fubon snapshots use isolated credentials with revocation, all
     assert.equal(selected, 1)
 })
 
-test('reauthorization preserves the calendar and selected sync types', async () => {
-    const saved = { calendarId: 'existing-calendar', syncTypes: ['personal'], refreshToken: 'old' }
-    const mod = compile(read('src/lib/googleCalendar.ts'), {
-        investDB: {}, captureUserSession: () => ({ doc: () => 'auth', assertActive() {} }),
-        runTransaction: async (_db, callback) => callback({
-            get: async () => ({ exists: () => true, data: () => saved }),
-            set: (_ref, data, options) => { assert.equal(options.merge, true); Object.assign(saved, data) },
-        }),
-    })
-    await mod.saveGoogleCalendarAuth('new')
-    assert.equal(saved.refreshToken, 'new')
-    assert.equal(saved.calendarId, 'existing-calendar')
-    assert.deepEqual(saved.syncTypes, ['personal'])
-})
+// Calendar reauthorization now saves the verified grant on the server.
+// Preservation and rejected-grant coverage lives in google-security.test.mjs.
 
 test('historical request is bounded and a later attempt can recover from network failure', async () => {
     let count = 0

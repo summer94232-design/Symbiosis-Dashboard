@@ -2,7 +2,7 @@
  * googleCalendar.ts — Google 行事曆串接共用邏輯（含雙向同步）
  *
  * 整體流程：
- * 1. OAuth2 授權（導頁、解析導回的 fragment）→ 取得 refresh_token
+ * 1. OAuth2 授權（導頁、核對帳號與權限）→ 由後端儲存共用 Google 連線
  * 2. 確保「Symbiosis 財經行事曆」這個專屬行事曆存在（ensure）
  * 3. 讀出該行事曆目前所有事件（pull）
  * 4. 跟 Firestore `calendarEvents`（手動建立的個人行程／除權息／股東會等，
@@ -36,6 +36,9 @@ export interface GoogleCalendarAuth {
     connectedAt: string
     syncTypes: SyncEventType[]
     calendarId?: string
+    googleEmail?: string
+    googleAccountId?: string
+    grantedScopes?: string[]
 }
 
 /** Firestore 的 calendarEvents 文件，多帶雙向同步需要的兩個欄位 */
@@ -102,7 +105,7 @@ async function importedEventId(calendarId: string, eventId: string) {
 }
 
 // ── 1. Google OAuth 授權 URL ──────────────────────────────────────────────
-// ⚠️ scope 用完整的 calendar（不是 calendar.events），因為要能建立專屬行事曆
+// 共用連線保留建立行事曆的權限，並追加試算表唯讀與 Google 帳號識別。
 
 const GOOGLE_PENDING_KEY = 'symbiosis.google.oauth.pending'
 export async function getGoogleCalendarAuthUrl(): Promise<string> {
@@ -137,7 +140,7 @@ export async function getGoogleCalendarAuthUrl(): Promise<string> {
 // ── 2. 解析 Google 導回的 URL fragment（在 CalendarSettings 掛載時呼叫）────
 
 export interface GoogleAuthRedirectResult {
-    refreshToken?: string
+    connected?: boolean
     error?: string
 }
 
@@ -148,7 +151,7 @@ export async function parseGoogleAuthRedirect(): Promise<GoogleAuthRedirectResul
     }
 
     const params = new URLSearchParams(hash.replace(/^#/, ''))
-    const refreshToken = params.get('gcal_refresh_token') ?? undefined
+    const complete = params.get('gcal_complete') === '1'
     const error = params.get('gcal_error') ?? undefined
 
     window.history.replaceState(null, '', window.location.pathname + window.location.search)
@@ -160,11 +163,18 @@ export async function parseGoogleAuthRedirect(): Promise<GoogleAuthRedirectResul
         const user = investAuth.currentUser
         if (!user || !pending || pending.uid !== session.uid || pending.uid !== params.get('gcal_uid')
             || pending.clientState !== params.get('gcal_state') || pending.expires <= Date.now()
-            || String(pending.authTime) !== params.get('gcal_auth_time') || !refreshToken || refreshToken.length > 8192) throw new Error('Invalid callback')
+            || String(pending.authTime) !== params.get('gcal_auth_time') || !complete) throw new Error('Invalid callback')
         const token = await user.getIdTokenResult()
         session.assertActive()
         if (Number(token.claims.auth_time) !== pending.authTime) throw new Error('Session changed')
-        return { refreshToken }
+        const response = await syncFetch(session, '/.netlify/functions/google-calendar-auth?action=complete', {
+            method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(15000), body: JSON.stringify({ clientState: pending.clientState }),
+        })
+        const result = await response.json()
+        session.assertActive()
+        if (!response.ok || result.connected !== true) return { error: result.error || 'Google 授權未能儲存，請重新授權' }
+        return { connected: true }
     } catch { return { error: 'Google 授權與目前登入狀態不符或已逾時，請重新連結' } }
 }
 
@@ -217,22 +227,6 @@ export async function deleteCalendarEventWithGoogle(id: string, session = captur
             throw new Error('行程在刪除期間已變更，系統資料已保留，請重新確認。')
         }
         transaction.delete(ref)
-    })
-    session.assertActive()
-}
-
-export async function saveGoogleCalendarAuth(refreshToken: string, session = captureUserSession()): Promise<void> {
-    session.assertActive()
-    const ref = session.doc(investDB, AUTH_COLLECTION, AUTH_DOC_ID)
-    // Reauthorization preserves both the calendar and the user's selected sync types.
-    await runTransaction(investDB, async transaction => {
-        const existing = await transaction.get(ref)
-        session.assertActive()
-        transaction.set(ref, {
-            refreshToken,
-            connectedAt: new Date().toISOString(),
-            ...(!existing.exists() || !Array.isArray(existing.data()?.syncTypes) ? { syncTypes: DEFAULT_SYNC_TYPES } : {}),
-        }, { merge: true })
     })
     session.assertActive()
 }
