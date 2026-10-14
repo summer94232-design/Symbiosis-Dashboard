@@ -12,7 +12,9 @@ export function parseReportRows(rows) {
     let invalidRows = 0
     for (const row of rows.slice(1)) {
         if (!Array.isArray(row) || row.every(value => value === '' || value == null)) continue
-        const [date, period, title, summary, content, updatedAt] = row.map((value, index) => typeof value === 'string' ? (index === 4 ? value : value.trim()) : '')
+        const [date, period, title, summary, content, rawUpdatedAt] = row.map((value, index) => typeof value === 'string' ? (index === 4 ? value : value.trim()) : '')
+        // Sheets can render an imported date-time with a one-digit hour.
+        const updatedAt = (rawUpdatedAt || '').replace(/^(\d{4}-\d{2}-\d{2}) (\d):/, '$1 0$2:')
         let valid = false
         try {
             valid = validDate(date) && ['盤前', '盤後'].includes(period) && Boolean(title && summary && content.trim())

@@ -23,6 +23,18 @@ test('invalid dates, date serials, missing trailing cells, invalid times and inc
  const conflict=row();conflict[4]='同一版本另一個全文'
  assert.throws(()=>reports.parseReportRows(table(row(),conflict)),/衝突/)
 })
+test('Sheets formatted single-digit hours remain readable and use canonical timestamps for revisions',()=>{
+ const single=reports.parseReportRows(table(row('2020-01-02','盤前','2020-01-02 9:11:00')))
+ assert.equal(single.invalidRows,0);assert.equal(single.reports[0].updatedAt,'2020-01-02 09:11:00')
+ const revisions=reports.parseReportRows(table(row('2020-01-02','盤前','2020-01-02 9:11:00','早版'),row('2020-01-02','盤前','2020-01-02 10:01:00','新版')))
+ assert.equal(revisions.reports[0].title,'新版')
+ const midnight=reports.parseReportRows(table(row('2020-01-02','盤前','2020-01-02 0:01:00')))
+ assert.equal(midnight.reports[0].updatedAt,'2020-01-02 00:01:00')
+ const duplicate=row('2020-01-02','盤前','2020-01-02 09:11:00');duplicate[4]='不同版本全文'
+ assert.throws(()=>reports.parseReportRows(table(row('2020-01-02','盤前','2020-01-02 9:11:00'),duplicate)),/衝突/)
+ const invalid=reports.parseReportRows(table(row('2020-02-30','盤前','2020-02-30 9:11:00'),row('2020-01-02','盤前','2020-01-02 9:61:00'),row('2020-01-02','盤前','2020-01-02 24:11:00')))
+ assert.equal(invalid.reports.length,0);assert.equal(invalid.invalidRows,3)
+})
 test('Taipei publication windows distinguish pending, late, weekend and verified holiday states',()=>{
  const latest=reports.parseReportRows(table(row('2026-10-13','盤後','2026-10-13 18:04:00'))).reports[0]
  const status=(time,rows=[latest],holidays=[])=>reports.reportDeliveryStatus(latest,rows,new Date(time),holidays)
@@ -82,6 +94,14 @@ test('an empty new sheet falls back through Drive pagination to the previous rea
  h.setPages([{files:[{id:'new_sheet'}],nextPageToken:'1'},{files:[{id:'old_sheet'}]}])
  const result=JSON.parse((await h.read()).body)
  assert.equal(result.source.id,'old_sheet');assert.equal(result.source.fallback,true)
+})
+test('live-formatted Sheets timestamps reach the latest report and historical reader',async()=>{
+ const h=harness();h.sheets.set('new_sheet',table(row('2020-01-03','盤前','2020-01-03 9:11:00'),row('2020-01-02','盤前','2020-01-02 4:20:00')))
+ const latest=await h.read(),body=JSON.parse(latest.body)
+ assert.equal(latest.statusCode,200);assert.equal(body.source.fallback,false);assert.equal(body.source.invalidRows,0)
+ assert.equal(body.latest.id,'2020-01-03:pre');assert.equal(body.latest.updatedAt,'2020-01-03 09:11:00')
+ const historical=await h.read({report:'2020-01-02:pre'})
+ assert.equal(historical.statusCode,200);assert.equal(JSON.parse(historical.body).selected.updatedAt,'2020-01-02 04:20:00')
 })
 test('missing or incomplete sources and future-dated reports never pretend to be a successful latest report',async()=>{
  for(const mode of ['none','bad-header','future']){
