@@ -1,7 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
-import MarketReportCard from '../../src/components/MarketReportCard'
+import MarketReportButton from '../../src/components/MarketReportButton'
 import { investAuth, switchAccount } from './services.mjs'
 import '../../src/index.css'
 
@@ -30,6 +30,6 @@ createRoot(document.getElementById('root')).render(<MemoryRouter><React.StrictMo
         <nav style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
             <button onClick={()=>{revision++}}>模擬新試算表</button><button onClick={()=>{fail=!fail}}>切換來源斷線</button>
             <button onClick={()=>{switchAccount();listeners.forEach(callback=>callback(investAuth.currentUser))}}>切換測試帳號</button>
-        </nav><MarketReportCard /><p>投資指標與其他儀表板內容</p>
+        </nav><MarketReportButton /><p>投資指標與其他儀表板內容</p>
     </div>
 </React.StrictMode></MemoryRouter>)
