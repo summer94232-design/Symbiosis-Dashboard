@@ -179,9 +179,6 @@ export default function Dashboard() {
     const hasPrice = holdings.some(h => h.currentPrice !== null)
     const [stockGroups, setStockGroups] = useState<Record<string, string>>({})
     const [sortMode, setSortMode] = useState<'marketValue' | 'group' | 'returnRate' | 'code' | 'unrealizedPnL'>('group')
-    const [reloadCooldown, setReloadCooldown] = useState(0) // 秒數倒數
-    const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-    const [showReloadConfirm, setShowReloadConfirm] = useState(false)
     const [expandedHoldingCode, setExpandedHoldingCode] = useState<string | null>(null)
     const [notice, setNotice] = useState<ActionNoticeState | null>(null)
     const priceRefreshGeneration = useRef(0)
@@ -240,7 +237,7 @@ export default function Dashboard() {
     // ✅ 優化：單一 Promise.all 並行抓取所有資料，消除串行等待
     // ✅ 3-1：載入瘦身——核心資料（持倉/現金/融資/賣出追蹤）獨立載入、先到先渲染；
     //    行事曆/任務側卡由 loadSideCards 平行延後載入，感知載入時間約減半。
-    const loadCore = async (showFeedback = false) => {
+    const loadCore = async () => {
         setLoading(true)
         try {
             const [snapshot, groupDoc, soldCfgDoc] = await Promise.all([
@@ -296,7 +293,6 @@ export default function Dashboard() {
                 marginAmount: m.marginAmount, marginCost: m.marginCost,
             }))
             setMarginPositions(activeMargin)
-            if (showFeedback) showNotice({ type: 'success', message: '資料已重新載入。' })
         } catch (err) {
             console.error(err)
             showNotice({ type: 'error', message: '資料載入失敗，請確認網路後再試一次。' })
@@ -393,34 +389,10 @@ export default function Dashboard() {
         void loadCore()
         void loadSideCards()
         return () => {
-            if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current)
             if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [syncVersion])
-
-    // 重新載入加 30 秒 cooldown，防止連續點擊觸發多次全量讀取
-    const handleReload = () => {
-        if (reloadCooldown > 0 || loading) return
-        setShowReloadConfirm(true)
-    }
-
-    const confirmReload = () => {
-        setShowReloadConfirm(false)
-        void loadCore(true)
-        void loadSideCards()
-        setReloadCooldown(30)
-        cooldownTimerRef.current = setInterval(() => {
-            setReloadCooldown(prev => {
-                if (prev <= 1) {
-                    clearInterval(cooldownTimerRef.current!)
-                    cooldownTimerRef.current = null
-                    return 0
-                }
-                return prev - 1
-            })
-        }, 1000)
-    }
 
     const totalMarketValue = holdings.reduce((s, h) => s + h.marketValue, 0)
     const totalCost = holdings.reduce((s, h) => s + h.totalCost, 0)
@@ -654,33 +626,6 @@ export default function Dashboard() {
                     </div>
                     <div className="page-actions dashboard-report-actions">
                         <MarketReportButton />
-                        <div style={{ position: 'relative' }}>
-                            <button
-                                className="ui-button ui-button-secondary"
-                                onClick={handleReload}
-                                disabled={loading || reloadCooldown > 0}
-                                title={reloadCooldown > 0 ? `請稍候 ${reloadCooldown} 秒後再試` : '重新載入資料'}
-                            >
-                                <RefreshCw size={15} className={loading ? 'is-spinning' : undefined} />
-                                {reloadCooldown > 0 ? `${reloadCooldown}s` : '重新載入'}
-                            </button>
-                            {showReloadConfirm && (
-                                <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, backgroundColor: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: '10px', padding: '14px 16px', zIndex: 50, minWidth: '200px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
-                                    <div style={{ fontSize: '13px', color: 'var(--c-text)', marginBottom: '12px', fontWeight: 600 }}>確認重新載入？</div>
-                                    <div style={{ fontSize: '11px', color: 'var(--c-muted)', marginBottom: '12px' }}>將重新從資料庫讀取所有資料</div>
-                                    <div style={{ display: 'flex', gap: '8px' }}>
-                                        <button onClick={confirmReload}
-                                            style={{ flex: 1, backgroundColor: 'var(--c-button-accent)', border: 'none', borderRadius: '6px', padding: '6px 0', color: 'var(--c-on-accent)', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}>
-                                            確認
-                                        </button>
-                                        <button onClick={() => setShowReloadConfirm(false)}
-                                            style={{ flex: 1, backgroundColor: 'transparent', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '6px 0', color: 'var(--c-muted)', fontSize: '12px', cursor: 'pointer' }}>
-                                            取消
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
                         <button
                             className="ui-button ui-button-primary"
                             onClick={() => void updatePrices()}
