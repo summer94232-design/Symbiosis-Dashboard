@@ -77,7 +77,11 @@ export async function readHybridTaiwanQuotes(
     await marketRead
     const failed = marketCodes.filter(code => market[code]?.status !== 'success'
         || !isPositivePrice(market[code]?.price) || market[code]?.sourceDate !== today)
+    // Overnight, usable previous-session rows must not consume repair slots
+    // ahead of symbols the market snapshot cannot provide at all.
+    const usableMarket = (code: string) => market[code]?.status === 'success' && isPositivePrice(market[code]?.price)
     const uncovered = failed.filter(code => !precise.has(code))
+        .sort((a, b) => Number(usableMarket(a)) - Number(usableMarket(b)))
     const [priority, repairs] = await Promise.all([priorityRead, readFugle(uncovered.slice(0, fallbackLimit))])
     const fugle = { ...priority, ...repairs }
     const quotes: QuoteObservations = {}

@@ -82,6 +82,25 @@ test('an older trade cannot replace the current dated reference used for the dai
     assert.deepEqual(policy.stalePriceCodes(['2330'], saved, date), [])
 })
 
+test('overnight gap repairs prioritize missing symbols ahead of usable previous-session rows', async () => {
+    const covered = Array.from({ length: 15 }, (_, i) => String(1000 + i))
+    const gaps = ['6826', '6977'], calls = []
+    const requestedAt = '2026-09-24T17:00:00.000Z'
+    const result = await hybrid.readHybridTaiwanQuotes([...covered, ...gaps, '2330'], requestedAt, {
+        snapshot: async () => Object.fromEntries(covered.map(code => [code, observation(100)])),
+        fugle: async codes => {
+            calls.push(codes)
+            return Object.fromEntries(codes.map(code => [code, { ...observation(120), requestedAt }]))
+        },
+    }, 2, ['2330'])
+    assert.deepEqual(calls, [['2330'], gaps])
+    assert.ok(gaps.every(code => result.quotes[code].status === 'success'))
+    assert.deepEqual(result.unattempted, covered)
+    assert.ok(covered.every(code => result.quotes[code].price === 100))
+    const saved = policy.mergeQuoteObservations({}, result.quotes)
+    assert.deepEqual(policy.stalePriceCodes(['2330', ...gaps], saved, '2026-09-25'), ['2330', ...gaps])
+})
+
 test('intraday refresh confirms all 13 held trades even with old market references and a ten-code gap limit', async () => {
     const held = ['00631L', '4958', '2308', '6182', '2317', '2383', '3711', '2454', '3037', '2409', '2330', '2327', '3481']
     const intraday = '2026-09-30T02:00:00.000Z', today = '2026-09-30'
