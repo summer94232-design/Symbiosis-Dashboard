@@ -13,6 +13,45 @@ const observation = (price, sourceDate = '2026-09-23') => ({
     priceType: price === null ? 'missing' : 'trade', status: price === null ? 'failed' : 'success',
 })
 
+function timedSnapshot(latency) {
+    const timers = []
+    const mod = compile(read('src/lib/fubonSnapshot.ts').replace('import.meta.env.VITE_FUBON_SNAPSHOT_ENABLED', "'true'"), {
+        ...policy, ...quoteTiming,
+        captureUserSession: () => ({ assertActive() {} }),
+        AbortSignal: { timeout: delay => {
+            const controller = new AbortController()
+            timers.push({ at: delay, run: () => controller.abort() })
+            return controller.signal
+        } },
+        authenticatedFetch: (_path, _session, options) => new Promise((resolve, reject) => {
+            options.signal.addEventListener('abort', () => reject(new Error('snapshot timeout')), { once: true })
+            timers.push({ at: latency, run: () => resolve({ json: async () => ({ snapshots: [{ market: 'TSE', date: '2026-09-23',
+                fetchedAt: at, data: [{ symbol: '2330', lastPrice: 120, closePrice: 119, isTrial: false }] }] }) }) })
+        }),
+    })
+    return { mod, timers }
+}
+
+test('a successful ten-second market snapshot survives startup instead of triggering bounded Fugle gaps', async () => {
+    const h = timedSnapshot(10102)
+    const pending = h.mod.getFubonSnapshotObservations(['2330'], at).then(value => ({ value }), error => ({ error }))
+    const first = h.timers.sort((a, b) => a.at - b.at)[0]
+    first.run()
+    const result = await pending
+    assert.equal(result.error, undefined)
+    assert.equal(result.value['2330'].status, 'success')
+    assert.equal(result.value['2330'].price, 120)
+})
+
+test('a hanging market snapshot still times out before the shared refresh deadline', async () => {
+    const h = timedSnapshot(30000)
+    const pending = h.mod.getFubonSnapshotObservations(['2330'], at).then(value => ({ value }), error => ({ error }))
+    const first = h.timers.sort((a, b) => a.at - b.at)[0]
+    assert.ok(first.at < quoteTiming.QUOTE_REFRESH_TIMEOUT_MS)
+    first.run()
+    assert.match((await pending).error.message, /timeout/)
+})
+
 test('documented market response uses unflagged closePrice only as a reference and rejects trial prices', () => {
     const result = policy.normalizeFubonSnapshots([{
         market: 'TSE', date: '2026-09-23', data: [

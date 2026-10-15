@@ -2,6 +2,7 @@ import { authenticatedFetch } from './authenticatedFetch'
 import { captureUserSession } from './userDB'
 import { normalizeFubonSnapshots } from './fubonSnapshotPolicy'
 import type { QuoteObservations } from './pricePolicy'
+import { FUBON_SNAPSHOT_TIMEOUT_MS } from './quoteTiming'
 
 export function isFubonSnapshotEnabled(): boolean {
     return import.meta.env.VITE_FUBON_SNAPSHOT_ENABLED === 'true'
@@ -11,7 +12,7 @@ export async function getFubonSnapshotObservations(codes: string[], requestedAt:
     if (!codes.length) return {}
     const session = captureUserSession()
     const response = await authenticatedFetch('/.netlify/functions/fubon-snapshot', session, {
-        signal: AbortSignal.timeout(8000), method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ codes }),
+        signal: AbortSignal.timeout(FUBON_SNAPSHOT_TIMEOUT_MS), method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ codes }),
     })
     const body = await response.json()
     session.assertActive()

@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "test:function-runtime": "node --no-experimental-require-module --test tests/http-functions.test.mjs tests/firebase-runtime.test.mjs",
     "check:quote-deployment": "node scripts/check-quote-deployment.mjs",
+    "deploy:production": "node scripts/deploy-production.mjs",
     "test:ui-sync": "node --test tests/sync-presentation.test.mjs",
     "posttest": "npm run test:ui-sync && npm run test:ui-polish && npm run test:function-runtime",
     "lint": "eslint . --max-warnings 0",

@@ -82,7 +82,9 @@ API_FIREBASE_SERVICE_ACCOUNT
 
 請將實際值設在本機 `.env` 或部署平台的環境變數中，不要提交憑證檔與金鑰。`API_*` 為共用身分驗證與額度設定；Fugle 報價及歷史資料需要伺服器端 `FUGLE_API_KEY`。本批只調整本機設定；正式環境須在取得部署同意後配置，並先輪替曾放入前端的舊 Fugle 金鑰。
 
-正式發布前執行 `npm run check:quote-deployment`，唯讀檢查 production／Functions 的四項報價必要設定；缺漏時以非零狀態停止。單次 `--env`／`--secret-env` 部署覆寫不會自動沿用到後續發布。Fugle 金鑰應在取得本批正式設定變更同意後保存為 production／Functions secret，並在發布後實際驗證一檔現價及 `IX0001` 歷史行情。其餘既有 Functions 覆寫也須沿用原發布流程。檢查只輸出設定名稱與可用狀態，不輸出值；設定存在不代表來源權限已驗證。詳見 [2026-10-15 報價 503 查核](docs/QUOTE_DEPLOYMENT_2026-10-15.md)。
+正式發布使用 `npm run deploy:production -- --cli <官方 Netlify CLI 27.12.1 的 bin/run.js 路徑>` 先做唯讀預檢；取得本批同意後，再加入 `--publish --expected-deploy <目前正式部署 ID>`。固定程序自動附帶 Fugle 及其餘 19 項既有 Functions 覆寫，三個機密值使用 `--secret-env`，缺任何設定就停止；也核對 CLI 實際解析範圍、前端金鑰掃描、部署前狀態及部署鎖。不要使用省略覆寫的裸 `netlify deploy`。發布後仍須實際驗證登入後現價及 `IX0001` 歷史行情。
+
+目前方案不支援持久設定自訂為 Functions-only，因此沿用單次 Functions 覆寫；不擴大到 builds／runtime、不升級方案。`npm run check:quote-deployment` 僅核對持久站台設定，不包含單次部署覆寫，故仍可能列出缺 Fugle；它不能單獨判定已部署函式是否缺金鑰。固定發布程序會合併其實際送出的覆寫後驗證，並僅輸出名稱／狀態。詳見 [2026-10-15 報價 503 查核](docs/QUOTE_DEPLOYMENT_2026-10-15.md)。
 
 ## 驗證
 
