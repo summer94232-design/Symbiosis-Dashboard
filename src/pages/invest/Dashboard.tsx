@@ -11,7 +11,8 @@ import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, 
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell, type PieLabelRenderProps } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { usePrices } from '../../PriceContext'
-import { loadPortfolioSnapshot } from '../../lib/portfolioSnapshot'
+import { loadPortfolioSnapshot, type PortfolioHoldingGroup } from '../../lib/portfolioSnapshot'
+import HoldingFundingBadge from '../../components/HoldingFundingBadge'
 import { useInvestSync } from '../../InvestSyncContext'
 import { formatAutoSnapshotFeedback, maybeAutoSnapshotToday, type AutoSnapshotResult } from '../../lib/snapshot'
 import { toLocalDateString } from '../../lib/date'
@@ -163,6 +164,12 @@ export default function Dashboard() {
     const { version: syncVersion } = useInvestSync()
 
     const [storedHoldings, setHoldings] = useState<HoldingItem[]>([])
+    const [storedHoldingGroups, setHoldingGroups] = useState<PortfolioHoldingGroup[]>([])
+    const holdingGroups = useMemo(() => {
+        const rows = storedHoldingGroups.map(h => Object.hasOwn(ctxPrices, h.code) ? { ...h, ...calcHoldingValuation(h, ctxPrices[h.code]) } : h)
+        const total = rows.reduce((sum, h) => sum + h.marketValue, 0)
+        return rows.map(h => ({ ...h, ratio: total > 0 ? h.marketValue / total * 100 : 0 }))
+    }, [storedHoldingGroups, ctxPrices])
     const holdings = useMemo(() => {
         const rows = storedHoldings.map(h => Object.hasOwn(ctxPrices, h.code) ? { ...h, ...calcHoldingValuation(h, ctxPrices[h.code]) } : h)
         const total = rows.reduce((sum, h) => sum + h.marketValue, 0)
@@ -280,6 +287,7 @@ export default function Dashboard() {
             }))
 
             setHoldings(holdingList)
+            setHoldingGroups(snapshot.holdingGroups)
             // ✅ Bug 修正：傳 false。本系統的賣出 total（收付金額）記的是「已扣除歸還券商借款後的
             //   淨入帳金額」，calcAvailableCash 直接 + sellTotal 即為正確可用現金。
             //   若傳 true 會再扣一次 calcMarginRepaid（借款本金），導致融資賣出後現金被低估。
@@ -524,11 +532,11 @@ export default function Dashboard() {
     // 依族群模式：先依「族群總市值」大到小排族群，未分類排最後；同族群內再依個股市值大到小
     const sortedHoldings = useMemo(() => {
         const groupTotalMV: Record<string, number> = {}
-        holdings.forEach(h => {
+        holdingGroups.forEach(h => {
             const g = stockGroups[h.code] || '__未分類__'
             groupTotalMV[g] = (groupTotalMV[g] || 0) + h.marketValue
         })
-        return [...holdings].sort((a, b) => {
+        return [...holdingGroups].sort((a, b) => {
             switch (sortMode) {
                 case 'group': {
                     const ga = stockGroups[a.code] || '__未分類__'
@@ -554,7 +562,7 @@ export default function Dashboard() {
                     return b.marketValue - a.marketValue
             }
         })
-    }, [holdings, stockGroups, sortMode])
+    }, [holdingGroups, stockGroups, sortMode])
 
     const unrealizedLabel = hasPrice && holdingsWithoutPrice.length > 0
         ? `未實現損益（${holdingsWithPrice.length}/${holdings.length} 檔）`
@@ -1266,21 +1274,21 @@ export default function Dashboard() {
                                 <>
                                 <div className="mobile-holdings-list dashboard-mobile-holdings">
                                     {sortedHoldings.map(h => {
-                                        const expanded = expandedHoldingCode === h.code
-                                        const detailId = `dashboard-holding-${h.code}`
+                                        const expanded = expandedHoldingCode === h.positionKey
+                                        const detailId = `dashboard-holding-${h.positionKey}`
                                         return (
-                                            <div key={h.code} className="mobile-holding-card">
+                                            <div key={h.positionKey} className="mobile-holding-card">
                                                 <button
                                                     type="button"
                                                     className="mobile-holding-summary"
                                                     aria-expanded={expanded}
                                                     aria-controls={detailId}
-                                                    onClick={() => setExpandedHoldingCode(expanded ? null : h.code)}
+                                                    onClick={() => setExpandedHoldingCode(expanded ? null : h.positionKey)}
                                                 >
                                                     <span className="mobile-holding-identity">
-                                                        <strong>{h.code}</strong>
+                                                        <span style={{ display: 'flex', alignItems: 'center' }}><strong>{h.code}</strong><HoldingFundingBadge type={h.fundingType} /></span>
                                                         <span>{h.name}</span>
-                                                        {h.marginAmount > 0 && <em>融資</em>}
+                                                        <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>{h.shares.toLocaleString()} 股 · 均價 {h.avgCost.toFixed(2)}</span>
                                                     </span>
                                                     <span className="mobile-holding-result">
                                                         <strong>${h.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</strong>
@@ -1294,6 +1302,7 @@ export default function Dashboard() {
                                                     <div id={detailId} className="mobile-holding-details dashboard-holding-details">
                                                         {[
                                                             ['股數', h.shares.toLocaleString()],
+                                                            ['融資借款', h.fundingType === 'margin' ? h.marginAmount.toLocaleString() : '—'],
                                                             ['平均成本', h.avgCost.toFixed(2)],
                                                             ['現價', h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)],
                                                             ['未實現損益', h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`],
@@ -1318,16 +1327,11 @@ export default function Dashboard() {
                                         </thead>
                                         <tbody>
                                             {sortedHoldings.map(h => (
-                                                <tr key={h.code}>
+                                                <tr key={h.positionKey}>
                                                     <td style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{h.code}</td>
                                                     <td>
                                                         {h.name}
-                                                        {/* ✅ 融資標籤 */}
-                                                        {h.marginAmount > 0 && (
-                                                            <span style={{ marginLeft: '6px', fontSize: '10px', color: 'var(--c-warning)', backgroundColor: 'rgba(245,166,35,0.12)', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>
-                                                                融資
-                                                            </span>
-                                                        )}
+                                                        <HoldingFundingBadge type={h.fundingType} />
                                                     </td>
                                                     <td>{h.shares.toLocaleString()}</td>
                                                     <td>{h.avgCost.toFixed(2)}</td>

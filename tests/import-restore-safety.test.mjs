@@ -122,7 +122,8 @@ function importHarness({ switchAt, failAt, content } = {}) {
     const body = source.slice(source.indexOf('    const handleImportCSV ='), source.indexOf('    const dayTradeAnalysis ='))
     const csv = compile(read('src/lib/csv.ts'))
     const dayCsv = compile(read('src/lib/dayTradeCsv.ts'), calc)
-    const mod = compile(body, { ...db, ...csv, ...dayCsv, ...calc, ...validation, investDB: 'invest', dividends: [], marginRules: {},
+    const repaymentCsv = compile(read('src/lib/marginRepayment.ts'), calc)
+    const mod = compile(body, { ...db, ...csv, ...dayCsv, ...calc, ...validation, ...repaymentCsv, investDB: 'invest', dividends: [], marginRules: {},
         doc: () => ({ id: 'new-' + writes.length }),
         commitLedgerWrites: async (rows, session) => {
             for (const row of rows) { writes.push({ path: session.doc('invest', row.collection, row.id), data: row.data }); await boundary() }

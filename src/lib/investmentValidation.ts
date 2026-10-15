@@ -81,7 +81,7 @@ export function validateTradeForWrite(trade: TradeRecord): InvestmentValidationR
                 errors.push('融資本金、利息與償還金額必須是非負整數')
             }
             if (repay <= 0) warnings.push('融資賣出尚未填入償還金額，可用現金可能被高估')
-            if (repay > 0 && principal + interest > 0 && Math.abs(repay - principal - interest) > 1) {
+            if (principal + interest > 0 && repay !== principal + interest) {
                 errors.push('融資償還金額必須等於本金加利息')
             }
         }

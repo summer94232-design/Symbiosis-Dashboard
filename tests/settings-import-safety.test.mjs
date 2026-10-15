@@ -9,6 +9,7 @@ const calc = compile(read('src/lib/calc.ts'))
 const validation = compile(read('src/lib/investmentValidation.ts'), calc)
 const csv = compile(read('src/lib/csv.ts'))
 const dayCsv = compile(read('src/lib/dayTradeCsv.ts'), calc)
+const repaymentCsv = compile(read('src/lib/marginRepayment.ts'), calc)
 const source = read('src/pages/invest/InvestSettings.tsx')
 const handlers = source.slice(source.indexOf('    const handleImportDict ='), source.indexOf('    // ── 一鍵匯出全部資料'))
 const fixtures = {
@@ -36,7 +37,7 @@ function harness(kind, options = {}) {
         if (matches(options.failAt)) throw Error('測試連線失敗')
     }
     const db = compile(read('src/lib/userDB.ts'), { investAuth, kmsAuth, collection: (_, ...parts) => parts.join('/'), doc: (_, ...parts) => parts.join('/') })
-    const bindings = { ...calc, ...validation, ...csv, ...dayCsv, ...db, XLSX, importLock, restoring: options.restoring || false,
+    const bindings = { ...calc, ...validation, ...csv, ...dayCsv, ...repaymentCsv, ...db, XLSX, importLock, restoring: options.restoring || false,
         investDB: 'invest', doc: () => ({ id: 'new-' + state.writes.length }),
         commitLedgerWrites: async (writes, session) => {
             for (const write of writes) await bindings.setDoc(session.doc('invest', write.collection, write.id), write.data)

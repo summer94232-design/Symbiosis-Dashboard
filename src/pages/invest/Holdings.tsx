@@ -3,7 +3,8 @@ import { useState, useEffect, useRef } from 'react'
 import { getDoc, setDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { captureUserSession, userDocNested } from '../../lib/userDB'
-import { loadPortfolioSnapshot } from '../../lib/portfolioSnapshot'
+import { loadPortfolioSnapshot, type HoldingFundingType } from '../../lib/portfolioSnapshot'
+import HoldingFundingBadge from '../../components/HoldingFundingBadge'
 import InfoHint from '../../components/InfoHint'
 import ActionNotice, { type ActionNoticeState } from '../../components/ActionNotice'
 import { calcHoldingValuation } from '../../lib/calc'
@@ -16,6 +17,8 @@ import { usePrices } from '../../PriceContext'
 import { useInvestSync } from '../../InvestSyncContext'
 
 interface DisplayHolding {
+    positionKey: string
+    fundingType: HoldingFundingType
     code: string
     name: string
     shares: number
@@ -121,7 +124,8 @@ export default function Holdings() {
             const groups: Record<string, string> = groupDoc.exists() ? groupDoc.data() : {}
             setStockGroups(groups)
 
-            const list: DisplayHolding[] = snapshot.holdings.map(holding => ({
+            const list: DisplayHolding[] = snapshot.holdingGroups.map(holding => ({
+                positionKey: holding.positionKey, fundingType: holding.fundingType,
                 code: holding.code, name: holding.name, shares: holding.shares,
                 avgCost: holding.avgCost, currentPrice: holding.currentPrice,
                 marketValue: holding.marketValue, totalCost: holding.totalCost,
@@ -143,7 +147,7 @@ export default function Holdings() {
     const handleUpdatePrices = async () => {
         const generation = ++priceRefreshGeneration.current
         const session = captureUserSession()
-        let symbols = holdings.map(h => h.code)
+        let symbols = [...new Set(holdings.map(h => h.code))]
         let snapshotResult: AutoSnapshotResult | null = null
         let priceFeedback: ActionNoticeState | null = null
         const publishFeedback = () => {
@@ -286,14 +290,14 @@ export default function Holdings() {
                         <>
                             <div className="mobile-holdings-list">
                                 {holdings.map(h => {
-                                    const expanded = expandedCode === h.code
+                                    const expanded = expandedCode === h.positionKey
                                     return (
-                                        <div key={h.code} className="mobile-holding-card">
-                                            <button type="button" className="mobile-holding-summary" onClick={() => setExpandedCode(expanded ? null : h.code)}>
+                                        <div key={h.positionKey} className="mobile-holding-card">
+                                            <button type="button" className="mobile-holding-summary" aria-expanded={expanded} aria-controls={`holding-${h.positionKey}`} onClick={() => setExpandedCode(expanded ? null : h.positionKey)}>
                                                 <span className="mobile-holding-identity">
-                                                    <strong>{h.code}</strong>
+                                                    <span style={{ display: 'flex', alignItems: 'center' }}><strong>{h.code}</strong><HoldingFundingBadge type={h.fundingType} /></span>
                                                     <span>{h.name}</span>
-                                                    {h.marginAmount > 0 && <em>融資</em>}
+                                                    <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>{h.shares.toLocaleString()} 股 · 均價 {h.avgCost.toFixed(2)}</span>
                                                 </span>
                                                 <span className="mobile-holding-result">
                                                     <strong>{h.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</strong>
@@ -304,11 +308,12 @@ export default function Holdings() {
                                                 {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                                             </button>
                                             {expanded && (
-                                                <div className="mobile-holding-details">
+                                                    <div id={`holding-${h.positionKey}`} className="mobile-holding-details">
                                                     {[
                                                         ['股數', h.shares.toLocaleString()],
                                                         ['均價', h.avgCost.toFixed(2)],
                                                         ['現價', h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)],
+                                                        ['融資借款', h.fundingType === 'margin' ? h.marginAmount.toLocaleString() : '—'],
                                                         ['成本', h.totalCost.toLocaleString('zh-TW', { maximumFractionDigits: 0 })],
                                                         ['市值', h.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })],
                                                         ['未實現損益', h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`],
@@ -332,23 +337,18 @@ export default function Holdings() {
                                 <table className="holdings-table">
                                 <thead>
                                     <tr>
-                                        {['代號', '名稱', '股數', '均價（含手續費）', '現價', '成本', '市值', '未實現損益', '報酬率', '族群'].map(h => (
+                                        {['代號', '名稱', '股數', '均價（含手續費）', '現價', '成本', '市值', '融資借款', '未實現損益', '報酬率', '族群'].map(h => (
                                             <th key={h} style={h === '族群' ? { color: 'var(--c-purple)' } : {}}>{h}</th>
                                         ))}
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {holdings.map(h => (
-                                        <tr key={h.code}>
+                                        <tr key={h.positionKey}>
                                             <td style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{h.code}</td>
                                             <td>
                                                 {h.name}
-                                                {/* ✅ 融資標籤 */}
-                                                {h.marginAmount > 0 && (
-                                                    <span style={{ marginLeft: '6px', fontSize: '10px', color: 'var(--c-warning)', backgroundColor: 'rgba(245,166,35,0.12)', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>
-                                                        融資
-                                                    </span>
-                                                )}
+                                                <HoldingFundingBadge type={h.fundingType} />
                                             </td>
                                             <td>{h.shares.toLocaleString()}</td>
                                             <td>{h.avgCost.toFixed(2)}</td>
@@ -357,6 +357,7 @@ export default function Holdings() {
                                             </td>
                                             <td>{h.totalCost.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
                                             <td style={{ color: 'var(--c-accent)' }}>{h.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</td>
+                                            <td>{h.fundingType === 'margin' ? h.marginAmount.toLocaleString() : '—'}</td>
                                             <td>
                                                 <span style={{ color: h.currentPrice === null ? 'var(--c-muted)' : pnlColor(h.unrealizedPnL), fontWeight: 600 }}>
                                                     {h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`}

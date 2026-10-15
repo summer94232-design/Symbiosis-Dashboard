@@ -37,6 +37,8 @@ export interface ReconciliationResult {
         systemRepay: number
         brokerInterest?: number
         systemInterest?: number
+        brokerPrincipal?: number
+        systemPrincipal?: number
     }
 }
 
@@ -483,14 +485,17 @@ export function reconcileBrokerTrades(
             if (brokerRow.tax !== undefined && systemRow.tax !== undefined && Math.abs(brokerRow.tax - systemRow.tax) > moneyTolerance) differences.push(`交易稅：券商 ${brokerRow.tax} / 系統 ${systemRow.tax}`)
             if (brokerRow.isMargin && brokerRow.type === 'sell'
                 && brokerRow.marginRepay !== undefined && systemRow.marginRepay !== undefined) {
-                const brokerInterest = brokerRow.marginInterest ?? (systemRow.marginPrincipal !== undefined
-                    ? brokerRow.marginRepay - systemRow.marginPrincipal
+                const brokerInterest = brokerRow.marginInterest ?? (brokerRow.marginPrincipal !== undefined
+                    ? brokerRow.marginRepay - brokerRow.marginPrincipal
                     : undefined)
                 const systemInterest = systemRow.marginInterest ?? (systemRow.marginPrincipal !== undefined
                     ? systemRow.marginRepay - systemRow.marginPrincipal
                     : undefined)
-                if (Math.abs(brokerRow.marginRepay - systemRow.marginRepay) > moneyTolerance
+                const principalMismatch = brokerRow.marginPrincipal !== undefined && systemRow.marginPrincipal !== undefined
+                    && Math.abs(brokerRow.marginPrincipal - systemRow.marginPrincipal) > moneyTolerance
+                if (principalMismatch || Math.abs(brokerRow.marginRepay - systemRow.marginRepay) > moneyTolerance
                     || (brokerInterest !== undefined && systemInterest !== undefined && Math.abs(brokerInterest - systemInterest) > moneyTolerance)) {
+                    if (principalMismatch) differences.push(`融資本金：券商 ${brokerRow.marginPrincipal!.toLocaleString()} / 系統 ${systemRow.marginPrincipal!.toLocaleString()}`)
                     differences.push(brokerInterest !== undefined && systemInterest !== undefined
                         ? `融資利息：券商 ${Math.round(brokerInterest).toLocaleString()} / 系統 ${Math.round(systemInterest).toLocaleString()}`
                         : `融資償還：券商 ${brokerRow.marginRepay.toLocaleString()} / 系統 ${systemRow.marginRepay.toLocaleString()}`)
@@ -499,6 +504,7 @@ export function reconcileBrokerTrades(
                         systemRepay: systemRow.marginRepay,
                         brokerInterest,
                         systemInterest,
+                        ...(principalMismatch ? { brokerPrincipal: brokerRow.marginPrincipal, systemPrincipal: systemRow.marginPrincipal } : {}),
                     }
                 }
             }

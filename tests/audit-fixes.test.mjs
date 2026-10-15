@@ -8,6 +8,8 @@ import { memoryFirestore } from './helpers/memory-firestore.mjs'
 const calc = compile(read('src/lib/calc.ts'))
 const csv = compile(read('src/lib/csv.ts'))
 const dayCsv = compile(read('src/lib/dayTradeCsv.ts'), calc)
+const repaymentCsv = compile(read('src/lib/marginRepayment.ts'), calc)
+const marginSettings = compile(read('src/lib/marginSettings.ts'), calc)
 const validation = compile(read('src/lib/investmentValidation.ts'), calc)
 const integrity = compile(read('src/lib/ledgerIntegrity.ts'), calc)
 const search = compile(read('src/lib/kmsSearch.ts'))
@@ -248,10 +250,10 @@ function investmentImport(page, text) {
     const start = source.indexOf(`    const ${name} =`)
     const end = page === 'Trades' ? source.indexOf('    const dayTradeAnalysis =', start) : source.indexOf('    // ── 匯入出入金', start)
     const setResult = result => { state.result = result }
-    const mod = compile(source.slice(start, end), { ...calc, ...csv, ...dayCsv, ...validation, ...h.bindings,
+    const mod = compile(source.slice(start, end), { ...calc, ...csv, ...dayCsv, ...repaymentCsv, ...marginSettings, ...validation, ...h.bindings,
         commitLedgerWrites: h.commitLedgerWrites, getDocs: h.bindings.getDocsFromServer,
         setDoc: async (path, data) => h.store.set(path, data),
-        doc: () => ({ id: 'generated-' + h.commits.length }), dividends: [], marginRules: {},
+        doc: () => ({ id: 'generated-' + h.commits.length }), dividends: [], marginRules: marginSettings.DEFAULT_MARGIN_RULES,
         importLock: { current: false }, restoring: false,
         setImporting() {}, setTradeImporting() {}, setImportResult: setResult, setTradeImportResult: setResult,
         showMsg() {}, saveStockName: async () => {}, cacheStockName() {}, cache: { invalidatePrefix() {} },
@@ -261,6 +263,21 @@ function investmentImport(page, text) {
 }
 
 for (const page of ['Trades', 'InvestSettings']) {
+    test(`broker repayment breakdown survives the ${page} CSV import and feeds debt and profit`, async () => {
+        const text = 'Firestore ID,日期,類型,代號,名稱,價格,股數,手續費,交易稅,收付金額,融資成數,融資本金,融資利息,融資償還金額\n'
+            + 'buy,2026-09-01,融資買入,2330,fixture,116,3000,297,0,140297,0.6,,,\n'
+            + 'sale,2026-09-02,融資賣出,2330,fixture,109.25,1000,93,109,38904,0.6,70000,144,70144'
+        const h = investmentImport(page, text)
+        await h.run()
+        assert.equal(h.state.result.success, 2)
+        assert.equal(h.state.result.error, undefined)
+        const rows = [...h.store].filter(([path]) => path.includes('/trades/')).map(([path, row]) => ({ ...row, id: path.split('/').at(-1) }))
+        const saved = rows.find(row => row.id === 'sale')
+        assert.deepEqual([saved.marginPrincipal, saved.marginInterest, saved.marginRepay, saved.marginRepayManual], [70000, 144, 70144, true])
+        assert.equal(calc.aggregateMarginDebt(rows), 138000)
+        assert.equal(calc.calcPositions(rows).realized[0].realized, -7195)
+    })
+
     test(`A06/A08: ${page} honors actual fees and zero taxes and preserves multiline notes`, async () => {
         const h = investmentImport(page, '日期,類型,代號,名稱,價格,股數,手續費,交易稅,收付金額,備註\n2026-09-01,買入,2330,fixture,100,1000,50,0,100050,"第一行\n第二行,含逗號"\n2026-09-02,賣出,2330,fixture,100,1000,50,0,,完成')
         await h.run(); assert.equal(h.state.result.success, 2); assert.equal(h.state.result.error, undefined)

@@ -500,7 +500,8 @@ function recordedPrincipal(trade: TradeRecord): number | undefined {
     // interest-only repayment makes zero an explicit principal repayment.
     const value = trade.marginPrincipal
     return typeof value === 'number' && Number.isFinite(value)
-        && (value > 0 || (value === 0 && (trade.marginRepay ?? 0) > 0 && trade.marginRepay === trade.marginInterest))
+        && (value > 0 || (value === 0 && trade.marginRepay === trade.marginInterest
+            && ((trade.marginRepay ?? 0) > 0 || (trade.marginRepayManual === true && trade.marginRepay === 0))))
         ? value : undefined
 }
 

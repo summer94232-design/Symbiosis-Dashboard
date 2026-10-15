@@ -43,6 +43,7 @@ export interface PortfolioSnapshot {
     dividends: DividendRecord[]
     cashflow: CashflowRecord[]
     holdings: PortfolioHoldingSnapshot[]
+    holdingGroups: PortfolioHoldingGroup[]
     marginPositions: MarginPositionAgg[]
     realizedPnL: number
     marketValue: number
@@ -59,6 +60,12 @@ export interface PortfolioSnapshot {
     prices: Record<string, number>
     savedPriceData: SavedPrices
     priceUpdatedAt: string
+}
+
+export type HoldingFundingType = 'cash' | 'margin' | 'unclassified'
+export interface PortfolioHoldingGroup extends PortfolioHoldingSnapshot {
+    positionKey: string
+    fundingType: HoldingFundingType
 }
 
 export interface BuildPortfolioSnapshotInput {
@@ -78,7 +85,7 @@ export function buildPortfolioSnapshot(input: BuildPortfolioSnapshotInput): Port
     const asOf = input.asOf ?? toLocalDateString()
     const trades = input.trades.filter(t => isEffectiveOn(t.date, asOf))
     const cashflow = input.cashflow.filter(c => isEffectiveOn(c.date, asOf))
-    const { holdings: positions, realized } = calcPositions(trades, input.dividends, { asOf })
+    const { holdings: positions, realized, inventoryLots } = calcPositions(trades, input.dividends, { asOf, includeInventoryLots: true })
     const prices: Record<string, number> = {}
     Object.entries(input.savedPrices ?? {}).forEach(([code, value]) => {
         if (code !== '_updatedAt' && positivePrice(value)) prices[code] = value
@@ -112,6 +119,30 @@ export function buildPortfolioSnapshot(input: BuildPortfolioSnapshotInput): Port
     holdings.forEach(holding => { holding.ratio = marketValue > 0 ? holding.marketValue / marketValue * 100 : 0 })
     holdings.sort((a, b) => b.marketValue - a.marketValue)
 
+    // Display funding classes from the remaining FIFO lots; retain per-code totals
+    // for asset allocation, quotes, risk and saved portfolio snapshots.
+    const holdingGroups: PortfolioHoldingGroup[] = holdings.flatMap(holding => {
+        const groups = new Map<HoldingFundingType, { shares: number; totalCost: number }>()
+        for (const lot of inventoryLots?.[holding.code] ?? []) {
+            if (lot.shares <= 0) continue
+            const type = lot.classificationPending ? 'unclassified' : lot.isMargin ? 'margin' : 'cash'
+            const group = groups.get(type) ?? { shares: 0, totalCost: 0 }
+            group.shares += lot.shares
+            group.totalCost += lot.cost
+            groups.set(type, group)
+        }
+        return (['cash', 'margin', 'unclassified'] as const).flatMap(fundingType => {
+            const group = groups.get(fundingType)
+            if (!group) return []
+            const position = { code: holding.code, name: holding.name, ...group,
+                avgCost: group.totalCost / group.shares,
+                marginAmount: fundingType === 'margin' ? holding.marginAmount : 0 }
+            const valuation = calcHoldingValuation(position, prices[holding.code], asOf)
+            return [{ ...position, ...valuation, positionKey: `${holding.code}:${fundingType}`, fundingType,
+                priceSource: holding.priceSource, ratio: marketValue > 0 ? valuation.marketValue / marketValue * 100 : 0 }]
+        })
+    })
+
     const cash = calcAvailableCash(cashflow, trades, input.dividends, asOf)
     const marginPositions = aggregateMarginPositions(trades, asOf, input.dividends)
     const marginDebt = aggregateMarginDebt(trades, asOf, input.dividends)
@@ -124,6 +155,7 @@ export function buildPortfolioSnapshot(input: BuildPortfolioSnapshotInput): Port
         dividends: input.dividends,
         cashflow,
         holdings,
+        holdingGroups,
         marginPositions,
         realizedPnL: realized.reduce((sum, row) => sum + row.realized, 0),
         marketValue,

@@ -1,6 +1,7 @@
 import { buttonFill } from '../../ui/styles'
 import { importDayTradeFields, orderTradeImportRows, exportDayTradeFields } from '../../lib/dayTradeCsv'
 import { useState, useEffect, useRef } from 'react'
+import { importMarginRepaymentCsv } from '../../lib/marginRepayment'
 import { getDocs, getDoc, setDoc, orderBy, query, addDoc, doc } from 'firebase/firestore'
 import { commitLedgerWrites } from '../../lib/ledgerWrites'
 import { investDB } from '../../lib/firebase'
@@ -325,11 +326,7 @@ export default function InvestSettings() {
                 const marginRatio = isMargin
                     ? (row['融資成數'] !== undefined && row['融資成數'] !== '' ? toNum(row['融資成數']) || 0.6 : 0.6)
                     : 0
-                const marginRepay = isMargin && tradeType === 'sell'
-                    ? (row['融資償還金額'] !== undefined && row['融資償還金額'] !== '' ? toNum(row['融資償還金額']) : 0)
-                    : 0
-                const marginPrincipal = isMargin && tradeType === 'sell' ? toNum(row['融資本金'] || '') || 0 : 0
-                const marginInterest = isMargin && tradeType === 'sell' ? toNum(row['融資利息'] || '') || 0 : 0
+                const repayment = importMarginRepaymentCsv(row, isMargin && tradeType === 'sell')
                 const rawInterestRate = toNum(row['融資年利率 (%)'] || '')
                 const marginInterestRate = isMargin
                     ? (rawInterestRate && rawInterestRate > 1 ? rawInterestRate / 100 : rawInterestRate || DEFAULT_MARGIN_INTEREST_RATE)
@@ -341,7 +338,7 @@ export default function InvestSettings() {
                 const tax = taxRaw !== null ? taxRaw : (tradeType === 'sell' ? calcTax(price, shares, code, date) : 0)
                 const totalRaw = row['收付金額'] !== undefined && row['收付金額'] !== '' ? toNum(row['收付金額']) : null
                 const total = totalRaw !== null ? totalRaw
-                    : calcTradeTotal({ type: tradeType, price, shares, fee, tax, isMargin, marginRatio, marginRepay })
+                    : calcTradeTotal({ type: tradeType, price, shares, fee, tax, isMargin, marginRatio, marginRepay: repayment.marginRepay })
 
                 const createdAt = (row['建立時間'] || '').trim() || new Date(importBaseTime + i).toISOString()
                 const importedSequence = toNum(row['同日順序'] || '')
@@ -351,8 +348,8 @@ export default function InvestSettings() {
                 const candidate: TradeRecord = {
                     ...dayTradeFields,
                     id: sourceId || `__settings_csv_${i}`, date, type: tradeType, code, name, price, shares, fee, tax, total, note,
-                    isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay,
-                    marginPrincipal, marginInterest, marginInterestRate, marginRepayManual: Boolean(marginRepay), createdAt, sequence,
+                    isMargin, marginRatio: isMargin ? marginRatio : 0, ...repayment,
+                    marginInterestRate, createdAt, sequence,
                 }
                 if (!validateTradeForWrite(candidate).valid) {
                     failed++
@@ -372,8 +369,8 @@ export default function InvestSettings() {
                     const payload = {
                         ...dayTradeFields,
                         date, type: tradeType, code, name, price, shares, fee, tax, total, note,
-                        isMargin, marginRatio: isMargin ? marginRatio : 0, marginRepay,
-                        marginPrincipal, marginInterest, marginInterestRate, marginRepayManual: Boolean(marginRepay), createdAt, sequence,
+                        isMargin, marginRatio: isMargin ? marginRatio : 0, ...repayment,
+                        marginInterestRate, createdAt, sequence,
                     }
                     const importedId = sourceId || doc(session.col(investDB, 'trades')).id
                     await commitLedgerWrites([{ collection: 'trades', id: importedId, data: payload, mode: 'create' }], session)

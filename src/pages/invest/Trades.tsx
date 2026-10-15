@@ -7,7 +7,7 @@ import TradeDayTradeBadge from '../../components/TradeDayTradeBadge'
 import { compareTradeListRecords } from '../../lib/tradeList'
 import TradeSettlementDetails from '../../components/TradeSettlementDetails'
 import { importDayTradeFields, orderTradeImportRows } from '../../lib/dayTradeCsv'
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useId } from 'react'
 import { addDoc, getDocs, doc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { captureUserSession } from '../../lib/userDB'
@@ -24,6 +24,7 @@ import ActionNotice, { type ActionNoticeState } from '../../components/ActionNot
 import { useInvestSync } from '../../InvestSyncContext'
 import { validateCashflowForWrite, validateTradeForWrite } from '../../lib/investmentValidation'
 import { DEFAULT_MARGIN_RULES, loadMarginRules, resolveMarginInterestRate } from '../../lib/marginSettings'
+import { updateMarginRepayment, importMarginRepaymentCsv, type MarginRepaymentField } from '../../lib/marginRepayment'
 import DayTradePanel from '../../components/DayTradePanel'
 import { analyzeDayTrades, type TradeRecord } from '../../lib/calc'
 
@@ -247,12 +248,15 @@ function MarginTradeFields({
     estimate,
     onChange,
     onRepayChange,
+    onResetEstimate,
 }: {
     form: Trade
     estimate: MarginRepaymentEstimate
     onChange: <K extends keyof Trade>(key: K, value: Trade[K]) => void
-    onRepayChange: (value: number) => void
+    onRepayChange: (field: MarginRepaymentField, value: number) => void
+    onResetEstimate: () => void
 }) {
+    const fieldId = useId()
     if (!form.isMargin) return null
     if (form.type === 'buy') {
         return <>
@@ -272,17 +276,23 @@ function MarginTradeFields({
     }
     return <>
         <div>
-            <label style={lbl}>償還本金 <span style={{ color: 'var(--c-muted)', fontSize: '11px' }}>（系統估算）</span></label>
-            <input type="number" style={inp} value={form.marginPrincipal || 0} readOnly />
+            <label style={lbl} htmlFor={`${fieldId}-principal`}>償還本金 <span style={{ color: 'var(--c-muted)', fontSize: '11px' }}>（可依券商修正）</span></label>
+            <input id={`${fieldId}-principal`} type="number" min="0" step="1" style={inp} value={form.marginPrincipal ?? 0} onChange={e => onRepayChange('marginPrincipal', Number(e.target.value))} />
         </div>
         <div>
-            <label style={lbl}>融資利息 <span style={{ color: 'var(--c-muted)', fontSize: '11px' }}>（系統估算）</span></label>
-            <input type="number" style={inp} value={form.marginInterest || 0} readOnly />
+            <label style={lbl} htmlFor={`${fieldId}-interest`}>融資利息 <span style={{ color: 'var(--c-muted)', fontSize: '11px' }}>（可依券商修正）</span></label>
+            <input id={`${fieldId}-interest`} type="number" min="0" step="1" style={inp} value={form.marginInterest ?? 0} onChange={e => onRepayChange('marginInterest', Number(e.target.value))} />
         </div>
         <div className="span2">
-            <label style={lbl}>融資償還總額 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（可依券商金額修正）</span></label>
-            <input type="number" style={{ ...inp, color: 'var(--c-warning)' }} value={form.marginRepay || ''} onChange={e => onRepayChange(parseFloat(e.target.value) || 0)} />
-            {form.marginRepayManual && <div style={{ color: 'var(--c-warning)', fontSize: '10px', marginTop: '4px' }}>已使用手動修正金額；利息依「總額－本金」更新。</div>}
+            <label style={lbl} htmlFor={`${fieldId}-repay`}>融資償還總額 <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>（本金＋利息）</span></label>
+            <input id={`${fieldId}-repay`} type="number" min="0" step="1" style={{ ...inp, color: 'var(--c-warning)' }} value={form.marginRepay ?? 0} onChange={e => onRepayChange('marginRepay', Number(e.target.value))} />
+            <div style={{ color: 'var(--c-muted)', fontSize: '11px', marginTop: '4px' }}>本金與利息可分別填入券商明細；修改總額時會保留本金並更新利息。</div>
+            {[form.marginPrincipal ?? 0, form.marginInterest ?? 0, form.marginRepay ?? 0].some(value => !Number.isInteger(value) || value < 0) &&
+                <div role="alert" style={{ color: 'var(--c-danger)', fontSize: '11px', marginTop: '4px' }}>本金、利息與總額請填非負整數；償還總額不可低於本金。</div>}
+            {form.marginRepayManual && <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginTop: '6px' }}>
+                <span style={{ color: 'var(--c-warning)', fontSize: '11px' }}>已使用手動修正金額</span>
+                <button type="button" className="ui-button ui-button-secondary" onClick={onResetEstimate}>恢復系統估算</button>
+            </div>}
             {estimate.unmatchedShares > 0 && <div style={{ color: 'var(--c-danger)', fontSize: '10px', marginTop: '4px' }}>找不到 {estimate.unmatchedShares.toLocaleString()} 股對應的融資買入紀錄，請補登後再確認金額。</div>}
         </div>
     </>
@@ -656,20 +666,15 @@ export default function Trades() {
         })
     }, [form.type, form.isMargin, form.marginRepayManual, marginRepaymentEstimate.principal, marginRepaymentEstimate.interest, marginRepaymentEstimate.total])
 
-    const handleMarginRepayChange = (value: number) => {
-        setForm(current => {
-            const principal = current.marginPrincipal || marginRepaymentEstimate.principal
-            const updated = {
-                ...current,
-                marginRepay: value,
-                marginPrincipal: principal,
-                marginInterest: Math.max(value - principal, 0),
-                marginRepayManual: true,
-            }
-            updated.total = calcTradeTotal(updated)
-            return updated
-        })
+    const handleMarginRepayChange = (field: MarginRepaymentField, value: number) => {
+        setForm(current => updateMarginRepayment(current, field, value))
     }
+    const resetMarginEstimate = () => setForm(current => {
+        const updated = { ...current, marginPrincipal: marginRepaymentEstimate.principal,
+            marginInterest: marginRepaymentEstimate.interest, marginRepay: marginRepaymentEstimate.total,
+            marginRepayManual: false }
+        return { ...updated, total: calcTradeTotal(updated) }
+    })
 
     const handleImportCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
@@ -768,11 +773,7 @@ export default function Trades() {
                 const marginRatioCSV = isMarginCSV
                     ? (row['融資成數'] ? toNum(row['融資成數']) || 0.6 : 0.6)
                     : 0
-                const marginRepayCSV = isMarginCSV && isSell
-                    ? (row['融資償還金額'] ? toNum(row['融資償還金額']) : 0)
-                    : 0
-                const marginPrincipalCSV = isMarginCSV && isSell ? toNum(row['融資本金'] || '') || 0 : 0
-                const marginInterestCSV = isMarginCSV && isSell ? toNum(row['融資利息'] || '') || 0 : 0
+                const repaymentCSV = importMarginRepaymentCsv(row, isMarginCSV && isSell)
                 const rateValue = toNum(row['融資年利率 (%)'] || '')
                 const marginInterestRateCSV = isMarginCSV
                     ? (rateValue && rateValue > 1 ? rateValue / 100 : rateValue || resolveMarginInterestRate(marginRules, rawCode))
@@ -780,7 +781,7 @@ export default function Trades() {
                 const totalRawCSV = row['收付金額'] ? toNum(row['收付金額']) : null
                 const total = totalRawCSV !== null ? totalRawCSV : calcTradeTotal({
                     type: tradeType, price, shares, fee, tax,
-                    isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV
+                    isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: repaymentCSV.marginRepay
                 })
 
                 const createdAt = (row['建立時間'] || '').trim() || new Date(importBaseTime + i).toISOString()
@@ -791,9 +792,8 @@ export default function Trades() {
                 const candidate: Trade = {
                     ...dayTradeFields,
                     id: sourceId || `__csv_${i}`, date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total,
-                    isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV,
-                    marginPrincipal: marginPrincipalCSV, marginInterest: marginInterestCSV,
-                    marginInterestRate: marginInterestRateCSV, marginRepayManual: Boolean(marginRepayCSV),
+                    isMargin: isMarginCSV, marginRatio: marginRatioCSV, ...repaymentCSV,
+                    marginInterestRate: marginInterestRateCSV,
                     note: row['備註/筆記'] || row['備註'] || '', createdAt, sequence,
                 }
                 if (!validateTradeForWrite(candidate).valid) {
@@ -813,9 +813,8 @@ export default function Trades() {
                     const payload = {
                         ...dayTradeFields,
                         date, type: tradeType, code: rawCode, name, price, shares, fee, tax, total,
-                        isMargin: isMarginCSV, marginRatio: marginRatioCSV, marginRepay: marginRepayCSV,
-                        marginPrincipal: marginPrincipalCSV, marginInterest: marginInterestCSV,
-                        marginInterestRate: marginInterestRateCSV, marginRepayManual: Boolean(marginRepayCSV),
+                        isMargin: isMarginCSV, marginRatio: marginRatioCSV, ...repaymentCSV,
+                        marginInterestRate: marginInterestRateCSV,
                         note: row['備註/筆記'] || row['備註'] || '',
                         createdAt, sequence,
                     }
@@ -974,7 +973,7 @@ export default function Trades() {
                                     ⚠️ 已有相同日期、買賣、代號、價格與股數的交易，這筆可能重複。
                                 </div>
                             )}
-                            <MarginTradeFields form={form} estimate={marginRepaymentEstimate} onChange={handleChange} onRepayChange={handleMarginRepayChange} />
+                            <MarginTradeFields form={form} estimate={marginRepaymentEstimate} onChange={handleChange} onRepayChange={handleMarginRepayChange} onResetEstimate={resetMarginEstimate} />
                             {form.isMargin && form.type === 'sell' && <AnnualDataNotice className="span2" settlementRange={settlementRange} />}
                             {oversellWarning && (
                                 <div className="span2" style={{ backgroundColor: 'color-mix(in srgb, var(--c-danger) 10%, transparent)', border: '1px solid var(--c-danger)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--c-danger)', lineHeight: 1.6 }}>
@@ -1143,7 +1142,7 @@ export default function Trades() {
                                     ⚠️ 已有相同日期、買賣、代號、價格與股數的交易，這筆可能重複。
                                 </div>
                             )}
-                            <MarginTradeFields form={form} estimate={marginRepaymentEstimate} onChange={handleChange} onRepayChange={handleMarginRepayChange} />
+                            <MarginTradeFields form={form} estimate={marginRepaymentEstimate} onChange={handleChange} onRepayChange={handleMarginRepayChange} onResetEstimate={resetMarginEstimate} />
                             {form.isMargin && form.type === 'sell' && <AnnualDataNotice className="span2" settlementRange={settlementRange} />}
                             {oversellWarning && (
                                 <div className="span2" style={{ backgroundColor: 'color-mix(in srgb, var(--c-danger) 10%, transparent)', border: '1px solid var(--c-danger)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--c-danger)', lineHeight: 1.6 }}>

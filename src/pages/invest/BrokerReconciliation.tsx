@@ -223,7 +223,9 @@ export default function BrokerReconciliation() {
                 const correction = row.marginCorrection
                 next.push({
                     category: 'margin', severity: 'warning',
-                    message: `${source?.date ?? ''} ${source?.code ?? ''}：建議將融資償還總額由 ${Math.round(correction.systemRepay).toLocaleString()} 元修正為 ${Math.round(correction.brokerRepay).toLocaleString()} 元${correction.brokerInterest !== undefined ? `（券商利息 ${Math.round(correction.brokerInterest).toLocaleString()} 元）` : ''}。`,
+                    message: correction.brokerPrincipal !== undefined
+                        ? `${source?.date ?? ''} ${source?.code ?? ''}：請依券商明細修正本金為 ${correction.brokerPrincipal.toLocaleString()} 元${correction.brokerInterest !== undefined ? `、利息為 ${Math.round(correction.brokerInterest).toLocaleString()} 元` : ''}；償還總額為 ${correction.brokerRepay.toLocaleString()} 元。`
+                        : `${source?.date ?? ''} ${source?.code ?? ''}：建議將融資償還總額由 ${Math.round(correction.systemRepay).toLocaleString()} 元修正為 ${Math.round(correction.brokerRepay).toLocaleString()} 元${correction.brokerInterest !== undefined ? `（券商利息 ${Math.round(correction.brokerInterest).toLocaleString()} 元）` : ''}，並核對本金與利息拆分。`,
                 })
             } else {
                 next.push({ category: 'trade', severity: 'danger', message: `${source?.date ?? ''} ${source?.code ?? ''} ${row.differences.join('；')}`.trim() })
