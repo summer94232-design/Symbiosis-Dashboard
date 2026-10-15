@@ -93,7 +93,7 @@ function GroupCell({
 
 export default function Holdings() {
     // ── 全域現價 Context ──
-    const { prices, lastUpdated, priceLoading, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
+    const { prices, lastUpdated, priceLoading, refreshProgress, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
     const { version: syncVersion } = useInvestSync()
 
     const [storedHoldings, setHoldings] = useState<DisplayHolding[]>([])
@@ -251,7 +251,7 @@ export default function Holdings() {
                 {holdings.length > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '14px', padding: '8px 12px', borderRadius: '9px', border: `1px solid ${missingPriceHoldings.length ? 'color-mix(in srgb, var(--c-warning) 35%, transparent)' : 'color-mix(in srgb, var(--c-positive) 30%, transparent)'}`, background: missingPriceHoldings.length ? 'color-mix(in srgb, var(--c-warning) 7%, transparent)' : 'color-mix(in srgb, var(--c-positive) 6%, transparent)', color: missingPriceHoldings.length ? 'var(--c-warning)' : 'var(--c-positive)', fontSize: '12px' }}>
                         {missingPriceHoldings.length ? <X size={14} /> : <Check size={14} />}
-                        <strong>估值完整度 {pricedHoldings.length}/{holdings.length}（{valuationCompleteness}%）</strong>
+                        <strong>{priceLoading && !refreshProgress?.startsWith('持股已更新') ? `${refreshProgress || '持股更新中'}，估值可能含上次報價` : `估值完整度 ${pricedHoldings.length}/${holdings.length}（${valuationCompleteness}%）`}</strong>
                         {missingPriceHoldings.length > 0 && <span style={{ color: 'var(--c-muted)' }}>缺價：{missingPriceHoldings.map(h => h.code).join('、')}；暫以成本估算市值</span>}
                     </div>
                 )}

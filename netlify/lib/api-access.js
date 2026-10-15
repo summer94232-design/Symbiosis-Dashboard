@@ -10,6 +10,7 @@ export const POLICIES = {
     news: { minute: 6, day: 100, globalDay: 300 },
     foreign: { minute: 120, day: 5000, globalDay: 10000 },
     fubonSnapshot: { minute: 12, day: 300, globalDay: 600 },
+    fubonHistory: { minute: 60, day: 5000, globalDay: 10000 },
     marketCap: { minute: 300, day: 5000, globalDay: 10000 },
     meetings: { minute: 6, day: 100, globalDay: 300 },
     mops: { minute: 20, day: 500, globalDay: 1000 },

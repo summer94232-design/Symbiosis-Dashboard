@@ -42,3 +42,13 @@ export async function readFubonMarket(market) {
     try { return await fubonStage('snapshot', () => client.quotes({ market, type: 'ALLBUT0999' })) }
     catch (error) { clientPromise = null; throw error }
 }
+
+export async function readFubonHistory(symbol, from, to) {
+    const client = await getClient()
+    const historical = client.sdk.marketdata?.restClient?.stock?.historical
+    if (typeof historical?.candles !== 'function') throw new Error('fubon-sdk-incompatible')
+    try {
+        return await historical.candles({ symbol, from, to, timeframe: 'D', adjusted: false,
+            sort: 'asc', fields: 'open,high,low,close,volume' })
+    } catch (error) { clientPromise = null; throw error }
+}

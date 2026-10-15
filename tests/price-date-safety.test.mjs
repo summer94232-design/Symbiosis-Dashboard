@@ -73,6 +73,44 @@ test('F11 stale UI numeric override cannot replace a newer persisted price',()=>
     const saved=policy.mergeQuoteObservations({}, {'2330':obs(120)})
     assert.equal(balance({savedPrices:saved,priceOverrides:{2330:90}}).holdings[0].currentPrice,120)
 })
+
+test('partial refresh cannot use another holding from earlier today to authorize a daily snapshot', () => {
+    const requestedAt = '2026-09-07T04:00:00.000Z'
+    let saved = policy.mergeQuoteObservations({}, { 2330: obs(100), 2317: obs(50) })
+    saved._refresh = { requestedAt, holdingCodes: ['2330', '2317'] }
+    saved = policy.mergeQuoteObservations(saved, { 2330: obs(110, { requestedAt, revision: 1 }) })
+    assert.deepEqual(policy.stalePriceCodes(['2330', '2317'], saved, asOf), ['2317'])
+    assert.match(policy.describeSnapshotPriceIssues(['2317'], saved, asOf), /本次持股報價尚未完成/)
+    saved = policy.mergeQuoteObservations(saved, { 2317: obs(55, { requestedAt, revision: 1 }) })
+    assert.deepEqual(policy.stalePriceCodes(['2330', '2317'], saved, asOf), [])
+    const result = balance({ trades: [buy(), buy({ code: '2317', id: 'b2', price: 50, total: 50000 })],
+        cashflow: [{ date: '2026-01-01', type: 'in', amount: 150000 }], savedPrices: saved })
+    assert.equal(result.netAssets, 165000)
+})
+
+test('same-batch final repairs improve failed quotes but cannot erase or regress a published successful holding', () => {
+    const early = policy.mergeQuoteObservations({}, { 2330: obs(120, { revision: 1, sourceUpdatedAt: 200 }), 2317: obs(null, { revision: 1 }) })
+    const failed = policy.mergeQuoteObservations(early, { 2330: obs(null, { revision: 2 }), 2317: obs(80, { revision: 2 }) })
+    assert.equal(failed[2330], 120); assert.equal(failed._quotes[2330].status, 'success'); assert.equal(failed[2317], 80)
+    const older = policy.mergeQuoteObservations(early, { 2330: obs(100, { revision: 2, sourceUpdatedAt: 100 }) })
+    assert.equal(older[2330], 120); assert.equal(older._quotes[2330].status, 'success')
+})
+
+test('snapshot transaction rechecks a newer refresh or changed holding price before writing', async () => {
+    let writes = 0
+    let saved = policy.mergeQuoteObservations({}, { 2330: obs(120, { requestedAt: '2026-09-07T04:00:00Z' }) })
+    saved._refresh = { requestedAt: '2026-09-07T04:00:00Z', holdingCodes: ['2330'] }
+    const mod = compile(read('src/lib/snapshot.ts'), {
+        stalePriceCodes: policy.stalePriceCodes, investDB: {}, captureUserSession: () => ({ assertActive() {}, doc: (_, col, id) => col + '/' + id }),
+        runTransaction: async (_, fn) => fn({ get: async path => path.startsWith('settings/') ? { data: () => saved } : { exists: () => false }, set: () => writes++ }),
+    })
+    const payload = { date: asOf, totalAssets: 120000 }
+    await assert.rejects(mod.saveValuationSnapshot(payload, undefined, true, { requestedAt: '2026-09-07T03:00:00Z', holdingPrices: { 2330: 120 } }), /持股報價仍在更新/)
+    await assert.rejects(mod.saveValuationSnapshot(payload, undefined, true, { requestedAt: saved._refresh.requestedAt, holdingPrices: { 2330: 100 } }), /持股報價仍在更新/)
+    assert.equal(writes, 0)
+    await mod.saveValuationSnapshot(payload, undefined, true, { requestedAt: saved._refresh.requestedAt, holdingPrices: { 2330: 120 } })
+    assert.equal(writes, 1)
+})
 test('F12 future buy, sell, cashflow and dividend cannot enter today totals',()=>{
     const base=balance()
     const future=balance({trades:[buy(),buy({id:'future-buy',date:'2099-01-01',isMargin:true}),buy({id:'future-sell',date:'2099-02-01',type:'sell'})],
@@ -170,6 +208,7 @@ function priceHarness(getQuotes, failSnapshot = false) {
         investDB:'db',investAuth,cacheRef,requestClock:{current:0},pending:{current:0},setPriceLoading:()=>{},
         captureUserSession:()=>{const initial=investAuth.currentUser;return {doc:()=>initial.uid+'/prices',assertActive:()=>{if(initial!==investAuth.currentUser)throw Error('session changed')}}},
         isFubonSnapshotEnabled:()=>false,
+        loadHoldingQuoteCodes:async()=>[], stalePriceCodes:policy.stalePriceCodes, setRefreshProgress:()=>{},
         getSharedQuoteObservations:getQuotes,mergeQuoteObservations:policy.mergeQuoteObservations,
         runTransaction:async(_,fn)=>fn({get:async()=>({exists:()=>true,data:()=>state.saved}),set:(_,d)=>{state.writes++;state.saved=d}}),
         loadCachedPrices:saved=>{cacheRef.current=policy.mergeQuoteObservations(cacheRef.current,saved._quotes)},
@@ -181,6 +220,7 @@ test('F11 actual update callback ignores a late response after a newer update',a
     const pending=[]
     const {run,state}=priceHarness((_,requestedAt)=>new Promise(resolve=>pending.push({resolve,requestedAt})))
     const older=run(['2330']),newer=run(['2330'])
+    await new Promise(resolve=>setImmediate(resolve))
     pending[1].resolve({'2330':obs(120,{requestedAt:pending[1].requestedAt})});await newer
     pending[0].resolve({'2330':obs(100,{requestedAt:pending[0].requestedAt})});const result=await older
     assert.equal(state.saved['2330'],120);assert.equal(result['2330'],120)
@@ -189,10 +229,11 @@ test('F11 account switch while fetching prevents persistence and snapshot',async
     let resolve
     const harness=priceHarness(()=>new Promise(r=>{resolve=r}))
     const pending=harness.run(['2330'])
+    await new Promise(resolve=>setImmediate(resolve))
     harness.investAuth.currentUser={uid:'b'}
     resolve({'2330':obs(100)})
     await assert.rejects(pending,/session changed/)
-    assert.equal(harness.state.writes,0);assert.equal(harness.state.snapshots,0)
+    assert.equal(harness.state.writes,1);assert.equal(harness.state.saved['2330'],undefined);assert.equal(harness.state.snapshots,0)
 })
 
 test('successful committed quotes remain available when the optional snapshot fails',async()=>{

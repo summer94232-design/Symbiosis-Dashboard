@@ -32,14 +32,26 @@ import { fetchTrades, fetchDividends, fetchCashflow, invalidateAssetSnapshots } 
 import { toLocalDateString } from './date'
 import { canRunAutoSnapshot, type AutoSnapshotTrigger } from './snapshotPolicy'
 import { validateSnapshotForWrite } from './investmentValidation'
-import { describeSnapshotPriceIssues } from './pricePolicy'
+import { describeSnapshotPriceIssues, stalePriceCodes, type SavedPrices } from './pricePolicy'
+
+interface SnapshotQuoteGuard { requestedAt: string; holdingPrices: Record<string, number> }
 
 /** One daily record; foreground refreshes replace it, background captures preserve it. */
-export async function saveValuationSnapshot(snapshot: SnapshotData & { auto?: boolean }, session = captureUserSession(), overwrite = true): Promise<boolean> {
+export async function saveValuationSnapshot(snapshot: SnapshotData & { auto?: boolean }, session = captureUserSession(), overwrite = true,
+    guard?: SnapshotQuoteGuard): Promise<boolean> {
     session.assertActive()
     return runTransaction(investDB, async transaction => {
         const ref = session.doc(investDB, 'assetSnapshots', snapshot.date)
         const existing = await transaction.get(ref)
+        if (guard) {
+            const prices = await transaction.get(session.doc(investDB, 'settings', 'lastPrices'))
+            const saved = prices.data() as SavedPrices | undefined
+            if (!saved || saved._refresh?.requestedAt !== guard.requestedAt
+                || stalePriceCodes(Object.keys(guard.holdingPrices), saved, snapshot.date).length
+                || Object.entries(guard.holdingPrices).some(([code, price]) => saved[code] !== price)) {
+                throw new Error('持股報價仍在更新，今日快照未儲存，請待更新完成後再試。')
+            }
+        }
         session.assertActive()
         if (existing.exists() && !overwrite) return false
         transaction.set(ref, snapshot)
@@ -100,7 +112,7 @@ export interface SnapshotData {
  * 讀取資料並計算「今日快照」內容（不寫入）。
  * 與 AssetTrend.saveToday 的計算完全同口徑。
  */
-export async function buildTodaySnapshot(): Promise<{ snapshot: SnapshotData; missing: string[]; stale: string[]; staleReason: string }> {
+export async function buildTodaySnapshot(): Promise<{ snapshot: SnapshotData; missing: string[]; stale: string[]; staleReason: string; guard?: SnapshotQuoteGuard }> {
     const session = captureUserSession()
     const priceRef = session.doc(investDB, 'settings', 'lastPrices')
     const today = toLocalDateString()
@@ -109,7 +121,7 @@ export async function buildTodaySnapshot(): Promise<{ snapshot: SnapshotData; mi
         fetchCashflow<CashflowRecord>('asc'), getDocFromServer(priceRef),
     ])
     session.assertActive()
-    const savedPrices = priceDoc.exists() ? priceDoc.data() : {}
+    const savedPrices: SavedPrices = priceDoc.exists() ? priceDoc.data() : {}
     const portfolio = buildPortfolioSnapshot({ trades, dividends, cashflow, savedPrices, asOf: today })
     const closing = portfolio.holdings.length > 0
         && !portfolio.missingPriceCodes.length && !portfolio.stalePriceCodes.length
@@ -125,6 +137,8 @@ export async function buildTodaySnapshot(): Promise<{ snapshot: SnapshotData; mi
             cashflowNetAtCapture: portfolio.cashflow.reduce((sum, row) => sum + (row.type === 'in' ? row.amount : -row.amount), 0) },
         missing: portfolio.missingPriceCodes, stale: portfolio.stalePriceCodes,
         staleReason: portfolio.stalePriceCodes.length ? describeSnapshotPriceIssues(portfolio.stalePriceCodes, savedPrices, today) : '',
+        ...(savedPrices._refresh ? { guard: { requestedAt: savedPrices._refresh.requestedAt,
+            holdingPrices: Object.fromEntries(portfolio.holdings.map(h => [h.code, savedPrices[h.code] as number])) } } : {}),
     }
 }
 
@@ -246,7 +260,7 @@ export async function maybeAutoSnapshotToday(options?: {
 
             // Compute and validate against one server price document; never an unrelated table timestamp.
             session.assertActive()
-            const { snapshot, missing, stale, staleReason } = await buildTodaySnapshot()
+            const { snapshot, missing, stale, staleReason, guard } = await buildTodaySnapshot()
             session.assertActive()
             if (snapshot.date !== today) return skip('error', '日期已跨日，請重新更新現價')
             if (missing.length > 0) {
@@ -265,7 +279,7 @@ export async function maybeAutoSnapshotToday(options?: {
             const validation = validateSnapshotForWrite(snapshot)
             if (!validation.valid) throw new Error(`快照資料驗證失敗：${validation.errors.join('；')}`)
             session.assertActive()
-            const written = await saveValuationSnapshot({ ...snapshot, auto: true }, session, overwrite)
+            const written = await saveValuationSnapshot({ ...snapshot, auto: true }, session, overwrite, guard)
             if (!written) return skip('already-covered', 'DB 已有今日快照')
             invalidateAssetSnapshots()
             session.assertActive()

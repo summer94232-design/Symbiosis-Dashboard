@@ -17,7 +17,7 @@ export async function handleEvent(event) {
     const key = process.env.FUGLE_API_KEY
     if (!key) return apiError(503, '伺服器尚未設定 Fugle 報價金鑰')
     let budget
-    try { budget = await reserveQuoteBudget(identity.db, 1) }
+    try { budget = await reserveQuoteBudget(identity.db, 1, undefined, input.kind === 'history' ? 'history' : 'quote') }
     catch (error) {
         console.error('[fugle-proxy] quote budget unavailable', quotaDiagnostic(error))
         return apiError(503, '報價額度暫時無法確認')
@@ -25,7 +25,7 @@ export async function handleEvent(event) {
     if (!budget.granted) return apiError(429, '報價共用額度已達上限，請稍後再試', { 'Retry-After': String(budget.retryAfter) })
     const path = input.kind === 'quote' ? 'intraday/quote' : 'historical/candles'
     const url = new URL(`https://api.fugle.tw/marketdata/v1.0/stock/${path}/${input.symbol}`)
-    if (input.kind === 'history') url.search = new URLSearchParams({ from: input.from, to: input.to, sort: 'asc' }).toString()
+    if (input.kind === 'history') url.search = new URLSearchParams({ from: input.from, to: input.to, sort: 'asc', adjusted: 'false' }).toString()
     try {
         const response = await fetch(url, { headers: { 'X-API-KEY': key }, signal: AbortSignal.timeout(7000) })
         if (!response.ok) {

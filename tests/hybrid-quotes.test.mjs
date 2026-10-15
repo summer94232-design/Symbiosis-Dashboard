@@ -158,6 +158,22 @@ function deferred() {
     return { promise, resolve }
 }
 
+test('a reference-only holding waits for source selection rather than authorizing an early conflicting valuation', async () => {
+    const market = deferred(), published = []
+    const pending = hybrid.readHybridTaiwanQuotes(['2330'], at, {
+        snapshot: () => market.promise,
+        fugle: async (_codes, _at, _deadline, onQuote) => {
+            const result = { 2330: { ...observation(50), priceType: 'reference' } }
+            await onQuote(result)
+            return result
+        },
+    }, 10, ['2330'], quotes => { published.push(quotes) })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(published.length, 0)
+    market.resolve({ 2330: { ...observation(80), priceType: 'reference' } })
+    assert.equal((await pending).quotes['2330'].price, 80)
+})
+
 test('holding/index requests start before the snapshot completes and bounded gaps do not wait for them', async () => {
     const market = deferred(), priority = deferred(), repair = deferred()
     const calls = []

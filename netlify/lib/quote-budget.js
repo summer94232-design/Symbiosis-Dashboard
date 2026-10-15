@@ -1,8 +1,10 @@
 // One app-wide budget for its shared Fugle key, including simultaneous devices
 // and cold function instances. Reserve before sending, never wait inside a refresh.
-export async function reserveQuoteBudget(db, count, now) {
+export async function reserveQuoteBudget(db, count, now, pool = 'quote') {
     if (!Number.isSafeInteger(count) || count < 1 || count > 3000) throw new Error('Invalid quote count')
-    const ref = db.doc('sharedData/fugleQuoteBudget')
+    const paths = { quote: 'sharedData/fugleQuoteBudget', history: 'sharedData/fugleHistoryBudget', fubonHistory: 'sharedData/fubonHistoryBudget' }
+    if (!Object.hasOwn(paths, pool)) throw new Error('Invalid quote pool')
+    const ref = db.doc(paths[pool])
     return db.runTransaction(async tx => {
         const data = (await tx.get(ref)).data() || {}
         // Stamp after the transaction read/retry, close to the upstream start.

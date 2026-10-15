@@ -6,6 +6,7 @@ import { getFubonSnapshotObservations, isFubonSnapshotEnabled } from './fubonSna
 
 export async function getSharedQuoteObservations(
     codes: string[], requestedAt: string, mode: 'global' | 'direct' = 'global', preciseCodes: string[] = [],
+    onQuotes?: (quotes: QuoteObservations) => Promise<void> | void,
 ): Promise<QuoteObservations> {
     const unique = [...new Set(codes)]
     const foreign = unique.filter(code => /^(US|JP):/.test(code))
@@ -16,19 +17,21 @@ export async function getSharedQuoteObservations(
         let quotes: Record<string, number | null> = {}, error = ''
         try { quotes = await getForeignQuotes(symbols) }
         catch (cause) { error = cause instanceof Error ? cause.message : '外股報價暫時無法使用' }
-        return Object.fromEntries(foreign.map((key, i) => {
+        const observations: QuoteObservations = Object.fromEntries(foreign.map((key, i) => {
             const value = quotes[symbols[i]]
             const price = isPositivePrice(value) ? value : null
             return [key, { price, requestedAt, fetchedAt: new Date().toISOString(), sourceDate: '', sourceUpdatedAt: null,
                 priceType: price === null ? 'missing' : 'trade', status: price === null ? 'failed' : 'success',
                 ...(price === null ? { error: error || '此股票暫無有效報價' } : {}) }]
         }))
+        await onQuotes?.(observations)
+        return observations
     }
     const domesticRead = () => mode === 'global' && isFubonSnapshotEnabled()
         ? readHybridTaiwanQuotes(domestic, requestedAt, {
             snapshot: getFubonSnapshotObservations, fugle: getMultipleQuoteObservations,
-        }, 10, preciseCodes).then(result => result.quotes)
-        : getMultipleQuoteObservations(domestic, requestedAt)
+        }, 10, preciseCodes, onQuotes).then(result => result.quotes)
+        : getMultipleQuoteObservations(domestic, requestedAt, undefined, onQuotes)
     const [tw, overseas] = await Promise.all([domesticRead(), foreignRead()])
     return { ...tw, ...overseas }
 }

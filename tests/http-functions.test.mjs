@@ -41,7 +41,7 @@ test('every deployed entry uses the modern runtime and rejects invalid requests 
         assert.equal(mod.handler, undefined, `${file} must not expose a Lambda handler`)
         if (file === 'google-calendar-auth.js') continue
         const calendarPost = ['google-calendar-ensure.js', 'google-calendar-pull.js', 'google-calendar-sync.js'].includes(file)
-        const protectedPost = ['fubon-snapshot.js', 'google-calendar-series.js', 'quote-budget.js', 'fugle-proxy.js', 'ai-assistant.js'].includes(file)
+        const protectedPost = ['fubon-snapshot.js', 'fubon-history.js', 'google-calendar-series.js', 'quote-budget.js', 'fugle-proxy.js', 'ai-assistant.js'].includes(file)
         const query = file === 'foreign-quote.js' ? '?symbols=AAPL' : ''
         const request = new Request(`https://example.test/.netlify/functions/${file.slice(0, -3)}${query}`, calendarPost || protectedPost
             ? { method: 'POST', body: '{invalid json' } : {})

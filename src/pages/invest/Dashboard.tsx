@@ -160,7 +160,7 @@ function GroupTooltip({ active, payload, totalAssets }: PortfolioTooltipProps) {
 export default function Dashboard() {
     const navigate = useNavigate()
     // ✅ 修正：改用 PriceContext，updatePrices 會同步更新全域，Holdings/Watchlist 等頁面一併反映
-    const { prices: ctxPrices, priceErrors, lastUpdated: ctxLastUpdated, priceLoading, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
+    const { prices: ctxPrices, priceErrors, lastUpdated: ctxLastUpdated, priceLoading, refreshProgress, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
     const { version: syncVersion } = useInvestSync()
 
     const [storedHoldings, setHoldings] = useState<HoldingItem[]>([])
@@ -650,7 +650,7 @@ export default function Dashboard() {
                 {holdings.length > 0 && valuationNoticeVisible && (
                     <div role={holdingsWithoutPrice.length ? 'alert' : 'status'} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px', padding: '8px 10px 8px 12px', borderRadius: '9px', border: `1px solid ${holdingsWithoutPrice.length ? 'color-mix(in srgb, var(--c-warning) 35%, transparent)' : 'color-mix(in srgb, var(--c-positive) 30%, transparent)'}`, background: holdingsWithoutPrice.length ? 'color-mix(in srgb, var(--c-warning) 7%, transparent)' : 'color-mix(in srgb, var(--c-positive) 6%, transparent)', color: holdingsWithoutPrice.length ? 'var(--c-warning)' : 'var(--c-positive)', fontSize: '12px' }}>
                         {holdingsWithoutPrice.length ? <AlertTriangle size={14} /> : <CheckSquare size={14} />}
-                        <strong>估值完整度 {holdingsWithPrice.length}/{holdings.length}（{valuationCompleteness}%）</strong>
+                        <strong>{priceLoading && !refreshProgress?.startsWith('持股已更新') ? `${refreshProgress || '持股更新中'}，估值可能含上次報價` : `估值完整度 ${holdingsWithPrice.length}/${holdings.length}（${valuationCompleteness}%）`}</strong>
                         {holdingsWithoutPrice.length > 0 && <span style={{ color: 'var(--c-muted)', flex: 1 }}>缺價：{holdingsWithoutPrice.map(h => h.code).join('、')}；暫以成本估算市值</span>}
                         {holdingsWithoutPrice.some(h => priceErrors[h.code]) && <span style={{ width: '100%', fontSize: '11px' }}>{holdingsWithoutPrice.filter(h => priceErrors[h.code]).map(h => `${h.code}：${priceErrors[h.code]}`).join('；')}</span>}
                         <button type="button" aria-label="關閉估值完整度提示" onClick={() => setValuationNoticeVisible(false)} style={{ marginLeft: 'auto', border: 0, background: 'transparent', color: 'currentColor', cursor: 'pointer', display: 'grid', placeItems: 'center', padding: '2px', opacity: 0.75 }}><X size={14} /></button>

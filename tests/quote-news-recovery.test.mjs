@@ -182,9 +182,10 @@ test('historical request is bounded and a later attempt can recover from network
     assert.equal(count, 2)
 })
 
-test('history batches share the quote budget and merge identical pending requests', async () => {
+test('history has its own rolling budget and deduplicates; foreground quotes keep their own slots', async () => {
     let active = 0, peak = 0
-    const h = quotesHarness(async () => {
+    const h = quotesHarness(async url => {
+        if (url.includes('intraday/quote')) return okQuote()
         peak = Math.max(peak, ++active)
         await settle()
         active--
@@ -196,9 +197,31 @@ test('history batches share the quote budget and merge identical pending request
     assert.equal(h.starts.length, 66)
     assert.ok(peak <= 4)
     for (const start of h.starts) assert.ok(h.starts.filter(s => s.time >= start.time && s.time < start.time + 61000).length <= 55)
-    // Quote calls must also respect the slots already consumed by history.
+    const quoteStart = h.starts.length
     await h.getMultipleQuoteObservations(Array.from({ length: 50 }, (_, i) => String(3000 + i)), 'now')
-    for (const start of h.starts) assert.ok(h.starts.filter(s => s.time >= start.time && s.time < start.time + 61000).length <= 55)
+    const quotes = h.starts.slice(quoteStart)
+    assert.equal(quotes.length, 50)
+    for (const start of quotes) assert.ok(quotes.filter(s => s.time >= start.time && s.time < start.time + 61000).length <= 55)
+})
+
+test('real Fugle batch publishes a completed holding while another holding is still pending', async () => {
+    let release
+    const slow = new Promise(resolve => { release = resolve })
+    const h = quotesHarness(async url => {
+        if (url.endsWith('/2317')) await slow
+        const price = url.endsWith('/2330') ? 120 : 80
+        return okQuote({ closePrice: price, lastPrice: price, isTrial: false })
+    })
+    const published = []
+    let complete = false
+    const result = h.getMultipleQuoteObservations(['2330', '2317'], '2026-09-18T01:00:00Z', undefined,
+        quotes => { published.push(quotes) }).then(value => { complete = true; return value })
+    await settle()
+    assert.equal(published[0]['2330'].price, 120)
+    assert.equal(complete, false)
+    release()
+    assert.equal((await result)['2317'].price, 80)
+    assert.equal(published.length, 2)
 })
 
 test('history honors Retry-After, bounds retries and reports permanent failures distinctly', async () => {

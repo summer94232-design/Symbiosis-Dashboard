@@ -1,4 +1,4 @@
-import { getHistoricalCandles } from '../../lib/fugle'
+import { getHistoricalCandles } from '../../lib/history'
 import LoadingState from '../../components/LoadingState'
 import { card, inp, lbl, btn } from '../../ui/styles'
 import { confirmAction } from '../../ui/dialogs'
@@ -281,7 +281,7 @@ export default function AssetTrend() {
         setSaving(true)
         setMissingPriceCodes([])
         try {
-            const { snapshot: payload, missing, stale } = await buildTodaySnapshot()
+            const { snapshot: payload, missing, stale, guard } = await buildTodaySnapshot()
             const blocked = [...new Set([...missing, ...stale])]
             setMissingPriceCodes(blocked)
             if (blocked.length) {
@@ -292,7 +292,7 @@ export default function AssetTrend() {
             const validation = validateSnapshotForWrite(payload)
             if (!validation.valid) throw new Error(validation.errors.join('；'))
             session.assertActive()
-            await saveValuationSnapshot(payload, session)
+            await saveValuationSnapshot(payload, session, true, guard)
             invalidateAssetSnapshots()
             await loadSnapshots()
         } catch (err) {

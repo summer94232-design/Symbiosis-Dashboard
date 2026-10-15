@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { getDocs, setDoc, deleteDoc, updateDoc } from 'firebase/firestore'
 import { investDB } from '../../lib/firebase'
 import { userDoc, captureUserSession } from '../../lib/userDB'
-import { getHistoricalCandles } from '../../lib/fugle'
+import { getHistoricalCandles } from '../../lib/history'
 import { quoteKey } from '../../lib/quoteUniverse'
 import { calcMarketCap, formatMarketCap } from '../../lib/marketCap'
 import { toLocalDateString } from '../../lib/date'
@@ -458,6 +458,7 @@ export default function Watchlist() {
                     if (!data.data.length) { issues.push(`${item.code}：此期間無歷史資料`); results[item.code] = { ma5: null, ma10: null, ma20: null }; return }
                     const closes: number[] = data.data.filter((d: {date: string; open: number; high: number; low: number; close: number; volume?: number}) => d.close != null).map((d: {date: string; open: number; high: number; low: number; close: number; volume?: number}) => d.close)
                     results[item.code] = { ma5: calcMA(closes, 5), ma10: calcMA(closes, 10), ma20: calcMA(closes, 20) }
+                    setMaData(previous => ({ ...previous, [item.code]: results[item.code] }))
                 } catch (error) {
                     issues.push(`${item.code}：${error instanceof Error ? error.message : 'MA 載入失敗，請重試'}`)
                     results[item.code] = { ma5: null, ma10: null, ma20: null }
@@ -512,6 +513,7 @@ export default function Watchlist() {
                         )
                     } else { issues.push(`${item.code}：此期間無歷史資料`) }
                 }
+                if (results[item.code]) setChartData(previous => ({ ...previous, [item.code]: results[item.code] }))
             } catch (err) {
                 issues.push(`${item.code}：${err instanceof Error ? err.message : '線圖載入失敗，請重試'}`)
             }

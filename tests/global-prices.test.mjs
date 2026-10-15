@@ -170,12 +170,12 @@ test('enabled market snapshot changes only Taiwan batch pricing while foreign qu
     assert.deepEqual(calls, [['hybrid', ['2330'], 'requested', 10, ['2330']], ['fubon', ['2330']], ['foreign', ['AAPL']]])
 })
 
-function providerHarness(hybridEnabled = false, afterClose = false) {
+function providerHarness(hybridEnabled = false, afterClose = false, reader, holdings = ['2330']) {
     const states = [], refs = [], effects = [], requests = [], modes = [], precise = [], writes = [], dividendUpdates = []
     let stateIndex = 0, refIndex = 0, effectIndex = 0, saved = {}, authChanged, priceChanged
-    let wait, snapshotWait, dividendWait
+    let wait, snapshotWait, dividendWait, snapshotCalls = 0
     const user = { uid: 'A' }, investAuth = { currentUser: user, onAuthStateChanged: fn => { authChanged = fn; fn(investAuth.currentUser); return () => {} } }
-    const policy = compile(read('src/lib/pricePolicy.ts'))
+    const policy = compile(read('src/lib/pricePolicy.ts'), compile(read('src/lib/date.ts')))
     const mod = compile(read('src/PriceContext.tsx'), {
         require: createRequire(import.meta.url), createContext: () => ({ Provider: 'provider' }),
         useState: initial => { const i = stateIndex++; if (!(i in states)) states[i] = initial; return [states[i], value => { states[i] = typeof value === 'function' ? value(states[i]) : value }] },
@@ -187,17 +187,18 @@ function providerHarness(hybridEnabled = false, afterClose = false) {
         onSnapshot: (_, fn) => { priceChanged = fn; return () => {} },
         ...policy, createPriceRefreshCoordinator, isFubonSnapshotEnabled: () => hybridEnabled,
         isAfterTaiwanClose: () => afterClose,
-        loadHoldingQuoteCodes: async () => ['2330'],
+        loadHoldingQuoteCodes: async () => holdings,
         loadGlobalQuoteCodes: async () => ['2330', '2317', 'US:AAPL'],
-        getSharedQuoteObservations: async (codes, requestedAt, mode, preciseCodes) => {
+        getSharedQuoteObservations: async (codes, requestedAt, mode, preciseCodes, publish) => {
             requests.push(codes)
             modes.push(mode)
             precise.push(preciseCodes)
+            if (reader) return reader(codes, requestedAt, mode, preciseCodes, publish)
             if (wait) await wait.promise
             return Object.fromEntries(codes.map(code => [code, { price: 120, requestedAt, fetchedAt: new Date().toISOString(), sourceDate: '2026-09-18', sourceUpdatedAt: 123, priceType: 'trade', status: 'success' }]))
         },
         runTransaction: async (_, fn) => fn({ get: async () => ({ exists: () => true, data: () => saved }), set: (ref, data) => { writes.push(ref); saved = data } }),
-        maybeAutoSnapshotToday: async () => { if (snapshotWait) await snapshotWait.promise; return { status: 'written' } }, console: { error() {} },
+        maybeAutoSnapshotToday: async () => { snapshotCalls++; if (snapshotWait) await snapshotWait.promise; return { status: 'written' } }, console: { error() {} },
         updateDividendAnnouncements: async session => { session.assertActive(); dividendUpdates.push('updated'); if (dividendWait) await dividendWait.promise },
     })
     return {
@@ -206,22 +207,23 @@ function providerHarness(hybridEnabled = false, afterClose = false) {
         delayDividends() { dividendWait = deferred(); return dividendWait },
         render() { stateIndex = 0; refIndex = 0; effectIndex = 0; return mod.PriceProvider({ children: null }).props.value },
         requests, modes, precise, writes,
+        saved: () => saved, snapshotCalls: () => snapshotCalls,
         delay() { wait = deferred(); return wait },
         switchAccount() { investAuth.currentUser = { uid: 'B' }; authChanged(investAuth.currentUser) },
         remote(data) { priceChanged({ exists: () => true, data: () => data }) },
     }
 }
 
-test('actual provider updates all pages, persists once, and navigation plus repeated refresh issues no extra quotes', async () => {
+test('actual provider persists a refresh marker and final batch; navigation and repeated refresh reuse quotes', async () => {
     const h = providerHarness(), price = h.render(), snapshots = []
     await Promise.all([price.updatePrices(['2330'], { onSnapshot: v => snapshots.push(v) }), price.updatePrices(['2317'])])
-    assert.equal(h.requests.length, 1); assert.equal(h.writes.length, 1)
+    assert.equal(h.requests.length, 1); assert.equal(h.writes.length, 2)
     assert.equal(snapshots[0].status, 'written')
     // Each route reads the still-mounted provider instead of querying its own prices.
     for (const code of ['2330', '2317', 'US:AAPL']) assert.equal(h.render().prices[code], 120)
     await h.render().updatePrices(['2317'], { onSnapshot: v => snapshots.push(v) })
     await h.render().ensurePrices(['2330'])
-    assert.equal(h.requests.length, 1); assert.equal(h.writes.length, 1)
+    assert.equal(h.requests.length, 1); assert.equal(h.writes.length, 2)
     assert.equal(snapshots.length, 1)
 })
 
@@ -244,7 +246,8 @@ test('switching account during a full refresh cannot write old-account quotes in
     const h = providerHarness(), wait = h.delay(), pending = h.render().updatePrices(['2330'])
     await tick(); h.switchAccount(); wait.resolve()
     assert.deepEqual(await pending, {})
-    assert.equal(h.writes.length, 0)
+    assert.equal(h.writes.length, 1) // Captured marker only, before switching accounts.
+    assert.equal(h.saved()['2330'], undefined)
     assert.deepEqual(h.render().prices, {})
 })
 
@@ -253,7 +256,7 @@ test('quote completion and loading state never wait for dividend or snapshot wor
     const result = await h.render().updatePrices(['2330'], { onSnapshot: row => callbacks.push(row) })
     assert.equal(result['2330'], 120)
     assert.equal(h.render().priceLoading, false)
-    assert.equal(h.writes.length, 1); assert.equal(h.dividendUpdates.length, 1)
+    assert.equal(h.writes.length, 2); assert.equal(h.dividendUpdates.length, 1)
     assert.equal(callbacks.length, 0)
     h.switchAccount(); snapshot.resolve(); dividends.resolve(); await tick()
     assert.deepEqual(callbacks, []); assert.deepEqual(h.render().prices, {})
@@ -278,4 +281,76 @@ test('a late foreign batch timeout retains earlier quotes but an entirely failed
     })
     assert.deepEqual(await mod.getForeignQuotes(['AAPL', ...Array.from({ length: 20 }, (_, i) => 'X' + i)]), { AAPL: 120 })
     await assert.rejects(mod.getForeignQuotes(['AAPL']), /timeout/)
+})
+
+test('actual provider publishes individual holdings before market completion; partial holdings cannot satisfy snapshot freshness', async () => {
+    const market = deferred(), priority = deferred()
+    let publishPriority
+    const policy = compile(read('src/lib/pricePolicy.ts'), compile(read('src/lib/date.ts')))
+    const hybrid = compile(read('src/lib/hybridQuotes.ts'), { ...policy, ...compile(read('src/lib/quoteTiming.ts')) })
+    const get = compile(read('src/lib/sharedQuotes.ts'), { ...policy, ...hybrid, isFubonSnapshotEnabled: () => true,
+        getFubonSnapshotObservations: () => market.promise,
+        getMultipleQuoteObservations: (_codes, _at, _deadline, publish) => { publishPriority = publish; return priority.promise },
+        getForeignQuotes: async () => ({}),
+    }).getSharedQuoteObservations
+    const h = providerHarness(true, false, get, ['2330', '2317'])
+    const pending = h.render().updatePrices(['0050'])
+    await tick()
+    const at = h.saved()._refresh.requestedAt
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date(at))
+    const q = price => ({ price, requestedAt: at, fetchedAt: at, sourceDate: today, sourceUpdatedAt: 123, priceType: 'trade', status: 'success' })
+    await publishPriority({ 2330: q(120) })
+    assert.equal(h.render().prices['2330'], 120)
+    assert.deepEqual(policy.stalePriceCodes(['2330', '2317'], h.saved(), today), ['2317'])
+    assert.equal(h.snapshotCalls(), 0)
+    assert.equal(h.render().priceLoading, true)
+    // Route consumers are replaced while this provider and captured operation live.
+    for (const route of ['trend', 'kms', 'dashboard']) {
+        assert.equal(h.render().prices['2330'], 120, route)
+        assert.match(h.render().refreshProgress, /1\/2/)
+    }
+    await publishPriority({ 2317: q(80) })
+    assert.equal(h.snapshotCalls(), 1)
+    assert.match(h.render().refreshProgress, /持股已更新/)
+    priority.resolve({ 2330: q(120), 2317: q(80) })
+    market.resolve({ 2330: q(100), 2317: q(70), '0050': q(60) })
+    await pending
+    assert.equal(h.render().prices['2330'], 120)
+    assert.equal(h.render().prices['0050'], 60)
+    assert.equal(h.render().priceLoading, false)
+    assert.equal(h.snapshotCalls(), 1)
+})
+
+test('an account change after a partial holding publication blocks every later background write', async () => {
+    const wait = deferred()
+    let publish, at
+    const h = providerHarness(true, false, async (_codes, requestedAt, _mode, _held, callback) => {
+        publish = callback; at = requestedAt; return wait.promise
+    })
+    const run = h.render().updatePrices(['2330'])
+    await tick()
+    const q = { price: 120, requestedAt: at, fetchedAt: at, sourceDate: at.slice(0, 10), sourceUpdatedAt: null, priceType: 'trade', status: 'success' }
+    await publish({ 2330: q })
+    const writes = h.writes.length
+    h.switchAccount()
+    await assert.rejects(publish({ 2317: q }), /account changed/)
+    wait.resolve({ 2330: q, 2317: q })
+    assert.deepEqual(await run, {})
+    assert.equal(h.writes.length, writes)
+    assert.deepEqual(h.render().prices, {})
+})
+
+test('a wave of twenty holding results is coalesced instead of serializing twenty transactions', async () => {
+    const holdings = Array.from({ length: 20 }, (_, i) => String(1000 + i))
+    const h = providerHarness(true, false, async (codes, at, _mode, _held, publish) => {
+        const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date(at))
+        const quotes = Object.fromEntries(codes.map(code => [code, { price: 120, requestedAt: at, fetchedAt: at,
+            sourceDate: today, sourceUpdatedAt: null, priceType: 'trade', status: 'success' }]))
+        await Promise.all(Object.entries(quotes).map(([code, quote]) => publish({ [code]: quote })))
+        return quotes
+    }, holdings)
+    await h.render().updatePrices(holdings)
+    assert.equal(h.writes.length, 3) // marker, coalesced publication, final merge
+    assert.equal(h.snapshotCalls(), 1)
+    assert.ok(holdings.every(code => h.render().prices[code] === 120))
 })

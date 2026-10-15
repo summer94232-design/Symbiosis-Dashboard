@@ -14,7 +14,6 @@ const REQUESTS_PER_MINUTE = 55
 const WINDOW_MS = 61000
 const requestStarts: number[] = []
 let cooldownUntil = 0
-let slotQueue: Promise<void> = Promise.resolve()
 const inFlight = new Map<string, Promise<QuoteResult>>()
 // Only fixed, known server messages may reach persisted quote observations.
 // Never display arbitrary response bodies (which may contain provider details).
@@ -43,24 +42,8 @@ async function quoteServiceFailure(response: Response, history = false): Promise
 
 const serviceRetryDelay = (attempt: number) => (attempt === 0 ? 1500 : 3500) + Math.floor(Math.random() * 500)
 
-function reserveQuoteSlot(): Promise<void> {
-    const slot = slotQueue.then(async () => {
-        while (true) {
-            const now = Date.now()
-            while (requestStarts.length && requestStarts[0] <= now - WINDOW_MS) requestStarts.shift()
-            const waitUntil = Math.max(cooldownUntil,
-                requestStarts.length >= REQUESTS_PER_MINUTE ? requestStarts[0] + WINDOW_MS : 0)
-            if (waitUntil <= now) break
-            await sleep(waitUntil - now)
-        }
-        requestStarts.push(Date.now())
-    })
-    slotQueue = slot.catch(() => {})
-    return slot
-}
-
 // Foreground refreshes fail promptly at the quota boundary. Historical downloads
-// retain their queued retries; both paths still consume the same rolling budget.
+// retain queued retries in their own rolling budget.
 function tryReserveQuoteSlot(): boolean {
     const now = Date.now()
     while (requestStarts.length && requestStarts[0] <= now - WINDOW_MS) requestStarts.shift()
@@ -75,8 +58,7 @@ async function reserveSharedBudget(count: number, deadline: number): Promise<num
     return Date.now() >= deadline || Date.now() < cooldownUntil ? 0 : Math.min(count, 55)
 }
 
-async function proxy(kind: 'quote' | 'history', symbol: string, signal: AbortSignal, dates?: {from: string; to: string}): Promise<Response> {
-    const session = captureUserSession()
+async function proxy(kind: 'quote' | 'history', symbol: string, signal: AbortSignal, dates?: {from: string; to: string}, session = captureUserSession()): Promise<Response> {
     const response = await authenticatedFetch('/.netlify/functions/fugle-proxy', session, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({kind, symbol, ...dates}), signal,
@@ -86,6 +68,7 @@ async function proxy(kind: 'quote' | 'history', symbol: string, signal: AbortSig
 }
 
 async function fetchQuote(symbol: string, deadline: number, reserved: boolean): Promise<QuoteResult> {
+    const session = captureUserSession()
     for (let attempt = 0; attempt < 3; attempt++) {
         if (Date.now() >= deadline) return { quote: null, error: '報價等待逾時，請稍後再試' }
         if (!reserved || attempt > 0) {
@@ -96,7 +79,7 @@ async function fetchQuote(symbol: string, deadline: number, reserved: boolean): 
         if (Date.now() >= deadline) return { quote: null, error: '報價等待逾時，請稍後再試' }
         if (!tryReserveQuoteSlot()) return { quote: null, error: '報價服務限流，請稍後再試' }
         try {
-            const res = await proxy('quote', symbol, AbortSignal.timeout(Math.max(1, Math.min(QUOTE_PROXY_TIMEOUT_MS, deadline - Date.now()))))
+            const res = await proxy('quote', symbol, AbortSignal.timeout(Math.max(1, Math.min(QUOTE_PROXY_TIMEOUT_MS, deadline - Date.now()))), undefined, session)
             if (res.status === 429) {
                 const retry = res.headers.get('Retry-After')
                 const delay = retry && /^\d+(\.\d+)?$/.test(retry) ? Number(retry) * 1000
@@ -159,8 +142,10 @@ export function extractPrice(quote: Record<string, unknown> | null): number | nu
 // 併發上限搭配共用分鐘配額；429 記住冷卻時間，立即回報，不阻塞畫面。
 const MAX_CONCURRENT = 5
 
-export async function getMultipleQuoteObservations(symbols: string[], requestedAt: string, deadline = Date.now() + QUOTE_REFRESH_TIMEOUT_MS): Promise<QuoteObservations> {
+export async function getMultipleQuoteObservations(symbols: string[], requestedAt: string, deadline = Date.now() + QUOTE_REFRESH_TIMEOUT_MS,
+    onQuote?: (quotes: QuoteObservations) => Promise<void> | void): Promise<QuoteObservations> {
     const results: QuoteObservations = {}
+    const session = captureUserSession()
     symbols = [...new Set(symbols)]
     if (!symbols.length) return {}
 
@@ -180,6 +165,23 @@ export async function getMultipleQuoteObservations(symbols: string[], requestedA
         requests.set(symbol, request)
     }
 
+    // Attach consumers before starting workers, so the first completed symbol is
+    // published without waiting for the remaining symbols in the batch.
+    const observations = Promise.all(symbols.map(async symbol => {
+        const { quote, error, fetchedAt } = await requests.get(symbol)!
+        const price = extractPrice(quote)
+        const priceType: QuoteObservation['priceType'] = price === null ? 'missing'
+            : quote && tradePrices(quote).some(isPositivePrice) ? 'trade' : 'reference'
+        results[symbol] = { price, requestedAt, fetchedAt: fetchedAt || new Date().toISOString(),
+            sourceDate: typeof quote?.date === 'string' ? quote.date : '',
+            sourceUpdatedAt: typeof quote?.lastUpdated === 'number' && Number.isFinite(quote.lastUpdated) ? quote.lastUpdated : null,
+            priceType, status: price === null ? 'failed' : 'success', ...(error ? { error } : {}),
+            isFinalClose: quote?.isClose === true && quote.isTrial !== true && quote.isDelayedClose !== true && quote.closePrice === price,
+            ...(typeof quote?.changePercent === 'number' && Number.isFinite(quote.changePercent) ? { changePercent: quote.changePercent } : {}) }
+        await onQuote?.({ [symbol]: results[symbol] })
+    }))
+    // Observe a rejected persistence callback immediately; still drain workers.
+    void observations.catch(() => {})
     try {
         if (owned.length) {
             let cursor = 0
@@ -191,7 +193,7 @@ export async function getMultipleQuoteObservations(symbols: string[], requestedA
                     const index = cursor++, item = owned[index]
                     let result: QuoteResult = { quote: null, error: budgetError }
                     if (index < granted) {
-                        try { result = await fetchQuote(item.symbol, deadline, true) }
+                        try { session.assertActive(); result = await fetchQuote(item.symbol, deadline, true) }
                         catch { result = { quote: null, error: '報價連線失敗或逾時' } }
                     }
                     item.resolve({ ...result, fetchedAt: new Date().toISOString() })
@@ -199,18 +201,7 @@ export async function getMultipleQuoteObservations(symbols: string[], requestedA
             }
             await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT, owned.length) }, () => worker()))
         }
-        await Promise.all(symbols.map(async symbol => {
-            const { quote, error, fetchedAt } = await requests.get(symbol)!
-            const price = extractPrice(quote)
-            const priceType: QuoteObservation['priceType'] = price === null ? 'missing'
-                : quote && tradePrices(quote).some(isPositivePrice) ? 'trade' : 'reference'
-            results[symbol] = { price, requestedAt, fetchedAt: fetchedAt || new Date().toISOString(),
-                sourceDate: typeof quote?.date === 'string' ? quote.date : '',
-                sourceUpdatedAt: typeof quote?.lastUpdated === 'number' && Number.isFinite(quote.lastUpdated) ? quote.lastUpdated : null,
-                priceType, status: price === null ? 'failed' : 'success', ...(error ? { error } : {}),
-                isFinalClose: quote?.isClose === true && quote.isTrial !== true && quote.isDelayedClose !== true && quote.closePrice === price,
-                ...(typeof quote?.changePercent === 'number' && Number.isFinite(quote.changePercent) ? { changePercent: quote.changePercent } : {}) }
-        }))
+        await observations
         return results
     } finally {
         // Retain fulfilled queued work for the lifetime of its batch; a late
@@ -231,19 +222,31 @@ interface HistoricalResult { data: HistoricalCandle[] }
 const historicalInFlight = new Map<string, Promise<HistoricalResult>>()
 const historicalWaiters: Array<() => void> = []
 let historicalActive = 0
+const historicalStarts: number[] = []
+let historicalCooldownUntil = 0
+async function reserveHistorySlot() {
+    while (true) {
+        const now = Date.now()
+        while (historicalStarts.length && historicalStarts[0] <= now - WINDOW_MS) historicalStarts.shift()
+        const until = Math.max(historicalCooldownUntil, historicalStarts.length >= REQUESTS_PER_MINUTE ? historicalStarts[0] + WINDOW_MS : 0)
+        if (until <= now) { historicalStarts.push(now); return }
+        await sleep(until - now)
+    }
+}
 
-async function fetchHistoricalCandles(symbol: string, from: string, to: string): Promise<HistoricalResult> {
-    // The provider lists separate endpoint quotas. Sharing our conservative budget
-    // also prevents history refreshes from bypassing this tab's request protection.
+async function fetchHistoricalCandles(symbol: string, from: string, to: string, session = captureUserSession()): Promise<HistoricalResult> {
+    // Historical quota and retries are independent of foreground quote admission.
     if (historicalActive >= 4) await new Promise<void>(resolve => historicalWaiters.push(resolve))
     else historicalActive++
     try {
         for (let attempt = 0; attempt < 3; attempt++) {
-            await reserveQuoteSlot()
+            session.assertActive()
+            await reserveHistorySlot()
+            session.assertActive()
             let res: Response
             let payload: unknown
             try {
-                res = await proxy('history', symbol, AbortSignal.timeout(QUOTE_PROXY_TIMEOUT_MS), {from, to})
+                res = await proxy('history', symbol, AbortSignal.timeout(QUOTE_PROXY_TIMEOUT_MS), {from, to}, session)
                 if (res.ok) payload = await res.json()
             } catch {
                 if (attempt === 0) { await sleep(1000); continue }
@@ -255,7 +258,7 @@ async function fetchHistoricalCandles(symbol: string, from: string, to: string):
                     : retry ? Date.parse(retry) - Date.now() : WINDOW_MS
                 const waitMs = Number.isFinite(delay) ? Math.max(1000, delay) : WINDOW_MS
                 if (waitMs > 120000) throw new Error('歷史行情額度已用完，請稍後再試')
-                cooldownUntil = Math.max(cooldownUntil, Date.now() + waitMs)
+                historicalCooldownUntil = Math.max(historicalCooldownUntil, Date.now() + waitMs)
                 if (attempt === 0) continue
                 throw new Error('歷史行情服務限流，請稍後重試')
             }
@@ -283,10 +286,11 @@ async function fetchHistoricalCandles(symbol: string, from: string, to: string):
 // All history consumers share concurrency, rate limits and identical in-flight requests.
 // Empty data is a successful response; failures reject so UI can offer a retry.
 export function getHistoricalCandles(symbol: string, from: string, to: string): Promise<HistoricalResult> {
-    const key = JSON.stringify([symbol, from, to])
+    const session = captureUserSession()
+    const key = JSON.stringify([session.uid, symbol, from, to])
     const existing = historicalInFlight.get(key)
     if (existing) return existing
-    const request = fetchHistoricalCandles(symbol, from, to).finally(() => historicalInFlight.delete(key))
+    const request = fetchHistoricalCandles(symbol, from, to, session).finally(() => historicalInFlight.delete(key))
     historicalInFlight.set(key, request)
     return request
 }

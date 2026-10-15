@@ -7,6 +7,10 @@
   node_bundler = "esbuild"
   external_node_modules = ["fubon-neo"]
 
+[functions."fubon-history"]
+  node_bundler = "esbuild"
+  external_node_modules = ["fubon-neo"]
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
