@@ -459,9 +459,98 @@ test('quote retries stay inside the refresh deadline and also reserve shared quo
     let leases = 0
     const h = quotesHarness(() => ({ ok: false, status: 503 }), count => { leases += count; return { granted: count, retryAfter: 0 } })
     const result = await h.getMultipleQuoteObservations(['2330'], '2026-10-01T02:00:00Z')
-    assert.equal(result['2330'].status, 'failed'); assert.equal(h.starts.length, 2); assert.equal(leases, 2)
+    assert.equal(result['2330'].status, 'failed'); assert.equal(h.starts.length, 3); assert.equal(leases, 3)
     const expired = quotesHarness(() => assert.fail('No HTTP after deadline'))
     assert.equal((await expired.getMultipleQuoteObservations(['2330'], '2026-10-01T02:00:00Z', 0))['2330'].status, 'failed')
+})
+
+test('two pre-provider 503 responses recover automatically for both live quotes and index history', async () => {
+    for (const message of ['報價額度暫時無法確認', '驗證服務憑證無法使用，請聯絡管理者（app/invalid-credential；network-connection）']) {
+      for (const history of [false, true]) {
+        const h = quotesHarness((_, attempt) => attempt <= 2
+            ? { ok: false, status: 503, json: async () => ({ error: message }) }
+            : history ? { ok: true, status: 200, json: async () => ({ data: [] }) } : okQuote())
+        if (history) assert.deepEqual((await h.getHistoricalCandles('IX0001', '2026-09-01', '2026-09-18')).data, [])
+        else assert.equal((await h.getMultipleQuoteObservations(['2330'], 'now'))['2330'].price, 120)
+        assert.equal(h.starts.length, 3)
+        assert.equal(h.budgetRequests.length, 3)
+        assert.ok(h.starts[1].time - h.starts[0].time >= 1500)
+        assert.ok(h.starts[2].time - h.starts[1].time >= 3500)
+      }
+    }
+})
+
+test('permanent 503 configuration failures do not retry; safe causes survive without arbitrary response details', async () => {
+    for (const message of ['伺服器尚未設定 Fugle 報價金鑰', 'API 安全設定尚未完成，請聯絡管理者',
+        '驗證服務憑證無法使用，請聯絡管理者（app/invalid-credential；secret-canary）']) {
+        for (const history of [false, true]) {
+            const h = quotesHarness(() => ({ ok: false, status: 503, json: async () => ({ error: message }) }))
+            let error
+            if (history) {
+                await assert.rejects(h.getHistoricalCandles('IX0001', '2026-09-01', '2026-09-18'), e => { error = e.message; return true })
+            } else error = (await h.getMultipleQuoteObservations(['2330'], 'now'))['2330'].error
+            assert.equal(h.starts.length, 1)
+            assert.ok(error.includes(message.split('（')[0]))
+            assert.ok(!error.includes('secret-canary'))
+        }
+    }
+    const h = quotesHarness(() => ({ ok: false, status: 502, json: async () => ({ error: 'secret-provider-response' }) }))
+    const failed = await h.getMultipleQuoteObservations(['2330'], 'now')
+    assert.equal(h.starts.length, 2, 'upstream failures keep the existing metered retry bound')
+    assert.equal(failed['2330'].error, '報價服務 HTTP 502')
+})
+
+test('temporary quota causes reach the actual AssetTrend benchmark error and a manual retry can recover', async () => {
+    let repaired = false
+    const h = quotesHarness(() => repaired ? { ok: true, status: 200, json: async () => ({ data: [{
+        date: '2026-09-18', open: 100, high: 110, low: 90, close: 105,
+    }] }) } : { ok: false, status: 503, json: async () => ({ error: '用量檢查暫時無法使用，請稍後再試' }) })
+    let error, values, loading
+    const source = read('src/pages/invest/AssetTrend.tsx')
+    const ast = ts.createSourceFile('asset.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    let initializer
+    const visit = node => {
+        if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'fetchTAIEX') initializer = node.initializer.getText(ast)
+        ts.forEachChild(node, visit)
+    }
+    visit(ast)
+    assert.ok(initializer)
+    const { run } = compile(`export const run = ${initializer}`, {
+        getHistoricalCandles: h.getHistoricalCandles, toLocalDateString: () => '2026-09-18',
+        setTaiexLoading: value => { loading = value }, setTaiexError: value => { error = value },
+        setTaiexData: value => { values = value }, console: { error() {} },
+    })
+    await run('2026-09-01')
+    assert.match(error, /加權指數載入失敗：歷史行情服務 HTTP 503：用量檢查/)
+    assert.equal(loading, false)
+    assert.equal(values, undefined)
+    repaired = true
+    await run('2026-09-01')
+    assert.equal(error, null)
+    assert.equal(loading, false)
+    assert.deepEqual(values, { '2026-09-18': 105 })
+})
+
+test('quota diagnostics distinguish Firestore contention and outages without leaking document paths', async () => {
+    const { quotaDiagnostic } = compile(read('netlify/lib/api-access.js'))
+    for (const [code, reason] of [[4, 'database-timeout'], [7, 'permission-denied'], [8, 'database-exhausted'],
+        [10, 'transaction-contention'], [14, 'database-unavailable']]) {
+        assert.deepEqual(quotaDiagnostic({ code, message: 'secret-document-path', details: 'secret-provider-response' }), {
+            code: `firestore/${code}`, reason,
+        })
+    }
+    const logs = []
+    const access = compile(read('netlify/lib/api-access.js'), {
+        createHash, process: { env: { API_FIREBASE_PROJECT_ID: 'fixture', API_ALLOWED_UIDS: 'allowed', API_FIREBASE_SERVICE_ACCOUNT: '{}' } },
+        getApps: () => [{ name: 'protected-api' }],
+        getAuth: () => ({ verifyIdToken: async () => ({ uid: 'allowed' }) }),
+        getFirestore: () => ({ doc: value => value, runTransaction: async () => { throw { code: 10, message: 'secret-document-path' } } }),
+        console: { error: (...args) => logs.push(args) },
+    })
+    const result = await access.authorizeApiIdentity({ httpMethod: 'POST', headers: { authorization: 'Bearer fixture' } }, 'fugle', 1, 'POST')
+    assert.equal(result.statusCode, 503)
+    assert.deepEqual(logs, [['[protected-api] quota unavailable', { route: 'fugle', code: 'firestore/10', reason: 'transaction-contention' }]])
+    assert.ok(!JSON.stringify([result, logs]).includes('secret'))
 })
 
 // Simulate concurrent proxy latency and abort signals without real network waits.

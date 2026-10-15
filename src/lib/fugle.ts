@@ -16,6 +16,32 @@ const requestStarts: number[] = []
 let cooldownUntil = 0
 let slotQueue: Promise<void> = Promise.resolve()
 const inFlight = new Map<string, Promise<QuoteResult>>()
+// Only fixed, known server messages may reach persisted quote observations.
+// Never display arbitrary response bodies (which may contain provider details).
+async function quoteServiceFailure(response: Response, history = false): Promise<{ message: string; retry: boolean }> {
+    const prefix = history ? '歷史行情' : '報價'
+    let body: { error?: unknown } = {}
+    try { body = await response.json() } catch { /* Non-JSON infrastructure errors retain their HTTP status. */ }
+    const messages = [
+        'API 安全設定尚未完成，請聯絡管理者', '伺服器尚未設定 Fugle 報價金鑰',
+        '報價額度暫時無法確認', '用量檢查暫時無法使用，請稍後再試',
+        '登入驗證服務連線失敗，請檢查後端網路後重試',
+        '驗證服務帳號權限不足，請聯絡管理者', '驗證服務憑證無法使用，請聯絡管理者',
+        '驗證服務暫時無法使用',
+    ]
+    const known = typeof body?.error === 'string' ? messages.find(message => body.error === message
+        || (body.error as string).startsWith(message + '（')) : undefined
+    // Firebase may wrap token-exchange network failures as invalid-credential.
+    // A classified network outage remains retryable, while malformed keys do not.
+    const transientCredential = typeof body?.error === 'string'
+        && /；(?:network-connection|network-dns|network-timeout|upstream-unavailable|oauth-token-response-invalid)）$/.test(body.error)
+    const permanent = known && (/尚未|權限不足/.test(known) || /憑證無法使用/.test(known) && !transientCredential)
+    return { message: response.status === 401 || response.status === 403 ? `${prefix}登入驗證失敗或無存取權限`
+        : `${prefix}服務 HTTP ${response.status}${known ? `：${known}` : ''}`,
+        retry: response.status >= 500 && !permanent }
+}
+
+const serviceRetryDelay = (attempt: number) => (attempt === 0 ? 1500 : 3500) + Math.floor(Math.random() * 500)
 
 function reserveQuoteSlot(): Promise<void> {
     const slot = slotQueue.then(async () => {
@@ -60,7 +86,7 @@ async function proxy(kind: 'quote' | 'history', symbol: string, signal: AbortSig
 }
 
 async function fetchQuote(symbol: string, deadline: number, reserved: boolean): Promise<QuoteResult> {
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
         if (Date.now() >= deadline) return { quote: null, error: '報價等待逾時，請稍後再試' }
         if (!reserved || attempt > 0) {
             try {
@@ -82,9 +108,12 @@ async function fetchQuote(symbol: string, deadline: number, reserved: boolean): 
                 return { quote: null, error: '報價服務限流，請稍後再試' }
             }
             if (!res.ok) {
-                if (res.status >= 500 && attempt === 0 && Date.now() + 1000 < deadline) { await sleep(1000); continue }
-                return { quote: null, error: res.status === 401 || res.status === 403
-                    ? '報價金鑰無效或無存取權限' : `報價服務 HTTP ${res.status}` }
+                const failure = await quoteServiceFailure(res)
+                // A 503 is returned before the Fugle call. Allow one extra recovery
+                // attempt; keep upstream/metered failures at their existing bound.
+                const delay = serviceRetryDelay(attempt)
+                if (failure.retry && attempt < (res.status === 503 ? 2 : 1) && Date.now() + delay < deadline) { await sleep(delay); continue }
+                return { quote: null, error: failure.message }
             }
             const quote = await res.json() as QuoteData
             if (Date.now() >= deadline) return { quote: null, error: '報價等待逾時，請稍後再試' }
@@ -209,7 +238,7 @@ async function fetchHistoricalCandles(symbol: string, from: string, to: string):
     if (historicalActive >= 4) await new Promise<void>(resolve => historicalWaiters.push(resolve))
     else historicalActive++
     try {
-        for (let attempt = 0; attempt < 2; attempt++) {
+        for (let attempt = 0; attempt < 3; attempt++) {
             await reserveQuoteSlot()
             let res: Response
             let payload: unknown
@@ -231,9 +260,9 @@ async function fetchHistoricalCandles(symbol: string, from: string, to: string):
                 throw new Error('歷史行情服務限流，請稍後重試')
             }
             if (!res.ok) {
-                if (res.status >= 500 && attempt === 0) { await sleep(1000); continue }
-                throw new Error(res.status === 401 || res.status === 403
-                    ? '歷史行情金鑰無效或無存取權限' : `歷史行情服務 HTTP ${res.status}`)
+                const failure = await quoteServiceFailure(res, true)
+                if (failure.retry && attempt < (res.status === 503 ? 2 : 1)) { await sleep(serviceRetryDelay(attempt)); continue }
+                throw new Error(failure.message)
             }
             const data = (payload as Partial<HistoricalResult> | null)?.data
             if (!Array.isArray(data) || data.some(bar => !bar || typeof bar.date !== 'string'

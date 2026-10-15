@@ -82,6 +82,8 @@ API_FIREBASE_SERVICE_ACCOUNT
 
 請將實際值設在本機 `.env` 或部署平台的環境變數中，不要提交憑證檔與金鑰。`API_*` 為共用身分驗證與額度設定；Fugle 報價及歷史資料需要伺服器端 `FUGLE_API_KEY`。本批只調整本機設定；正式環境須在取得部署同意後配置，並先輪替曾放入前端的舊 Fugle 金鑰。
 
+正式發布前執行 `npm run check:quote-deployment`，唯讀檢查 production／Functions 的四項報價必要設定；缺漏時以非零狀態停止。單次 `--env`／`--secret-env` 部署覆寫不會自動沿用到後續發布。Fugle 金鑰應在取得本批正式設定變更同意後保存為 production／Functions secret，並在發布後實際驗證一檔現價及 `IX0001` 歷史行情。其餘既有 Functions 覆寫也須沿用原發布流程。檢查只輸出設定名稱與可用狀態，不輸出值；設定存在不代表來源權限已驗證。詳見 [2026-10-15 報價 503 查核](docs/QUOTE_DEPLOYMENT_2026-10-15.md)。
+
 ## 驗證
 
 ```bash

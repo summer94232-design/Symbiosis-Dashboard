@@ -99,6 +99,15 @@ export function authenticationErrorShape(error) {
     return { errorTypes: types, hasNestedCause: types.length > 1 }
 }
 
+/** Fixed gRPC labels only; transaction errors can contain document paths. */
+export function quotaDiagnostic(error) {
+    const reasons = { 4: 'database-timeout', 7: 'permission-denied', 8: 'database-exhausted',
+        10: 'transaction-contention', 14: 'database-unavailable' }
+    const code = error?.code
+    return Object.hasOwn(reasons, code) ? { code: `firestore/${code}`, reason: reasons[code] }
+        : authenticationDiagnostic(error)
+}
+
 export async function consumeQuota(db, uid, route, units = 1, now = Date.now()) {
     const policy = POLICIES[route]
     if (!policy || !Number.isSafeInteger(units) || units < 1) throw new Error('Invalid quota request')
@@ -177,7 +186,12 @@ export async function authorizeApiIdentity(event, route, units = 1, method = 'GE
     try {
         const retryAfter = await consumeQuota(getFirestore(app), user.uid, route, units)
         if (retryAfter) return apiError(429, '已達請求額度，請稍後再試', { 'Retry-After': String(retryAfter) })
-    } catch { return apiError(503, '用量檢查暫時無法使用，請稍後再試') }
+    } catch (error) {
+        console.error('[protected-api] quota unavailable', {
+            route: Object.hasOwn(POLICIES, route) ? route : 'unknown', ...quotaDiagnostic(error),
+        })
+        return apiError(503, '用量檢查暫時無法使用，請稍後再試')
+    }
     return { uid: user.uid, authTime: user.auth_time, db: getFirestore(app) }
 }
 

@@ -1,5 +1,5 @@
 import { invokeEventHandler } from '../lib/http-function.js'
-import { authorizeApiIdentity, apiError, apiHeaders } from '../lib/api-access.js'
+import { authorizeApiIdentity, apiError, apiHeaders, quotaDiagnostic } from '../lib/api-access.js'
 import { reserveQuoteBudget } from '../lib/quote-budget.js'
 
 const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -18,7 +18,10 @@ export async function handleEvent(event) {
     if (!key) return apiError(503, '伺服器尚未設定 Fugle 報價金鑰')
     let budget
     try { budget = await reserveQuoteBudget(identity.db, 1) }
-    catch { return apiError(503, '報價額度暫時無法確認') }
+    catch (error) {
+        console.error('[fugle-proxy] quote budget unavailable', quotaDiagnostic(error))
+        return apiError(503, '報價額度暫時無法確認')
+    }
     if (!budget.granted) return apiError(429, '報價共用額度已達上限，請稍後再試', { 'Retry-After': String(budget.retryAfter) })
     const path = input.kind === 'quote' ? 'intraday/quote' : 'historical/candles'
     const url = new URL(`https://api.fugle.tw/marketdata/v1.0/stock/${path}/${input.symbol}`)
