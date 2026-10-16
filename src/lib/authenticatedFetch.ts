@@ -9,7 +9,8 @@ export async function authenticatedFetch(path: string, session = captureUserSess
     if (!user) throw new Error('請先登入')
     const token = await user.getIdToken()
     session.assertActive()
-    const timeout = path.startsWith('/.netlify/functions/ai-assistant') ? 90000 : 30000
+    const timeout = path.startsWith('/.netlify/functions/ai-assistant') ? 90000
+        : path === '/.netlify/functions/fugle-proxy?batch=1' ? 45000 : 30000
     const response = await fetch(path, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` }, signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout) })
     session.assertActive()
     const contentType = response.headers.get('Content-Type') || ''

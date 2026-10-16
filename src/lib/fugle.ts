@@ -2,6 +2,7 @@ import { authenticatedFetch } from './authenticatedFetch'
 import { captureUserSession } from './userDB'
 import { isPositivePrice, type QuoteObservation, type QuoteObservations } from './pricePolicy'
 import { QUOTE_PROXY_TIMEOUT_MS, QUOTE_REFRESH_TIMEOUT_MS } from './quoteTiming'
+import { readQuoteStream } from './quoteStream'
 
 // Fugle credentials live only in the authenticated server proxy.
 
@@ -143,7 +144,7 @@ export function extractPrice(quote: Record<string, unknown> | null): number | nu
 const MAX_CONCURRENT = 5
 
 export async function getMultipleQuoteObservations(symbols: string[], requestedAt: string, deadline = Date.now() + QUOTE_REFRESH_TIMEOUT_MS,
-    onQuote?: (quotes: QuoteObservations) => Promise<void> | void): Promise<QuoteObservations> {
+    onQuote?: (quotes: QuoteObservations) => Promise<void> | void, preferBatch = false): Promise<QuoteObservations> {
     const results: QuoteObservations = {}
     const session = captureUserSession()
     symbols = [...new Set(symbols)]
@@ -183,7 +184,47 @@ export async function getMultipleQuoteObservations(symbols: string[], requestedA
     // Observe a rejected persistence callback immediately; still drain workers.
     void observations.catch(() => {})
     try {
-        if (owned.length) {
+        if (preferBatch && owned.length > 1) {
+            for (let start = 0; start < owned.length; start += 20) {
+                const pending = new Map(owned.slice(start, start + 20).map(item => [item.symbol, item]))
+                const admitted = [...pending.keys()].filter(symbol => {
+                    if (Date.now() < deadline && tryReserveQuoteSlot()) return true
+                    pending.get(symbol)!.resolve({ quote: null, error: '報價服務限流，請稍後再試' }); pending.delete(symbol); return false
+                })
+                if (!admitted.length) continue
+                try {
+                    session.assertActive()
+                    const request = () => authenticatedFetch('/.netlify/functions/fugle-proxy?batch=1', session, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ kind: 'quotes', symbols: admitted }),
+                        signal: AbortSignal.timeout(Math.max(1, Math.min(45000, deadline - Date.now()))),
+                    }, true)
+                    let response = await request()
+                    if (response.status === 503) {
+                        const failure = await quoteServiceFailure(response.clone())
+                        const delay = serviceRetryDelay(0)
+                        // An explicit pre-provider 503 can recover; never replay an interrupted stream.
+                        if (failure.retry && Date.now() + delay < deadline) { await sleep(delay); session.assertActive(); response = await request() }
+                    }
+                    session.assertActive()
+                    if (!response.ok) {
+                        if (response.status === 429) {
+                            const seconds = Number(response.headers.get('Retry-After'))
+                            cooldownUntil = Math.max(cooldownUntil, Date.now() + (seconds > 0 ? seconds * 1000 : 70000))
+                        }
+                        const failure = await quoteServiceFailure(response)
+                        for (const item of pending.values()) item.resolve({ quote: null, error: failure.message })
+                        pending.clear()
+                    } else await readQuoteStream(response, admitted, (symbol, result) => {
+                        if (result.error === '報價服務限流，請稍後再試') cooldownUntil = Math.max(cooldownUntil, Date.now() + 70000)
+                        pending.get(symbol)!.resolve(result); pending.delete(symbol)
+                    }, session.assertActive)
+                } catch { /* Preserve published rows; never replay a possibly metered batch. */ }
+                finally {
+                    for (const item of pending.values()) item.resolve({ quote: null, error: '報價連線失敗或逾時' })
+                }
+            }
+        } else if (owned.length) {
             let cursor = 0
             let granted = 0, budgetError = '報價共用額度已達上限，請稍後再試'
             try { granted = await reserveSharedBudget(owned.length, deadline) }

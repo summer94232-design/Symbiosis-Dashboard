@@ -29,9 +29,10 @@ export async function getSharedQuoteObservations(
     }
     const domesticRead = () => mode === 'global' && isFubonSnapshotEnabled()
         ? readHybridTaiwanQuotes(domestic, requestedAt, {
-            snapshot: getFubonSnapshotObservations, fugle: getMultipleQuoteObservations,
+            snapshot: getFubonSnapshotObservations,
+            fugle: (symbols, at, deadline, publish) => getMultipleQuoteObservations(symbols, at, deadline, publish, true),
         }, 10, preciseCodes, onQuotes).then(result => result.quotes)
-        : getMultipleQuoteObservations(domestic, requestedAt, undefined, onQuotes)
+        : getMultipleQuoteObservations(domestic, requestedAt, undefined, onQuotes, true)
     const [tw, overseas] = await Promise.all([domesticRead(), foreignRead()])
     return { ...tw, ...overseas }
 }

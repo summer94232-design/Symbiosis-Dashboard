@@ -39,6 +39,18 @@ window.fetch = async (url, options = {}) => {
         return Response.json({ date: today, symbol: input.symbol, lastPrice: input.symbol === '2330' ? 120 : input.symbol === '2317' ? 110 : 28000,
             isTrial: false, lastUpdated: Date.now() * 1000 })
     }
+    if (path.includes('fugle-proxy?batch=1')) {
+        const { symbols } = JSON.parse(options.body)
+        const encoder = new TextEncoder()
+        return new Response(new ReadableStream({ start(controller) {
+            void Promise.all(symbols.map(async symbol => {
+                if (symbol === '2317') await second
+                const quote = { date: today, symbol, lastPrice: symbol === '2330' ? 120 : symbol === '2317' ? 110 : 28000,
+                    isTrial: false, lastUpdated: Date.now() * 1000 }
+                controller.enqueue(encoder.encode(JSON.stringify({ symbol, status: 200, quote }) + '\n'))
+            })).then(() => { controller.enqueue(encoder.encode('{"done":true}\n')); controller.close() })
+        } }), { headers: { 'Content-Type': 'application/x-ndjson' } })
+    }
     if (path.endsWith('fubon-history')) {
         historyCalls++
         const { from, to } = JSON.parse(options.body)

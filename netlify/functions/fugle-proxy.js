@@ -1,15 +1,18 @@
 import { invokeEventHandler } from '../lib/http-function.js'
 import { authorizeApiIdentity, apiError, apiHeaders, quotaDiagnostic } from '../lib/api-access.js'
 import { reserveQuoteBudget } from '../lib/quote-budget.js'
+import { parseBatchSymbols, handleQuoteBatch } from '../lib/fugle-quote-batch.js'
 
 const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
     && Number.isFinite(Date.parse(value + 'T00:00:00Z')) && new Date(value + 'T00:00:00Z').toISOString().slice(0, 10) === value
 
 export async function handleEvent(event) {
-    const identity = await authorizeApiIdentity(event, 'fugle', 1, 'POST')
-    if (identity.statusCode) return identity
     let input
-    try { input = JSON.parse(event.body || '') } catch { return apiError(400, '報價參數不正確') }
+    try { input = JSON.parse(event.body || '') } catch { /* Authenticate malformed requests too. */ }
+    const batch = input?.kind === 'quotes' ? parseBatchSymbols(input.symbols) : null
+    const identity = await authorizeApiIdentity(event, 'fugle', batch?.length || 1, 'POST')
+    if (identity.statusCode) return identity
+    if (batch) return handleQuoteBatch(batch, identity)
     if (!input || !['quote', 'history'].includes(input.kind) || typeof input.symbol !== 'string'
         || !/^[A-Z0-9]{4,12}$/.test(input.symbol)) return apiError(400, '報價參數不正確')
     if (input.kind === 'history' && (!validDate(input.from) || !validDate(input.to)
