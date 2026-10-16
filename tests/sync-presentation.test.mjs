@@ -33,5 +33,9 @@ test('sync presentation keeps errors and previous-success meaning while hiding t
         assert.ok(markup.includes(status === 'live' ? '資料已同步 · 20:40' : status === 'error' ? '資料同步異常 · 上次 20:40' : '資料連線中 · 上次 20:40'))
         assert.ok(markup.includes('最後資料同步：')); assert.ok(markup.includes('最近更新：'))
         assert.ok(!markup.includes('<details open'))
+        const combined = renderToStaticMarkup(createElement(mod.InvestSyncStatus, { quoteUpdatedAt: '2026/9/30 下午8:00:00' }))
+        assert.ok(combined.includes(formatSyncTime(value.lastSyncedAt).full))
+        assert.ok(combined.includes('報價更新時間：2026/9/30 下午8:00:00'), 'quote time stays independent of the later data sync')
+        assert.ok(!combined.includes('帳務與設定的同步狀態'))
     }
 })

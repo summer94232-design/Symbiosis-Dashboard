@@ -435,6 +435,27 @@ button:has(> svg.lucide) {
     padding-top: 0;
 }
 
+.invest-sync-status--with-quote {
+    display: block;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.invest-sync-status--with-quote .disclosure-note__body {
+    margin: 0;
+    padding: 0;
+    text-align: left;
+}
+
+.invest-sync-status__quote-time {
+    margin: 0;
+    padding: 0;
+    font-size: inherit;
+    line-height: inherit;
+    overflow-wrap: anywhere;
+}
+
 .ui-button {
     display: inline-flex;
     min-height: 36px;

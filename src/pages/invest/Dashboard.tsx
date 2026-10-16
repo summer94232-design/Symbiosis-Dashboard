@@ -645,9 +645,8 @@ export default function Dashboard() {
         .dashboard-heading { display: flex; align-items: center; flex: 1; gap: 12px; min-width: 0; }
         .dashboard-heading .page-title { flex-shrink: 0; }
         .dashboard-heading-meta { flex: 1; min-width: 0; }
-        .dashboard-heading-meta .page-subtitle { margin-top: 0; font-size: 12px; }
         .dashboard-heading-meta .invest-sync-status { padding: 0; justify-content: flex-start; }
-        .dashboard-heading-meta .invest-sync-status__note > summary { margin-inline-start: 0; min-height: 22px; padding-block: 2px; }
+        .dashboard-heading-meta .invest-sync-status__note > summary { margin-inline-start: 0; min-height: 18px; padding-block: 0; }
         .dashboard-heading-meta .invest-sync-status__note .disclosure-note__body { text-align: left; }
         .dashboard-topbar > [role="status"], .dashboard-topbar > [role="alert"] { padding: 4px 0 !important; }
         .dashboard-section-nav { display: flex; gap: 20px; margin: -6px 0 12px; padding: 0; border-bottom: 1px solid var(--c-border); }
@@ -665,7 +664,6 @@ export default function Dashboard() {
             .dashboard-section-nav { display: none; }
             .dashboard-topbar { padding-block: 4px 6px; margin-bottom: 10px; }
             .dashboard-heading { flex-basis: 100%; gap: 10px; }
-            .dashboard-heading-meta .page-subtitle { font-size: 11px; }
             .dashboard-topbar .page-actions { width: 100%; justify-content: flex-end; }
         }
         .h-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -685,10 +683,7 @@ export default function Dashboard() {
                         <div className="page-heading dashboard-heading">
                             <h1 className="page-title">儀表板</h1>
                             <div className="dashboard-heading-meta">
-                                <InvestSyncStatus />
-                                <p className="page-subtitle">
-                                    {ctxLastUpdated ? `報價更新時間：${ctxLastUpdated}` : '尚未取得報價，點「更新現價」取得最新報價'}
-                                </p>
+                                <InvestSyncStatus quoteUpdatedAt={ctxLastUpdated} />
                             </div>
                         </div>
                         <div className="page-actions dashboard-report-actions">
@@ -778,47 +773,25 @@ export default function Dashboard() {
                             {[
                                 { label: '總資產', value: `$${netAssets.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: DollarSign },
                                 { label: '股票總市值（含出借）', value: `$${totalMarketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-accent)', icon: BarChart2 },
+                                { label: unrealizedLabel, value: hasPrice ? `${totalUnrealized >= 0 ? '+' : ''}$${totalUnrealized.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}` : '—', color: pnlColor(totalUnrealized) },
                                 { label: '帳面現金', value: `$${totalCash.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: cashShortfall > 0 ? 'var(--c-danger)' : 'var(--c-warning)', icon: DollarSign, cashWarning: cashShortfall > 0 },
+                                { label: '股票總成本', value: `$${totalCost.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-muted)' },
+                                { label: '已實現損益', value: `${realizedPnL >= 0 ? '+' : ''}$${realizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: pnlColor(realizedPnL) },
                             ].map(({ label, value, color, icon: Icon, cashWarning }) => (
                                 <div key={label} className="dashboard-kpi-card" style={{ ...card, borderColor: cashWarning ? 'color-mix(in srgb, var(--c-danger) 55%, var(--c-border))' : card.borderColor, background: cashWarning ? 'linear-gradient(135deg, var(--c-sidebar) 0%, color-mix(in srgb, var(--c-danger) 8%, transparent) 100%)' : card.backgroundColor }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                         <div>
-                                            <div style={{ fontSize: '13px', color: 'var(--c-muted)', marginBottom: '8px' }}>{label}
+                                            <div style={{ fontSize: '13px', color: 'var(--c-muted)', marginBottom: '8px', display: 'flex', alignItems: 'center' }}>{label}
                                                 {label === '帳面現金' && <InfoHint text="成交日帳面現金，含未交割款；不等於銀行可提領餘額。交割款以元大查詢為準。" />}
+                                                {label === unrealizedLabel && <InfoHint text="市值扣含費成本及預估賣出費稅，不含股息；含出借股票。預估手續費未折扣；券商指定批次優先，其餘先進先出。融資未扣利息。" />}
+                                                {label === '已實現損益' && <InfoHint text="賣出淨收入扣批次成本，與歷史損益一致；不同於 XIRR。" />}
                                             </div>
-                                            <div style={{ fontSize: 'clamp(16px, 2vw, 22px)', fontWeight: 700, color }}>{value}</div>
+                                            <div style={{ fontSize: Icon ? 'clamp(16px, 2vw, 22px)' : 'clamp(16px, 2vw, 20px)', fontWeight: 700, color }}>{value}</div>
                                             {label === '總資產' && <HoldingQuoteStatus />}
                                             {cashWarning && <div role="alert" style={{ marginTop: '5px', color: 'var(--c-danger)', fontSize: '11px', fontWeight: 700 }}>帳面資金缺口 ${cashShortfall.toLocaleString('zh-TW', { maximumFractionDigits: 0 })} · 請核對交割款</div>}
                                         </div>
-                                        <Icon size={18} color={color} style={{ opacity: 0.5 }} />
+                                        {Icon && <Icon size={18} color={color} style={{ opacity: 0.5 }} />}
                                     </div>
-                                </div>
-                            ))}
-                        </div>
-
-                        <div className="dash-stats">
-                            {[
-                                { label: '股票總成本', value: `$${totalCost.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`, color: 'var(--c-muted)' },
-                                {
-                                    label: unrealizedLabel,
-                                    value: hasPrice
-                                        ? `${totalUnrealized >= 0 ? '+' : ''}$${totalUnrealized.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`
-                                        : '—',
-                                    color: pnlColor(totalUnrealized)
-                                },
-                                {
-                                    label: '已實現損益',
-                                    value: `${realizedPnL >= 0 ? '+' : ''}$${realizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`,
-                                    color: pnlColor(realizedPnL)
-                                },
-                            ].map(({ label, value, color }) => (
-                                <div key={label} className="dashboard-kpi-card" style={card}>
-                                    <div style={{ fontSize: '13px', color: 'var(--c-muted)', marginBottom: '8px', display: 'flex', alignItems: 'center' }}>
-                                        {label}
-                                        {label === unrealizedLabel && <InfoHint text="市值扣含費成本及預估賣出費稅，不含股息；含出借股票。預估手續費未折扣；券商指定批次優先，其餘先進先出。融資未扣利息。" />}
-                                        {label === '已實現損益' && <InfoHint text="賣出淨收入扣批次成本，與歷史損益一致；不同於 XIRR。" />}
-                                    </div>
-                                    <div style={{ fontSize: 'clamp(16px, 2vw, 20px)', fontWeight: 700, color }}>{value}</div>
                                 </div>
                             ))}
                         </div>
