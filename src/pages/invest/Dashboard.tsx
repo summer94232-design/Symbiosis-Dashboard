@@ -10,10 +10,10 @@ import { pnlColor } from '../../ui/format'
 import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown, ChevronDown, ChevronUp, Calculator, AlertTriangle, X } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell, type PieLabelRenderProps } from 'recharts'
 import { useNavigate } from 'react-router-dom'
-import { usePrices } from '../../PriceContext'
+import { usePrices, PriceRefreshStatus } from '../../PriceContext'
 import { loadPortfolioSnapshot, type PortfolioHoldingGroup } from '../../lib/portfolioSnapshot'
 import HoldingFundingBadge from '../../components/HoldingFundingBadge'
-import { useInvestSync } from '../../InvestSyncContext'
+import { useInvestSync, InvestSyncStatus } from '../../InvestSyncContext'
 import { formatAutoSnapshotFeedback, maybeAutoSnapshotToday, type AutoSnapshotResult } from '../../lib/snapshot'
 import { toLocalDateString } from '../../lib/date'
 import InfoHint from '../../components/InfoHint'
@@ -240,6 +240,17 @@ export default function Dashboard() {
     const scrollToDashboardSection = (id: string) => {
         document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
+
+    const topbarRef = useRef<HTMLDivElement>(null)
+    useEffect(() => {
+        const topbar = topbarRef.current
+        if (!topbar) return
+        const update = () => topbar.parentElement?.style.setProperty('--dashboard-sticky-height', `${topbar.getBoundingClientRect().height}px`)
+        update()
+        const observer = new ResizeObserver(update)
+        observer.observe(topbar)
+        return () => observer.disconnect()
+    }, [])
 
     // ✅ 優化：單一 Promise.all 並行抓取所有資料，消除串行等待
     // ✅ 3-1：載入瘦身——核心資料（持倉/現金/融資/賣出追蹤）獨立載入、先到先渲染；
@@ -600,18 +611,31 @@ export default function Dashboard() {
         @media (max-width: 560px) { .position-tool-grid { grid-template-columns: 1fr; } }
         .dash-extra { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; margin-top: 16px; }
         @media (max-width: 700px) { .dash-extra { grid-template-columns: 1fr; } }
-        .dashboard-section-nav { position: sticky; top: 0; z-index: 25; display: flex; gap: 8px; margin-bottom: 16px; padding: 8px; border: 1px solid var(--c-border); border-radius: 11px; background: color-mix(in srgb, var(--c-bg) 94%, transparent); box-shadow: 0 8px 22px rgba(0,0,0,.16); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+        .dashboard-topbar { position: sticky; top: 0; z-index: 30; padding: 8px 0; margin-bottom: 12px; background: var(--c-bg); border-bottom: 1px solid var(--c-border); }
+        .dashboard-topbar .page-header { margin-bottom: 8px; }
+        .dashboard-heading { display: flex; align-items: center; flex: 1; gap: 12px; min-width: 0; }
+        .dashboard-heading .page-title { flex-shrink: 0; }
+        .dashboard-heading-meta { flex: 1; min-width: 0; }
+        .dashboard-heading-meta .page-subtitle { margin-top: 0; font-size: 12px; }
+        .dashboard-heading-meta .invest-sync-status { padding: 0; justify-content: flex-start; }
+        .dashboard-heading-meta .invest-sync-status__note > summary { margin-inline-start: 0; min-height: 22px; padding-block: 2px; }
+        .dashboard-heading-meta .invest-sync-status__note .disclosure-note__body { text-align: left; }
+        .dashboard-topbar > [role="status"], .dashboard-topbar > [role="alert"] { padding: 4px 0 !important; }
+        .dashboard-section-nav { display: flex; gap: 8px; margin: 0; padding: 8px; border: 1px solid var(--c-border); border-radius: 11px; background: color-mix(in srgb, var(--c-bg) 94%, transparent); box-shadow: 0 8px 22px rgba(0,0,0,.16); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
         .dashboard-section-nav button { min-height: 34px; padding: 6px 12px; border: 1px solid transparent; border-radius: 8px; color: var(--c-muted); background: transparent; font-size: 12px; font-weight: 600; cursor: pointer; }
         .dashboard-section-nav button:hover { color: var(--c-text); border-color: var(--c-border); background: var(--c-card); }
-        .dashboard-section { scroll-margin-top: 66px; margin-bottom: 16px; }
+        .dashboard-section { scroll-margin-top: calc(var(--dashboard-sticky-height, 120px) + 12px); margin-bottom: 16px; }
         .dashboard-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; padding-inline: 2px; }
         .dashboard-section-heading h2 { margin: 0; color: var(--c-text); font-size: 14px; font-weight: 700; }
         .dashboard-section > .dash-side-cards,
         .dashboard-section > .dash-pies,
         .dashboard-section > .dash-extra { margin-bottom: 0; margin-top: 0; }
-        @media (max-width: 767px) {
+        @media (max-width: 767px), (max-width: 950px) and (pointer: coarse) and (orientation: landscape) {
             .dashboard-section-nav { display: none; }
-            .dashboard-section { scroll-margin-top: 0; }
+            .dashboard-topbar { padding-block: 4px 6px; margin-bottom: 10px; }
+            .dashboard-heading { flex-basis: 100%; gap: 10px; }
+            .dashboard-heading-meta .page-subtitle { font-size: 11px; }
+            .dashboard-topbar .page-actions { width: 100%; justify-content: flex-end; }
         }
         .h-table { width: 100%; border-collapse: collapse; font-size: 13px; }
         .h-table th { padding: 8px 10px; text-align: left; color: var(--c-muted); font-weight: 500; border-bottom: 1px solid var(--c-border); white-space: nowrap; }
@@ -624,26 +648,39 @@ export default function Dashboard() {
         .pie-legend::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 2px; }
       `}</style>
 
-            <div style={{ padding: 'var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1600px', margin: '0 auto' }}>
-                <div className="page-header">
-                    <div className="page-heading">
-                        <h1 className="page-title">儀表板</h1>
-                        <p className="page-subtitle">
-                            {ctxLastUpdated ? `現價更新：${ctxLastUpdated}` : '尚未更新現價，點「更新現價」取得最新報價'}
-                        </p>
+            <div className="dashboard-page" style={{ padding: '0 var(--ui-page-padding, clamp(16px, 3vw, 32px)) var(--ui-page-padding, clamp(16px, 3vw, 32px))', maxWidth: '1600px', margin: '0 auto' }}>
+                <div className="dashboard-topbar" ref={topbarRef}>
+                    <div className="page-header">
+                        <div className="page-heading dashboard-heading">
+                            <h1 className="page-title">儀表板</h1>
+                            <div className="dashboard-heading-meta">
+                                <InvestSyncStatus />
+                                <p className="page-subtitle">
+                                    {ctxLastUpdated ? `現價更新：${ctxLastUpdated}` : '尚未更新現價，點「更新現價」取得最新報價'}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="page-actions dashboard-report-actions">
+                            <MarketReportButton />
+                            <button
+                                className="ui-button ui-button-primary"
+                                onClick={() => void updatePrices()}
+                                disabled={priceLoading || loading}
+                                title="更新現價、除權息、快照與法說會"
+                            >
+                                <RefreshCw size={15} className={priceLoading ? 'is-spinning' : undefined} />
+                                {priceLoading ? '現價更新中...' : '更新現價'}
+                            </button>
+                        </div>
                     </div>
-                    <div className="page-actions dashboard-report-actions">
-                        <MarketReportButton />
-                        <button
-                            className="ui-button ui-button-primary"
-                            onClick={() => void updatePrices()}
-                            disabled={priceLoading || loading}
-                            title="更新現價、除權息、快照與法說會"
-                        >
-                            <RefreshCw size={15} className={priceLoading ? 'is-spinning' : undefined} />
-                            {priceLoading ? '現價更新中...' : '更新現價'}
-                        </button>
-                    </div>
+                    <PriceRefreshStatus />
+                    <nav className="dashboard-section-nav" aria-label="儀表板區塊導覽">
+                        {DASHBOARD_SECTIONS.map(section => (
+                            <button key={section.key} type="button" onClick={() => scrollToDashboardSection(section.id)}>
+                                {section.label}
+                            </button>
+                        ))}
+                    </nav>
                 </div>
 
                 <DividendFeedStatus />
@@ -656,14 +693,6 @@ export default function Dashboard() {
                         <button type="button" aria-label="關閉估值完整度提示" onClick={() => setValuationNoticeVisible(false)} style={{ marginLeft: 'auto', border: 0, background: 'transparent', color: 'currentColor', cursor: 'pointer', display: 'grid', placeItems: 'center', padding: '2px', opacity: 0.75 }}><X size={14} /></button>
                     </div>
                 )}
-
-                <nav className="dashboard-section-nav" aria-label="儀表板區塊導覽">
-                    {DASHBOARD_SECTIONS.map(section => (
-                        <button key={section.key} type="button" onClick={() => scrollToDashboardSection(section.id)}>
-                            {section.label}
-                        </button>
-                    ))}
-                </nav>
 
                 {/* ── 賣出追蹤通知卡片（有觸發才顯示）── */}
                 {soldAlerts.length > 0 && (

@@ -570,6 +570,7 @@ export default function App() {
     const [kmsDataVersion, setKmsDataVersion] = useState(0)
 
     const currentSystem = isKMS ? 'kms' : isCalendar ? 'calendar' : 'invest'
+    const isDashboard = location.pathname.replace(/\/$/, '') === '/invest'
     const mobileTitle = [
         ...investNav,
         ...investToolsNav,
@@ -684,8 +685,8 @@ export default function App() {
                             </header>
                         )}
                         <main className="app-main" style={{ flex: 1, overflowY: 'auto', color: 'var(--c-text)' }}>
-                            {currentSystem === 'invest' && <InvestSyncStatus />}
-                            <PriceRefreshStatus />
+                            {currentSystem === 'invest' && !isDashboard && <InvestSyncStatus />}
+                            {!isDashboard && <PriceRefreshStatus />}
                             <AppErrorBoundary key={location.pathname} scope="page">
                                 <Suspense fallback={<PageLoader />}>
                                     <Routes>
