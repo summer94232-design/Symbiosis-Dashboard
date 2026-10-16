@@ -1,0 +1,18 @@
+.calendar-timing-fields { min-width: 0; margin: 0; border: 1px solid var(--c-border); border-radius: 8px; padding: 10px; display: grid; gap: 8px; }
+.calendar-timing-fields legend { padding: 0 4px; font-size: 12px; color: var(--c-muted); }
+.calendar-all-day { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.calendar-all-day input { margin: 0; width: 16px; height: 16px; accent-color: var(--c-accent); }
+.calendar-timing-row { display: flex; align-items: end; gap: 8px; }
+.calendar-direct-field { min-width: 0; flex: 1; }
+.calendar-direct-field:has(input[list]) { flex: 0 0 104px; }
+.calendar-direct-field > label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--c-muted); }
+.calendar-direct-control { position: relative; display: flex; align-items: center; min-width: 0; border: 1px solid var(--c-border); border-radius: 8px; background: var(--c-bg); }
+.calendar-direct-control:focus-within { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+.calendar-direct-control > input[type="text"] { min-width: 0; width: 100%; box-sizing: border-box; height: 38px; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--c-text); font-size: 14px; font-variant-numeric: tabular-nums; outline: none; }
+.calendar-direct-control button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 34px; height: 38px; margin: 0; padding: 0; color: var(--c-muted); background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
+.calendar-direct-control .calendar-native-picker { position: absolute; bottom: 0; left: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.calendar-duration-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--c-muted); }
+.calendar-duration-actions button { margin: 0; padding: 5px 9px; min-height: 32px; border: 1px solid var(--c-border); border-radius: 6px; color: var(--c-text); background: var(--c-bg); cursor: pointer; font-size: 12px; }
+.calendar-timing-fields button:disabled, .calendar-timing-fields input:disabled { opacity: .55; cursor: default; }
+.calendar-timing-hint { margin: 0; font-size: 11px; line-height: 1.5; color: var(--c-muted); }
+@media (max-width: 360px) { .calendar-direct-field:has(input[list]) { flex-basis: 82px; } .calendar-timing-row { gap: 6px; } .calendar-direct-control > input[type="text"] { padding-inline: 6px; } .calendar-direct-control button { flex-basis: 28px; } }

@@ -7,6 +7,7 @@ import GoogleSeriesEditor from '../../components/GoogleSeriesEditor'
 import AnnualDataNotice from '../../components/AnnualDataNotice'
 import { getAnnualDataWarnings, googleSyncDateRange } from '../../lib/annualDataCoverage'
 import { eventOccursOn, eventScheduleLabel, timingDraft, timingForWrite, emptyTimingDraft } from '../../lib/calendarTiming'
+import { parseCalendarDate } from '../../lib/calendarTimingInput'
 import { useSafeMutation } from '../../lib/useSafeMutation'
 import { toLocalDateString } from '../../lib/date'
 import { useState, useEffect, useRef, useCallback, useSyncExternalStore } from 'react'
@@ -304,6 +305,7 @@ export default function CalendarHome() {
     const handleAddEvent = async () => {
         if (!form.title || !form.date) return
         await mutation.run(async session => {
+            if (!parseCalendarDate(form.date)) throw new Error('請填寫有效的開始日期。')
             if (form.type === 'investor') {
                 const stockCode = form.title.match(/^(\d{4,6})/)?.[1] || form.title
                 await addInvestorMeetingDates([{ stockCode, stockName: form.title, yearMonth: form.date.slice(0, 7), dates: [form.date] }], session)
@@ -688,10 +690,8 @@ export default function CalendarHome() {
                                     <label style={lbl}>標題 *</label>
                                     <input disabled={mutation.busy} style={inp} placeholder="行程標題" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
                                 </div>
-                                <div>
-                                    <label style={lbl}>日期 *</label>
-                                    <input disabled={mutation.busy} type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
-                                </div>
+                                <CalendarTimingFields date={form.date} onDateChange={date => setForm(f => ({ ...f, date }))}
+                                    value={timing} onChange={setTiming} disabled={mutation.busy} />
                                 <div>
                                     <label style={lbl}>備註</label>
                                     <input disabled={mutation.busy} style={inp} placeholder="備註說明" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
@@ -701,7 +701,6 @@ export default function CalendarHome() {
                                     <input disabled={mutation.busy} style={inp} placeholder="https://..." value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} />
                                 </div>
                             </div>
-                            <CalendarTimingFields value={timing} onChange={setTiming} disabled={mutation.busy} />
                             {editingEvent.googleSyncConflict === 'remote-deleted' && <div role="alert" style={{ fontSize: '13px', color: 'var(--c-warning)' }}>
                                 Google 已刪除此行程，本機修改已保留。請選擇：
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
@@ -794,10 +793,8 @@ export default function CalendarHome() {
                                         value={form.title}
                                         onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
                                 </div>
-                                <div>
-                                    <label style={lbl}>日期 *</label>
-                                    <input disabled={mutation.busy} type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
-                                </div>
+                                <CalendarTimingFields date={form.date} onDateChange={date => setForm(f => ({ ...f, date }))}
+                                    value={timing} onChange={setTiming} disabled={mutation.busy} dateOnly={form.type === 'investor'} />
                                 <div>
                                     <label style={lbl}>備註</label>
                                     <input disabled={mutation.busy} style={inp} placeholder="備註說明" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
@@ -807,7 +804,6 @@ export default function CalendarHome() {
                                     <input disabled={mutation.busy} style={inp} placeholder="https://..." value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} />
                                 </div>
                             </div>
-                            {form.type !== 'investor' && <CalendarTimingFields value={timing} onChange={setTiming} disabled={mutation.busy} />}
                             {mutation.error && <p role="alert" style={{ color: 'var(--c-danger)' }}>{mutation.error}</p>}
                             <div style={{ display: 'flex', gap: '8px', marginTop: '20px', justifyContent: 'flex-end' }}>
                                 <button disabled={mutation.busy} style={btn('var(--c-border)')} onClick={() => setShowForm(false)}><X size={14} />取消</button>
