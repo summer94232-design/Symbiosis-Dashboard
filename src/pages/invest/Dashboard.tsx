@@ -793,9 +793,6 @@ export default function Dashboard() {
 
                         {/* ── 倉位 / 融資維持率 並排卡片（手機自動換行）── */}
                         <section id="dashboard-risk" className="dashboard-section">
-                            <div className="dashboard-section-heading">
-                                <h2>資金與風險</h2>
-                            </div>
                         <div className="dash-side-cards">
 
                             {/* 倉位卡片 */}
@@ -1177,9 +1174,6 @@ export default function Dashboard() {
 
                         {/* ── 兩個圓餅圖並排 ── */}
                         <section id="dashboard-allocation" className="dashboard-section">
-                            <div className="dashboard-section-heading">
-                                <h2>資產分布</h2>
-                            </div>
                         <div className="dash-pies">
                             {/* 個股分布 */}
                             <div style={card}>
@@ -1404,9 +1398,6 @@ export default function Dashboard() {
 
                         {/* ── 兩欄：近14天行程 / 待辦任務 ── */}
                         <section id="dashboard-planner" className="dashboard-section">
-                            <div className="dashboard-section-heading">
-                                <h2>行程與任務</h2>
-                            </div>
                         <div className="dash-extra">
 
                             {/* 近 14 天行程 */}
