@@ -5,6 +5,7 @@ import { compile, read } from './helpers/compile.mjs'
 
 const { createPriceRefreshCoordinator } = compile(read('src/lib/priceRefresh.ts'))
 const universe = compile(read('src/lib/quoteUniverse.ts'))
+const presentation = compile(read('src/lib/priceRefreshPresentation.ts'))
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
@@ -185,7 +186,7 @@ function providerHarness(hybridEnabled = false, afterClose = false, reader, hold
         investAuth, investDB: {}, userDocNested: () => 'prices',
         captureUserSession: () => { const account = investAuth.currentUser; return { doc: () => account.uid, assertActive: () => { if (account !== investAuth.currentUser) throw Error('account changed') } } },
         onSnapshot: (_, fn) => { priceChanged = fn; return () => {} },
-        ...policy, createPriceRefreshCoordinator, isFubonSnapshotEnabled: () => hybridEnabled,
+        ...policy, ...compile(read('src/lib/priceRefreshPresentation.ts')), createPriceRefreshCoordinator, isFubonSnapshotEnabled: () => hybridEnabled,
         isAfterTaiwanClose: () => afterClose,
         loadHoldingQuoteCodes: async () => holdings,
         loadGlobalQuoteCodes: async () => ['2330', '2317', 'US:AAPL'],
@@ -304,6 +305,8 @@ test('actual provider publishes individual holdings before market completion; pa
     assert.deepEqual(policy.stalePriceCodes(['2330', '2317'], h.saved(), today), ['2317'])
     assert.equal(h.snapshotCalls(), 0)
     assert.equal(h.render().priceLoading, true)
+    assert.equal(h.render().refreshSummary.holdingsSucceeded, 1)
+    assert.equal(h.render().refreshSummary.holdingsElapsedMs, null)
     // Route consumers are replaced while this provider and captured operation live.
     for (const route of ['trend', 'kms', 'dashboard']) {
         assert.equal(h.render().prices['2330'], 120, route)
@@ -312,12 +315,18 @@ test('actual provider publishes individual holdings before market completion; pa
     await publishPriority({ 2317: q(80) })
     assert.equal(h.snapshotCalls(), 1)
     assert.match(h.render().refreshProgress, /持股已更新/)
+    assert.equal(h.render().refreshSummary.holdingsSucceeded, 2)
+    const heldElapsed = h.render().refreshSummary.holdingsElapsedMs
+    assert.ok(heldElapsed >= 0)
+    assert.match(presentation.priceRefreshStatusText(h.render().refreshSummary), /持股報價已完成.*其他股票背景更新中/)
     priority.resolve({ 2330: q(120), 2317: q(80) })
     market.resolve({ 2330: q(100), 2317: q(70), '0050': q(60) })
     await pending
     assert.equal(h.render().prices['2330'], 120)
     assert.equal(h.render().prices['0050'], 60)
     assert.equal(h.render().priceLoading, false)
+    assert.equal(h.render().refreshSummary.phase, 'complete')
+    assert.equal(h.render().refreshSummary.holdingsElapsedMs, heldElapsed)
     assert.equal(h.snapshotCalls(), 1)
 })
 
@@ -338,6 +347,49 @@ test('an account change after a partial holding publication blocks every later b
     assert.deepEqual(await run, {})
     assert.equal(h.writes.length, writes)
     assert.deepEqual(h.render().prices, {})
+    assert.equal(h.render().refreshSummary, null)
+})
+
+test('refresh presentation counts only this batch, excludes invalid values and freezes holding completion before background work', () => {
+    const at = '2026-10-16T01:00:00.000Z', start = Date.parse(at)
+    const quote = (price, requestedAt = at, status = 'success') => ({ price, requestedAt, sourceDate: '2026-10-15', status })
+    const saved = {2330: 120, 2317: 110, '0050': 80, _quotes: {2330: quote(120), 2317: quote(110, '2026-10-15T01:00:00Z'), '0050': quote(80)}}
+    const partial = presentation.summarizePriceRefresh(saved, ['2330','2317','0050'], ['2330','2317','2330'], at, 'running', start + 1000)
+    assert.equal(partial.holdingsTotal, 2)
+    assert.equal(partial.holdingsSucceeded, 1)
+    assert.equal(partial.holdingsElapsedMs, null)
+    assert.match(presentation.holdingQuoteStatus(partial).text, /更新中 1\/2/)
+    saved._quotes['2317'] = quote(110)
+    const ready = presentation.summarizePriceRefresh(saved, ['2330','2317','0050'], ['2330','2317'], at, 'running', start + 2000, partial, start - 500)
+    assert.equal(ready.holdingsElapsedMs, 2500, 'includes the initial code-loading time')
+    assert.equal(ready.oldestHoldingDate, '2026-10-15', 'latest returned quotes do not imply today’s closing values')
+    assert.match(presentation.holdingQuoteStatus(ready).text, /已完成 · 2.5 秒/)
+    const final = presentation.summarizePriceRefresh(saved, ['2330','2317','0050'], ['2330','2317'], at, 'complete', start + 40000, ready)
+    assert.equal(final.holdingsElapsedMs, 2500)
+    assert.match(presentation.priceRefreshStatusText(final), /全部報價已更新/)
+    for (const price of [null, NaN, Infinity, -1, 0, 999]) {
+        saved['2317'] = price
+        const bad = presentation.summarizePriceRefresh(saved, ['2330','2317'], ['2330','2317'], at, 'complete')
+        assert.equal(bad.holdingsSucceeded, 1)
+        assert.equal(presentation.holdingQuoteStatus(bad).tone, 'warning')
+        assert.match(presentation.priceRefreshStatusText(bad), /1 檔未取得有效報價/)
+    }
+})
+
+test('refresh presentation distinguishes no holdings, failures and a fresh request from a previous completion', () => {
+    const at = '2026-10-16T01:00:00Z'
+    const empty = presentation.summarizePriceRefresh({}, ['0050'], [], at, 'running')
+    assert.equal(presentation.holdingQuoteStatus(empty).text, '目前沒有持股')
+    assert.equal(empty.holdingsElapsedMs, null)
+    assert.equal(presentation.holdingQuoteStatus({...empty,phase:'error'}).text, '持股報價狀態未確認')
+    const failed = presentation.summarizePriceRefresh({2330:120,_quotes:{2330:{requestedAt:at,price:120,status:'failed'}}}, ['2330'], ['2330'], at, 'error')
+    assert.equal(failed.received, 1)
+    assert.equal(failed.holdingsSucceeded, 0)
+    assert.match(presentation.holdingQuoteStatus(failed).text, /未齊 0\/1/)
+    const next = presentation.summarizePriceRefresh({}, ['2330'], ['2330'], '2026-10-16T01:01:00Z', 'preparing', Date.now(), {...failed,holdingsElapsedMs:1000})
+    assert.equal(next.holdingsElapsedMs, null)
+    assert.match(presentation.holdingQuoteStatus(next).text, /準備中/)
+    assert.equal(presentation.holdingQuoteStatus(null), null)
 })
 
 test('a wave of twenty holding results is coalesced instead of serializing twenty transactions', async () => {

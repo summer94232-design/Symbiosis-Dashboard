@@ -12,6 +12,7 @@ export const usePrices = () => ({
 export const PriceProvider = ({ children }) => createElement(Fragment, null, children)
 export const MarketCapProvider = PriceProvider
 export const PriceRefreshStatus = () => null
+export const HoldingQuoteStatus = () => null
 export const kmsStorage = {}
 export const signOutAll = async () => { state.log.push('preview sign-out'); window.location.reload() }
 export const ACCOUNT_STORE_CHANGED_EVENT = 'preview-accounts-changed'

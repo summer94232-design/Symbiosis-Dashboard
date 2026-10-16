@@ -30,8 +30,8 @@ test('sync presentation keeps errors and previous-success meaning while hiding t
         })
         const markup = renderToStaticMarkup(createElement(mod.InvestSyncStatus))
         assert.ok(!markup.includes('v47'))
-        assert.ok(markup.includes(status === 'live' ? '已同步 · 20:40' : status === 'error' ? '同步異常 · 上次 20:40' : '連線中 · 上次 20:40'))
-        assert.ok(markup.includes('最後同步：')); assert.ok(markup.includes('最近更新：'))
+        assert.ok(markup.includes(status === 'live' ? '資料已同步 · 20:40' : status === 'error' ? '資料同步異常 · 上次 20:40' : '資料連線中 · 上次 20:40'))
+        assert.ok(markup.includes('最後資料同步：')); assert.ok(markup.includes('最近更新：'))
         assert.ok(!markup.includes('<details open'))
     }
 })

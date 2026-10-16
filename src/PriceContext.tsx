@@ -24,6 +24,7 @@ import { maybeAutoSnapshotToday, type AutoSnapshotResult } from './lib/snapshot'
 import { mergeQuoteObservations, stalePriceCodes, type SavedPrices, type QuoteObservations, type QuoteObservation } from './lib/pricePolicy'
 import { investAuth } from './lib/auth'
 import { updateDividendAnnouncements } from './lib/dividendAnnouncements'
+import { summarizePriceRefresh, holdingQuoteStatus, priceRefreshStatusText, type PriceRefreshSummary } from './lib/priceRefreshPresentation'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ interface PriceContextValue {
     ensurePrices: (codes: string[]) => Promise<PriceMap>
     refreshError: string
     refreshProgress: string
+    refreshSummary: PriceRefreshSummary | null
     /**
      * 全系統更新，codes 只補入尚未儲存的畫面代號，不限制更新範圍。
      * - 呼叫 Fugle API
@@ -75,6 +77,7 @@ export function PriceProvider({ children }: { children: ReactNode }) {
     const [quotes, setQuotes] = useState<QuoteObservations>({})
     const [refreshError, setRefreshError] = useState('')
     const [refreshProgress, setRefreshProgress] = useState('')
+    const [refreshSummary, setRefreshSummary] = useState<PriceRefreshSummary | null>(null)
     const sharedRefresh = useRef<{ user: typeof investAuth.currentUser; run: ReturnType<typeof createPriceRefreshCoordinator<Promise<AutoSnapshotResult | undefined>>> } | null>(null)
     const cacheRef = useRef<SavedPrices>({})
     const requestClock = useRef(0)
@@ -121,6 +124,7 @@ export function PriceProvider({ children }: { children: ReactNode }) {
             setQuotes({})
             setRefreshError('')
             setRefreshProgress('')
+            setRefreshSummary(null)
             setLastUpdated('')
             if (!user) return
             priceUnsub = onSnapshot(userDocNested(investDB, 'settings', 'lastPrices'), snapshot => {
@@ -135,14 +139,19 @@ export function PriceProvider({ children }: { children: ReactNode }) {
         }
     }, [loadCachedPrices])
 
-    const fetchAndStorePrices = useCallback(async (codes: string[], mode: 'global' | 'direct' = 'global'): Promise<QuoteRefreshResult<Promise<AutoSnapshotResult | undefined>>> => {
+    const fetchAndStorePrices = useCallback(async (codes: string[], mode: 'global' | 'direct' = 'global', startedAt = Date.now()): Promise<QuoteRefreshResult<Promise<AutoSnapshotResult | undefined>>> => {
         if (codes.length === 0) return { prices: {} }
         const session = captureUserSession()
         const priceRef = session.doc(investDB, 'settings', 'lastPrices')
         requestClock.current = Math.max(Date.now(), requestClock.current + 1)
         const requestedAt = new Date(requestClock.current).toISOString()
+        let preciseCodes: string[] = []
+        const summarize = (saved: SavedPrices, phase: PriceRefreshSummary['phase']) => {
+            if (mode === 'global') setRefreshSummary(previous => previous && previous.requestedAt > requestedAt ? previous
+                : summarizePriceRefresh(saved, codes, preciseCodes, requestedAt, phase, Date.now(), previous, startedAt))
+        }
         try {
-            let preciseCodes: string[] = []
+            summarize({}, 'preparing')
             if (mode === 'global') {
                 preciseCodes = await loadHoldingQuoteCodes()
                 session.assertActive()
@@ -170,6 +179,7 @@ export function PriceProvider({ children }: { children: ReactNode }) {
                 })
                 session.assertActive()
                 loadCachedPrices(saved, saved._updatedAt || '')
+                summarize(saved, 'running')
                 if (mode === 'global') {
                     const remaining = stalePriceCodes(preciseCodes, saved, today).length
                     setRefreshProgress(remaining ? `持股更新中（${preciseCodes.length - remaining}/${preciseCodes.length}）`
@@ -195,6 +205,7 @@ export function PriceProvider({ children }: { children: ReactNode }) {
             const quotes = await getSharedQuoteObservations(orderedCodes, requestedAt, mode, preciseCodes, publish)
             await writes
             await commit(quotes, 2)
+            summarize(cacheRef.current, 'complete')
             // Read the committed values, not a late response that the transaction rejected.
             const result: PriceMap = Object.fromEntries(codes.map(code => {
                 const quote = cacheRef.current._quotes?.[code]
@@ -204,6 +215,7 @@ export function PriceProvider({ children }: { children: ReactNode }) {
             startSnapshot()
             return { prices: result, detail }
         } catch (err) {
+            try { session.assertActive(); summarize(cacheRef.current, 'error') } catch { /* The previous account's progress stays cleared. */ }
             console.error('[PriceContext] updatePrices error:', err)
             throw err
         }
@@ -213,13 +225,15 @@ export function PriceProvider({ children }: { children: ReactNode }) {
         const session = captureUserSession()
         const user = investAuth.currentUser
         if (!sharedRefresh.current || sharedRefresh.current.user !== user) {
+            let startedAt = Date.now()
             sharedRefresh.current = { user, run: createPriceRefreshCoordinator(async () => {
+                startedAt = Date.now()
                 const codes = await loadGlobalQuoteCodes()
                 session.assertActive()
                 return codes
             }, async codes => {
                 session.assertActive()
-                return fetchAndStorePrices(codes)
+                return fetchAndStorePrices(codes, 'global', startedAt)
             }) }
         }
         setPriceLoading(true)
@@ -264,17 +278,28 @@ export function PriceProvider({ children }: { children: ReactNode }) {
     const getCachedQuote = useCallback((code: string) => cacheRef.current._quotes?.[code], [])
 
     return (
-        <PriceContext.Provider value={{ prices, quotes, getCachedQuote, lastUpdated, priceLoading, priceErrors, refreshError, refreshProgress, updatePrices, ensurePrices, loadCachedPrices }}>
+        <PriceContext.Provider value={{ prices, quotes, getCachedQuote, lastUpdated, priceLoading, priceErrors, refreshError, refreshProgress, refreshSummary, updatePrices, ensurePrices, loadCachedPrices }}>
             {children}
         </PriceContext.Provider>
     )
 }
 
 export function PriceRefreshStatus() {
-    const { priceLoading, refreshError, refreshProgress } = usePrices()
-    if (!priceLoading && !refreshError) return null
-    return <div role={refreshError ? 'alert' : 'status'} style={{ padding: '4px 16px', fontSize: '12px', color: refreshError ? 'var(--c-danger)' : 'var(--c-muted)' }}>
-        {refreshError || refreshProgress || '報價更新中'}
+    const { priceLoading, refreshError, refreshProgress, refreshSummary } = usePrices()
+    if (!priceLoading && !refreshError && !refreshSummary) return null
+    const incomplete = refreshSummary && ['complete', 'error'].includes(refreshSummary.phase) && refreshSummary.succeeded < refreshSummary.total
+    return <div role={refreshError ? 'alert' : 'status'} style={{ padding: '4px 16px', fontSize: '12px', color: refreshError ? 'var(--c-danger)' : incomplete ? 'var(--c-warning)' : 'var(--c-muted)' }}>
+        {refreshError || (refreshSummary ? priceRefreshStatusText(refreshSummary) : refreshProgress || '報價更新中')}
+    </div>
+}
+
+export function HoldingQuoteStatus() {
+    const { refreshSummary } = usePrices()
+    const status = holdingQuoteStatus(refreshSummary)
+    if (!status) return null
+    return <div className="holding-quote-status" title="顯示最近一次持股報價處理與同步完成的耗時；當日資產快照會另外檢查報價日期及完整度。" style={{ marginTop: '6px', fontSize: '11px', lineHeight: 1.5, color: `var(--c-${status.tone})` }}>
+        {status.text}
+        {refreshSummary?.oldestHoldingDate && <span style={{ display: 'block', color: 'var(--c-muted)' }}>最早報價日：{refreshSummary.oldestHoldingDate}</span>}
     </div>
 }
 

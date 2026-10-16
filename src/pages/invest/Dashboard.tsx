@@ -10,7 +10,7 @@ import { pnlColor } from '../../ui/format'
 import { DollarSign, BarChart2, RefreshCw, Calendar, CheckSquare, ExternalLink, Tag, TrendingDown, ChevronDown, ChevronUp, Calculator, AlertTriangle, X } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell, type PieLabelRenderProps } from 'recharts'
 import { useNavigate } from 'react-router-dom'
-import { usePrices, PriceRefreshStatus } from '../../PriceContext'
+import { usePrices, PriceRefreshStatus, HoldingQuoteStatus } from '../../PriceContext'
 import { loadPortfolioSnapshot, type PortfolioHoldingGroup } from '../../lib/portfolioSnapshot'
 import HoldingFundingBadge from '../../components/HoldingFundingBadge'
 import { useInvestSync, InvestSyncStatus } from '../../InvestSyncContext'
@@ -71,9 +71,9 @@ const PRIORITY_LABELS = { high: '高', medium: '中', low: '低' }
 type DashboardSectionKey = 'risk' | 'allocation' | 'holdings' | 'planner'
 
 const DASHBOARD_SECTIONS: Array<{ key: DashboardSectionKey; id: string; label: string }> = [
+    { key: 'holdings', id: 'dashboard-holdings', label: '目前持倉' },
     { key: 'risk', id: 'dashboard-risk', label: '資金與風險' },
     { key: 'allocation', id: 'dashboard-allocation', label: '資產分布' },
-    { key: 'holdings', id: 'dashboard-holdings', label: '目前持倉' },
     { key: 'planner', id: 'dashboard-planner', label: '行程任務' },
 ]
 
@@ -160,7 +160,9 @@ function GroupTooltip({ active, payload, totalAssets }: PortfolioTooltipProps) {
 export default function Dashboard() {
     const navigate = useNavigate()
     // ✅ 修正：改用 PriceContext，updatePrices 會同步更新全域，Holdings/Watchlist 等頁面一併反映
-    const { prices: ctxPrices, priceErrors, lastUpdated: ctxLastUpdated, priceLoading, refreshProgress, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
+    const { prices: ctxPrices, priceErrors, lastUpdated: ctxLastUpdated, priceLoading, refreshProgress, refreshSummary, updatePrices: ctxUpdatePrices, loadCachedPrices } = usePrices()
+    const holdingQuotesReady = !!refreshSummary?.holdingsTotal && refreshSummary.holdingsSucceeded === refreshSummary.holdingsTotal
+    const [activeSection, setActiveSection] = useState<DashboardSectionKey>('holdings')
     const { version: syncVersion } = useInvestSync()
 
     const [storedHoldings, setHoldings] = useState<HoldingItem[]>([])
@@ -251,6 +253,33 @@ export default function Dashboard() {
         observer.observe(topbar)
         return () => observer.disconnect()
     }, [])
+
+    useEffect(() => {
+        const main = topbarRef.current?.closest('main')
+        if (!main) return
+        let frame = 0
+        const update = () => {
+            const line = main.getBoundingClientRect().top + (topbarRef.current?.getBoundingClientRect().height ?? 0) + 20
+            let current = DASHBOARD_SECTIONS[0].key
+            for (const section of DASHBOARD_SECTIONS) {
+                const node = document.getElementById(section.id)
+                if (node && node.getBoundingClientRect().top <= line) current = section.key
+            }
+            setActiveSection(current)
+        }
+        const schedule = () => {
+            cancelAnimationFrame(frame)
+            frame = requestAnimationFrame(update)
+        }
+        update()
+        main.addEventListener('scroll', schedule, { passive: true })
+        window.addEventListener('resize', schedule)
+        return () => {
+            main.removeEventListener('scroll', schedule)
+            window.removeEventListener('resize', schedule)
+            cancelAnimationFrame(frame)
+        }
+    }, [loading, hasLoaded])
 
     // ✅ 優化：單一 Promise.all 並行抓取所有資料，消除串行等待
     // ✅ 3-1：載入瘦身——核心資料（持倉/現金/融資/賣出追蹤）獨立載入、先到先渲染；
@@ -621,9 +650,11 @@ export default function Dashboard() {
         .dashboard-heading-meta .invest-sync-status__note > summary { margin-inline-start: 0; min-height: 22px; padding-block: 2px; }
         .dashboard-heading-meta .invest-sync-status__note .disclosure-note__body { text-align: left; }
         .dashboard-topbar > [role="status"], .dashboard-topbar > [role="alert"] { padding: 4px 0 !important; }
-        .dashboard-section-nav { display: flex; gap: 8px; margin: 0; padding: 8px; border: 1px solid var(--c-border); border-radius: 11px; background: color-mix(in srgb, var(--c-bg) 94%, transparent); box-shadow: 0 8px 22px rgba(0,0,0,.16); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
-        .dashboard-section-nav button { min-height: 34px; padding: 6px 12px; border: 1px solid transparent; border-radius: 8px; color: var(--c-muted); background: transparent; font-size: 12px; font-weight: 600; cursor: pointer; }
-        .dashboard-section-nav button:hover { color: var(--c-text); border-color: var(--c-border); background: var(--c-card); }
+        .dashboard-section-nav { display: flex; gap: 20px; margin: -6px 0 12px; padding: 0; border-bottom: 1px solid var(--c-border); }
+        .dashboard-section-nav button { min-height: 32px; padding: 4px 2px; border: 0; border-bottom: 2px solid transparent; color: var(--c-muted); background: transparent; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .dashboard-section-nav button:hover { color: var(--c-text); }
+        .dashboard-section-nav button[aria-current="location"] { color: var(--c-accent); border-bottom-color: var(--c-accent); }
+        @media (pointer: coarse) { .dashboard-section-nav button { min-height: 44px; } }
         .dashboard-section { scroll-margin-top: calc(var(--dashboard-sticky-height, 120px) + 12px); margin-bottom: 16px; }
         .dashboard-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; padding-inline: 2px; }
         .dashboard-section-heading h2 { margin: 0; color: var(--c-text); font-size: 14px; font-weight: 700; }
@@ -656,7 +687,7 @@ export default function Dashboard() {
                             <div className="dashboard-heading-meta">
                                 <InvestSyncStatus />
                                 <p className="page-subtitle">
-                                    {ctxLastUpdated ? `現價更新：${ctxLastUpdated}` : '尚未更新現價，點「更新現價」取得最新報價'}
+                                    {ctxLastUpdated ? `報價更新時間：${ctxLastUpdated}` : '尚未取得報價，點「更新現價」取得最新報價'}
                                 </p>
                             </div>
                         </div>
@@ -669,19 +700,19 @@ export default function Dashboard() {
                                 title="更新現價、除權息、快照與法說會"
                             >
                                 <RefreshCw size={15} className={priceLoading ? 'is-spinning' : undefined} />
-                                {priceLoading ? '現價更新中...' : '更新現價'}
+                                {priceLoading ? holdingQuotesReady ? '背景更新中…' : '持股報價更新中…' : '更新現價'}
                             </button>
                         </div>
                     </div>
                     <PriceRefreshStatus />
-                    <nav className="dashboard-section-nav" aria-label="儀表板區塊導覽">
+                </div>
+                <nav className="dashboard-section-nav" aria-label="儀表板區塊導覽">
                         {DASHBOARD_SECTIONS.map(section => (
-                            <button key={section.key} type="button" onClick={() => scrollToDashboardSection(section.id)}>
+                            <button key={section.key} type="button" aria-current={activeSection === section.key ? 'location' : undefined} onClick={() => scrollToDashboardSection(section.id)}>
                                 {section.label}
                             </button>
                         ))}
                     </nav>
-                </div>
 
                 <DividendFeedStatus />
                 {holdings.length > 0 && valuationNoticeVisible && (
@@ -756,6 +787,7 @@ export default function Dashboard() {
                                                 {label === '帳面現金' && <InfoHint text="成交日帳面現金，含未交割款；不等於銀行可提領餘額。交割款以元大查詢為準。" />}
                                             </div>
                                             <div style={{ fontSize: 'clamp(16px, 2vw, 22px)', fontWeight: 700, color }}>{value}</div>
+                                            {label === '總資產' && <HoldingQuoteStatus />}
                                             {cashWarning && <div role="alert" style={{ marginTop: '5px', color: 'var(--c-danger)', fontSize: '11px', fontWeight: 700 }}>帳面資金缺口 ${cashShortfall.toLocaleString('zh-TW', { maximumFractionDigits: 0 })} · 請核對交割款</div>}
                                         </div>
                                         <Icon size={18} color={color} style={{ opacity: 0.5 }} />
@@ -790,6 +822,130 @@ export default function Dashboard() {
                                 </div>
                             ))}
                         </div>
+
+                        <section id="dashboard-holdings" className="dashboard-section">
+                            <div className="dashboard-section-heading">
+                                <h2>目前持倉</h2>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <select
+                                        value={sortMode}
+                                        onChange={e => setSortMode(e.target.value as typeof sortMode)}
+                                        aria-label="持倉排序"
+                                        style={{ backgroundColor: 'var(--c-bg)', color: 'var(--c-text)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '6px 8px', fontSize: '12px', cursor: 'pointer' }}
+                                    >
+                                        <option value="marketValue">依市值</option>
+                                        <option value="group">依族群</option>
+                                        <option value="returnRate">依報酬率</option>
+                                        <option value="unrealizedPnL">依未實現損益</option>
+                                        <option value="code">依代號</option>
+                                    </select>
+                                </div>
+                            </div>
+                        <div style={{ ...card, marginBottom: '0' }}>
+                            {holdings.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--c-muted)', fontSize: '13px' }}>尚無持倉資料</div>
+                            ) : (
+                                <>
+                                <div className="mobile-holdings-list dashboard-mobile-holdings">
+                                    {sortedHoldings.map(h => {
+                                        const expanded = expandedHoldingCode === h.positionKey
+                                        const detailId = `dashboard-holding-${h.positionKey}`
+                                        return (
+                                            <div key={h.positionKey} className="mobile-holding-card">
+                                                <button
+                                                    type="button"
+                                                    className="mobile-holding-summary"
+                                                    aria-expanded={expanded}
+                                                    aria-controls={detailId}
+                                                    onClick={() => setExpandedHoldingCode(expanded ? null : h.positionKey)}
+                                                >
+                                                    <span className="mobile-holding-identity">
+                                                        <span style={{ display: 'flex', alignItems: 'center' }}><strong>{h.code}</strong><HoldingFundingBadge type={h.fundingType} /></span>
+                                                        <span>{h.name}</span>
+                                                        <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>{h.shares.toLocaleString()} 股 · 均價 {h.avgCost.toFixed(2)}</span>
+                                                    </span>
+                                                    <span className="mobile-holding-result">
+                                                        <strong>${h.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</strong>
+                                                        <span style={{ color: h.currentPrice === null ? 'var(--c-muted)' : pnlColor(h.returnRate) }}>
+                                                            {h.currentPrice === null ? '請更新現價' : `${h.returnRate >= 0 ? '+' : ''}${h.returnRate.toFixed(2)}%`}
+                                                        </span>
+                                                    </span>
+                                                    {expanded ? <ChevronUp size={17} aria-hidden="true" /> : <ChevronDown size={17} aria-hidden="true" />}
+                                                </button>
+                                                {expanded && (
+                                                    <div id={detailId} className="mobile-holding-details dashboard-holding-details">
+                                                        {[
+                                                            ['股數', h.shares.toLocaleString()],
+                                                            ['融資借款', h.fundingType === 'margin' ? h.marginAmount.toLocaleString() : '—'],
+                                                            ['平均成本', h.avgCost.toFixed(2)],
+                                                            ['現價', h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)],
+                                                            ['未實現損益', h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`],
+                                                            ['持倉佔比', `${h.ratio.toFixed(1)}%`],
+                                                            ['族群', stockGroups[h.code] || '未分類'],
+                                                        ].map(([label, value]) => (
+                                                            <div key={label}>
+                                                                <span>{label}</span>
+                                                                <strong>{value}</strong>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                                <div className="desktop-dashboard-holdings-table" style={{ overflowX: 'auto' }}>
+                                    <table className="h-table">
+                                        <thead>
+                                            <tr>{['代號', '名稱', '股數', '均價', '現價', '未實現損益', '報酬率', '佔比', '族群'].map(h => <th key={h}>{h}</th>)}</tr>
+                                        </thead>
+                                        <tbody>
+                                            {sortedHoldings.map(h => (
+                                                <tr key={h.positionKey}>
+                                                    <td style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{h.code}</td>
+                                                    <td>
+                                                        {h.name}
+                                                        <HoldingFundingBadge type={h.fundingType} />
+                                                    </td>
+                                                    <td>{h.shares.toLocaleString()}</td>
+                                                    <td>{h.avgCost.toFixed(2)}</td>
+                                                    <td style={{ color: h.currentPrice === null ? 'var(--c-muted)' : h.currentPrice > h.avgCost ? 'var(--c-positive)' : 'var(--c-danger)', fontWeight: 600 }}>
+                                                        {h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)}
+                                                    </td>
+                                                    <td style={{ color: h.currentPrice === null ? 'var(--c-muted)' : pnlColor(h.unrealizedPnL), fontWeight: 600 }}>
+                                                        {h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`}
+                                                    </td>
+                                                    <td>
+                                                        {h.currentPrice === null
+                                                            ? <span style={{ color: 'var(--c-muted)', fontSize: '12px' }}>點「更新現價」</span>
+                                                            : <span
+                                                                style={{ backgroundColor: h.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(h.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}
+                                                                title={h.marginAmount > 0 ? '融資報酬率（自備款口徑）' : '現股報酬率'}
+                                                            >
+                                                                {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
+                                                            </span>
+                                                        }
+                                                    </td>
+                                                    <td style={{ color: 'var(--c-muted)' }}>{h.ratio.toFixed(1)}%</td>
+                                                    <td>
+                                                        {stockGroups[h.code] ? (
+                                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--c-purple)', backgroundColor: 'rgba(167,139,250,0.12)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
+                                                                <Tag size={10} />
+                                                                {stockGroups[h.code]}
+                                                            </span>
+                                                        ) : (
+                                                            <span style={{ fontSize: '12px', color: 'var(--c-dim)' }}>—</span>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                </>
+                            )}
+                        </div>
+                        </section>
 
                         {/* ── 倉位 / 融資維持率 並排卡片（手機自動換行）── */}
                         <section id="dashboard-risk" className="dashboard-section">
@@ -1272,129 +1428,7 @@ export default function Dashboard() {
                         </section>
 
                         {/* 目前持倉表格 */}
-                        <section id="dashboard-holdings" className="dashboard-section">
-                            <div className="dashboard-section-heading">
-                                <h2>目前持倉</h2>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <select
-                                        value={sortMode}
-                                        onChange={e => setSortMode(e.target.value as typeof sortMode)}
-                                        aria-label="持倉排序"
-                                        style={{ backgroundColor: 'var(--c-bg)', color: 'var(--c-text)', border: '1px solid var(--c-border)', borderRadius: '6px', padding: '6px 8px', fontSize: '12px', cursor: 'pointer' }}
-                                    >
-                                        <option value="marketValue">依市值</option>
-                                        <option value="group">依族群</option>
-                                        <option value="returnRate">依報酬率</option>
-                                        <option value="unrealizedPnL">依未實現損益</option>
-                                        <option value="code">依代號</option>
-                                    </select>
-                                </div>
-                            </div>
-                        <div style={{ ...card, marginBottom: '0' }}>
-                            {holdings.length === 0 ? (
-                                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--c-muted)', fontSize: '13px' }}>尚無持倉資料</div>
-                            ) : (
-                                <>
-                                <div className="mobile-holdings-list dashboard-mobile-holdings">
-                                    {sortedHoldings.map(h => {
-                                        const expanded = expandedHoldingCode === h.positionKey
-                                        const detailId = `dashboard-holding-${h.positionKey}`
-                                        return (
-                                            <div key={h.positionKey} className="mobile-holding-card">
-                                                <button
-                                                    type="button"
-                                                    className="mobile-holding-summary"
-                                                    aria-expanded={expanded}
-                                                    aria-controls={detailId}
-                                                    onClick={() => setExpandedHoldingCode(expanded ? null : h.positionKey)}
-                                                >
-                                                    <span className="mobile-holding-identity">
-                                                        <span style={{ display: 'flex', alignItems: 'center' }}><strong>{h.code}</strong><HoldingFundingBadge type={h.fundingType} /></span>
-                                                        <span>{h.name}</span>
-                                                        <span style={{ fontSize: '11px', color: 'var(--c-muted)' }}>{h.shares.toLocaleString()} 股 · 均價 {h.avgCost.toFixed(2)}</span>
-                                                    </span>
-                                                    <span className="mobile-holding-result">
-                                                        <strong>${h.marketValue.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</strong>
-                                                        <span style={{ color: h.currentPrice === null ? 'var(--c-muted)' : pnlColor(h.returnRate) }}>
-                                                            {h.currentPrice === null ? '請更新現價' : `${h.returnRate >= 0 ? '+' : ''}${h.returnRate.toFixed(2)}%`}
-                                                        </span>
-                                                    </span>
-                                                    {expanded ? <ChevronUp size={17} aria-hidden="true" /> : <ChevronDown size={17} aria-hidden="true" />}
-                                                </button>
-                                                {expanded && (
-                                                    <div id={detailId} className="mobile-holding-details dashboard-holding-details">
-                                                        {[
-                                                            ['股數', h.shares.toLocaleString()],
-                                                            ['融資借款', h.fundingType === 'margin' ? h.marginAmount.toLocaleString() : '—'],
-                                                            ['平均成本', h.avgCost.toFixed(2)],
-                                                            ['現價', h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)],
-                                                            ['未實現損益', h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`],
-                                                            ['持倉佔比', `${h.ratio.toFixed(1)}%`],
-                                                            ['族群', stockGroups[h.code] || '未分類'],
-                                                        ].map(([label, value]) => (
-                                                            <div key={label}>
-                                                                <span>{label}</span>
-                                                                <strong>{value}</strong>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )
-                                    })}
-                                </div>
-                                <div className="desktop-dashboard-holdings-table" style={{ overflowX: 'auto' }}>
-                                    <table className="h-table">
-                                        <thead>
-                                            <tr>{['代號', '名稱', '股數', '均價', '現價', '未實現損益', '報酬率', '佔比', '族群'].map(h => <th key={h}>{h}</th>)}</tr>
-                                        </thead>
-                                        <tbody>
-                                            {sortedHoldings.map(h => (
-                                                <tr key={h.positionKey}>
-                                                    <td style={{ color: 'var(--c-accent)', fontWeight: 700 }}>{h.code}</td>
-                                                    <td>
-                                                        {h.name}
-                                                        <HoldingFundingBadge type={h.fundingType} />
-                                                    </td>
-                                                    <td>{h.shares.toLocaleString()}</td>
-                                                    <td>{h.avgCost.toFixed(2)}</td>
-                                                    <td style={{ color: h.currentPrice === null ? 'var(--c-muted)' : h.currentPrice > h.avgCost ? 'var(--c-positive)' : 'var(--c-danger)', fontWeight: 600 }}>
-                                                        {h.currentPrice === null ? '—' : h.currentPrice.toFixed(2)}
-                                                    </td>
-                                                    <td style={{ color: h.currentPrice === null ? 'var(--c-muted)' : pnlColor(h.unrealizedPnL), fontWeight: 600 }}>
-                                                        {h.currentPrice === null ? '—' : `${h.unrealizedPnL >= 0 ? '+' : ''}${h.unrealizedPnL.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`}
-                                                    </td>
-                                                    <td>
-                                                        {h.currentPrice === null
-                                                            ? <span style={{ color: 'var(--c-muted)', fontSize: '12px' }}>點「更新現價」</span>
-                                                            : <span
-                                                                style={{ backgroundColor: h.returnRate >= 0 ? 'color-mix(in srgb, var(--c-positive) 12%, transparent)' : 'color-mix(in srgb, var(--c-danger) 12%, transparent)', color: pnlColor(h.returnRate), padding: '2px 8px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}
-                                                                title={h.marginAmount > 0 ? '融資報酬率（自備款口徑）' : '現股報酬率'}
-                                                            >
-                                                                {h.returnRate >= 0 ? '+' : ''}{h.returnRate.toFixed(2)}%
-                                                            </span>
-                                                        }
-                                                    </td>
-                                                    <td style={{ color: 'var(--c-muted)' }}>{h.ratio.toFixed(1)}%</td>
-                                                    <td>
-                                                        {stockGroups[h.code] ? (
-                                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--c-purple)', backgroundColor: 'rgba(167,139,250,0.12)', padding: '2px 8px', borderRadius: '20px', fontWeight: 600 }}>
-                                                                <Tag size={10} />
-                                                                {stockGroups[h.code]}
-                                                            </span>
-                                                        ) : (
-                                                            <span style={{ fontSize: '12px', color: 'var(--c-dim)' }}>—</span>
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                                </>
-                            )}
-                        </div>
-                        </section>
+
 
                         {/* ── 兩欄：近14天行程 / 待辦任務 ── */}
                         <section id="dashboard-planner" className="dashboard-section">

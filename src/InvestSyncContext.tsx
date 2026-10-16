@@ -156,13 +156,14 @@ export function useInvestSync() {
 export function InvestSyncStatus() {
     const { status, lastSyncedAt, changedCollection } = useInvestSync()
     const color = status === 'live' ? 'var(--c-positive)' : status === 'error' ? 'var(--c-danger)' : 'var(--c-warning)'
-    const label = status === 'live' ? '已同步' : status === 'error' ? '同步異常' : '連線中'
+    const label = status === 'live' ? '資料已同步' : status === 'error' ? '資料同步異常' : '資料連線中'
     const time = formatSyncTime(lastSyncedAt)
     const indicator = <span className="invest-sync-status__dot" aria-hidden="true" style={{ backgroundColor: color, boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 12%, transparent)` }} />
     return (
         <div className="invest-sync-status" title={changedCollection ? `最近更新：${changedCollection}` : '投資資料同步狀態'}>
             {time ? <DisclosureNote className="invest-sync-status__note" summary={<>{indicator}<span>{`${label} · ${status === 'live' ? '' : '上次 '}${time.short}`}</span></>} style={{ margin: 0, fontSize: '10px', maxWidth: '100%' }}>
-                最後同步：{time.full}（台灣時間）
+                最後資料同步：{time.full}（台灣時間）
+                <div>帳務與設定的同步狀態；報價更新進度另行顯示。</div>
             </DisclosureNote> : <span className="invest-sync-status__label">{indicator}<span>{label}</span></span>}
         </div>
     )

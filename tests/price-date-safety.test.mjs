@@ -208,7 +208,7 @@ function priceHarness(getQuotes, failSnapshot = false) {
         investDB:'db',investAuth,cacheRef,requestClock:{current:0},pending:{current:0},setPriceLoading:()=>{},
         captureUserSession:()=>{const initial=investAuth.currentUser;return {doc:()=>initial.uid+'/prices',assertActive:()=>{if(initial!==investAuth.currentUser)throw Error('session changed')}}},
         isFubonSnapshotEnabled:()=>false,
-        loadHoldingQuoteCodes:async()=>[], stalePriceCodes:policy.stalePriceCodes, setRefreshProgress:()=>{},
+        loadHoldingQuoteCodes:async()=>[], stalePriceCodes:policy.stalePriceCodes, setRefreshProgress:()=>{}, setRefreshSummary:()=>{},
         getSharedQuoteObservations:getQuotes,mergeQuoteObservations:policy.mergeQuoteObservations,
         runTransaction:async(_,fn)=>fn({get:async()=>({exists:()=>true,data:()=>state.saved}),set:(_,d)=>{state.writes++;state.saved=d}}),
         loadCachedPrices:saved=>{cacheRef.current=policy.mergeQuoteObservations(cacheRef.current,saved._quotes)},
